@@ -8,7 +8,7 @@ const networkIPs = Object.values(networkInterfaces())
   .filter(Boolean) as string[];
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: [...new Set(["localhost", ...networkIPs])],
+  allowedDevOrigins: [...new Set(["localhost", ...networkIPs, "*.lvh.me", "*.ngrok-free.dev"])],
 };
 
 export default nextConfig;

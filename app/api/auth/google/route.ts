@@ -9,14 +9,7 @@ export async function GET(req: Request) {
     );
   }
 
-  const referer = req.headers.get("referer") || "";
-  const refererOrigin = referer ? new URL(referer).origin : "";
-  const refererHostname = referer ? new URL(referer).hostname : "";
-  const isPrivateIP = /^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|0\.)/.test(refererHostname);
-  const origin = (!refererOrigin || isPrivateIP)
-    ? (process.env.NEXTAUTH_URL || "http://localhost:3000")
-    : refererOrigin;
-  const redirectUri = `${origin}/api/auth/google/callback`;
+  const redirectUri = `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/auth/google/callback`;
 
   const params = new URLSearchParams({
     client_id: clientId,

@@ -19,12 +19,7 @@ export async function GET(req: Request) {
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    const url = new URL(req.url);
-    const isPrivateIP = /^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|0\.)/.test(url.hostname);
-    const origin = isPrivateIP
-      ? (process.env.NEXTAUTH_URL || "http://localhost:3000")
-      : url.origin;
-    const redirectUri = `${origin}/api/auth/google/callback`;
+    const redirectUri = `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/auth/google/callback`;
 
     if (!clientId || !clientSecret) {
       return NextResponse.redirect(

@@ -171,3 +171,15 @@ Theme toggle dark/light
 Atajos de teclado (Ctrl+K buscar, Ctrl+N nuevo chat)
 Contador de caracteres
 Menú de usuario / perfil
+
+
+Podemos implementar lo siguiente para la validacion de google OAuth, ya que requiere  url con domino publico.
+ C:\Windows\System32\drivers\etc\hosts como Administrador
+
+127.0.0.1   mi-ia.local
+127.0.0.1   10-0-122-57.mi-ia.local
+3. En Google Console:
+https://mi-ia.local:3000/api/auth/google/callback
+https://10-0-122-57.mi-ia.local:3000/api/auth/google/callback
+4. En .env.local:
+NEXTAUTH_URL=https://mi-ia.local:3000

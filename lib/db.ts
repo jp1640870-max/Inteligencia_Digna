@@ -29,7 +29,7 @@ function initTables() {
     CREATE TABLE IF NOT EXISTS chats (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      title TEXT NOT NUsoporte@inteligenciadigna.comLL,
+      title TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
