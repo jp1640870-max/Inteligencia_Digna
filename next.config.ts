@@ -1,7 +1,14 @@
 import type { NextConfig } from "next";
+import { networkInterfaces } from "os";
+
+const networkIPs = Object.values(networkInterfaces())
+  .flat()
+  .filter((iface) => iface?.family === "IPv4" && !iface.internal)
+  .map((iface) => iface?.address)
+  .filter(Boolean) as string[];
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  allowedDevOrigins: [...new Set(["localhost", ...networkIPs])],
 };
 
 export default nextConfig;

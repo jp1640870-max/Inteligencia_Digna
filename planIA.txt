@@ -1,0 +1,173 @@
+
+Mapa de dependencias entre fases
+Fase 0 (Preparación)
+  │
+  ├──► Fase 1 (Streaming + Contexto) ─── base para toda la UX
+  │
+  ├──► Fase 2 (Auth) ─── necesaria para multi-usuario
+  │         │
+  │         └──► Fase 5 (Organización por usuario)
+  │
+  ├──► Fase 3 (Archivos) ─── independiente, usa Fase 0
+  │
+  ├──► Fase 4 (Editar/Regenerar) ─── necesita Fase 1
+  │
+  └──► Fase 6 (UX final) ─── depende de todas las anteriores
+
+
+TODO:
+Google OAuth — Crear credenciales
+Ir a https://console.cloud.google.com/apis/credentials
+Crear proyecto → "Credentials" → "OAuth 2.0 Client IDs"
+Añadir http://localhost:3000 como Authorized JavaScript origin
+Añadir http://localhost:3000/api/auth/google/callback como redirect URI
+
+ Crear .env.local
+JWT_SECRET=<genera_un_hash_con_node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
+OLLAMA_URL=http://localhost:51234
+GOOGLE_CLIENT_ID=tu_client_id
+GOOGLE_CLIENT_SECRET=tu_client_secret
+NEXTAUTH_URL=http://localhost:3000
+
+
+
+dgx model optimizations:-------------------------||
+
+1. Parámetros de inferencia
+  OLLAMA_FLASH_ATTENTION=1	    <----->    Activa flash attention — acelera ~20-50% en contexto largo
+  OLLAMA_KEEP_ALIVE=-1          <----->    Modelo permanece en memoria para siempre (nunca "cold start" mientras el servicio esté vivo)
+
+2. Modificar Cuantización?
+  gemma3:12b está en Q4_K_M (~4-bit). Si el eval rate sigue bajo, 
+  probar:
+    gemma3:12b-q3_K_M,
+
+3. Mantener warm con keepalive
+  Con OLLAMA_KEEP_ALIVE=-1, el modelo nunca se descarga. Si matas el servicio y lo reinicias,
+  el primer request hará cold start (~4-7s) y los siguientes serán rápidos (~1-2s esperados).
+
+Cambios:-----------------------------------------||
+
+1.Persistencia:
+  Antes: se usaban archivos json y Ahora: sqlite con tablas relacionales: Users, chats, messages
+
+2.Autentificación:
+  Antes: no tenia. 
+  Ahora: cuenta con un solo usuario y se terminará la implementación de google Auth
+
+3.Streaming:
+  Antes: stream: false - esperaba el mensaje completo y simulaba typing
+  Ahora: stream: true -  TransformStream + ReadableStream utiliza token por token directamente de OLLAMA
+
+4. API de Ollama:
+  Antes: /api/generate — solo prompt plano, sin historial y /api/generate — solo prompt plano, sin historial
+  Ahora: /api/chat — messages[] con roles system/user/assistant y ya tiene Historial completo desde SQLite + system prompt
+
+5.-Modelos:
+  Antes: los modelos estaban "hardcodeados" y usaba:
+qwen2.5:7b, qwen3-vl:4b, tenia un Fallback a tinyllama si fallaba alguno de los modelos principales.
+Y Ollama URL estaba hardcodeada en localhost:11434 (POR ESO NUNCA FUNCIONÓ SIN EL TUNEL SSH TOÑO)
+  Ahora: Los modelos se obtienen de variables de entorno (.env)  y no tiene fallback — retry con el mismo modelo
+tambien OLLAMA_URL es configurable en .env.local
+
+6.Arquitectura:
+  Antes: la arquitectura del proyecto era monolitica, lo cual significa que toda la logica operacional estaba 
+solamente en un archivo (page.tsx - 423L), el proceso era todo inline y no tenia separación de responsabilidades
+  Ahora: Page.tsx fue reducido y le extragimos 4 componentes que son: Sidebar, ChatMessage, ChatInput, CodeBlock.
+Cada componente tiene su archivo.
+
+7.Archivos:
+  Antes: Solo imágenes vía paste/drag-and-drop (base64), Sin endpoint de upload, Sin botón en UI (Funcional)
+  Ahora: PDF, DOCX, XLSX, TXT, MD, CSV + imágenes. /api/upload extrae texto y lo prepende al prompt Botón en ChatInput con previsualización
+funcionalidad completa - Pendiente.
+
+8.Rutas API:
+  Antes: 1 ruta: POST /api/chat
+  Ahora: api/chat	9 rutas: chat (GET/POST/DELETE), upload, login, register, me, google, google/callback
+
+9.Config:
+  Antes: next.config.js + next.config.ts (duplicados) | tsconfig.json incluye "scripts"
+  Ahora: Solo next.config.ts (unificado) | tsconfig.json excluye "scripts"
+
+10.Dependencias nuevas:
+Ahora: better-sqlite3, bcryptjs, jsonwebtoken (+ @types)
+
+11.Backend:
+  Antes: Lee/escribe JSON con fs
+Prompt con sistema anti-HTML hardcodeado
+Cleanup agresivo con regex (elimina caracteres)
+Sin usuario — todos los chats globales
+  Ahora: Usa lib/db.ts (SQLite)
+Prompt builder desde lib/prompt-builder.ts
+Sin cleanup — respuesta limpia directa
+Chats asociados a DEV_USER_ID
+
+
+Consideraciones::---------------------------------||
+
+ChatGPT features:
+1. Streaming responses (done ✓)
+2. Conversations (done ✓)
+3. Chat history sidebar (done ✓)
+4. Model selector (Gemini, GPT-4o, etc.) - ❌ missing
+5. Edit sent messages - ❌ missing
+6. Regenerate responses - ❌ missing
+7. Copy message text (done ✓ in code block)
+8. Share conversations - ❌ missing
+9. Export conversations - ❌ missing
+10. Delete conversations (done ✓)
+11. Rename conversations - ❌ missing
+12. File uploads (images, PDF, etc.) (done ✓ but PDF broken)
+13. Voice input - ❌ missing
+14. Markdown rendering (done ✓)
+15. Code syntax highlighting (done ✓)
+16. Dark/light theme toggle - ❌ missing
+17. User settings menu - ❌ missing
+18. Search conversations (done ✓)
+19. Feedback (like/dislike on responses) - ❌ missing
+20. Multiple conversations (done ✓)
+21. System prompt customization - ❌ missing
+22. Temperature/settings controls - ❌ missing
+23. Streaming word-by-word (done ✓)
+24. Copy entire response - ❌ missing (only code blocks have copy)
+25. Thread/reply view - ❌ missing
+
+Gemini features:
+1. Google Drive/Workspace integration - N/A
+2. Image generation - ❌ missing
+3. File analysis (done ✓ but PDF broken)
+4. Chat history (done ✓)
+5. Pinned conversations - ❌ missing
+6. Multi-turn conversations (done ✓)
+7. Suggested prompts / starter prompts - ❌ missing
+8. Verification/search grounding - ❌ missing
+
+Grok features:
+1. Web search integration - ❌ missing
+2. Image generation - ❌ missing
+3. Post to X - N/A
+4. Trending topics context - N/A
+5. Conversation branching - ❌ missing
+
+General expectations:
+1. Responsive design (need to check)
+2. Keyboard shortcuts - ❌ missing
+3. Loading indicators (done?)
+4. Error handling with retry (done ✓)
+5. Auto-scroll (done?)
+6. Typing indicator (done via streaming)
+    
+Todavía no implementado
+🟡 Impacto medio-alto
+Like / Dislike en cada respuesta
+Renombrar chat (UI existe, sin lógica)
+Anclar chat (UI existe, sin lógica)
+Timestamps en los mensajes
+Model selector (gemma3:12b ↔ qwen3-vl:4b)
+🟢 Nice to have
+Feature
+Skeleton / shimmer en lugar de bouncing dots
+Theme toggle dark/light
+Atajos de teclado (Ctrl+K buscar, Ctrl+N nuevo chat)
+Contador de caracteres
+Menú de usuario / perfil

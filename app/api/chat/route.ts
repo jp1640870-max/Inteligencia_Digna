@@ -1,100 +1,143 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
+import {
+  getChatsByUser,
+  getChatById,
+  createChat,
+  addMessage,
+  deleteChat,
+  truncateMessagesToCount,
+} from "@/lib/db";
+import { ollamaChatStream } from "@/lib/ollama";
+import { buildMessages } from "@/lib/prompt-builder";
 
-const CHAT_FILE = path.join(process.cwd(), "data", "chats.json");
+const DEV_USER_ID = "soporte-dev-user-id";
 
-function ensureFile() {
-  const dir = path.dirname(CHAT_FILE);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  if (!fs.existsSync(CHAT_FILE)) fs.writeFileSync(CHAT_FILE, "[]");
-}
-
-function readChats() {
-  ensureFile();
-  try {
-    return JSON.parse(fs.readFileSync(CHAT_FILE, "utf8"));
-  } catch {
-    return [];
-  }
-}
-
-function saveChats(data: any) {
-  ensureFile();
-  fs.writeFileSync(CHAT_FILE, JSON.stringify(data, null, 2));
-}
-
-/* =========================
-   GET - OBLIGATORIO JSON
-========================= */
 export async function GET() {
-  try {
-    const chats = readChats();
-    return NextResponse.json(chats);
-  } catch (e) {
-    console.error("GET ERROR:", e);
-    return NextResponse.json([]);
-  }
+  const chats = getChatsByUser(DEV_USER_ID);
+  return NextResponse.json(chats);
 }
 
-/* =========================
-   POST CHAT + QWEN3-VL
-========================= */
 export async function POST(req: Request) {
+  const userId = DEV_USER_ID;
+
   try {
     const form = await req.formData();
-
     const chatId = (form.get("chatId") as string) || crypto.randomUUID();
     const message = (form.get("message") as string) || "";
-    const image = form.get("image") as string | null;
+    const filesContent = (form.get("filesContent") as string) || "";
+    const editFromIndex = form.get("editFromIndex") as string | null;
 
-    const model = image ? "qwen3-vl:4b" : "qwen:7b";
-
-    const ollama = await fetch("http://localhost:11434/api/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        prompt: message,
-        images: image ? [image.split(",")[1]] : [],
-        stream: false,
-      }),
+    const images: string[] = [];
+    form.forEach((value, key) => {
+      if (key.startsWith("image_") && typeof value === "string") {
+        images.push(value.split(",")[1]);
+      }
     });
 
-    const text = await ollama.text();
+    const isVision = images.length > 0;
+    const TEXT_MODEL = process.env.TEXT_MODEL!;
+    const VISION_MODEL = process.env.VISION_MODEL!;
+    const model = isVision ? VISION_MODEL : TEXT_MODEL;
 
-    let reply = "";
-    try {
-      reply = JSON.parse(text).response || "";
-    } catch {
-      reply = "Error parseando respuesta";
-    }
-
-    const chats = readChats();
-
-    const chat = chats.find((c: any) => c.id === chatId);
-
-    const userMsg = { role: "user", text: message, image };
-    const aiMsg = { role: "ai", text: reply };
-
-    if (chat) {
-      chat.messages.push(userMsg, aiMsg);
+    let chat;
+    if (editFromIndex) {
+      truncateMessagesToCount(chatId, parseInt(editFromIndex));
+      chat = getChatById(chatId);
     } else {
-      chats.unshift({
-        id: chatId,
-        title: message.slice(0, 30) || "Nuevo chat",
-        messages: [userMsg, aiMsg],
-      });
+      chat = getChatById(chatId);
+      if (!chat) {
+        createChat(chatId, userId, message.slice(0, 30));
+        chat = getChatById(chatId);
+      }
     }
 
-    saveChats(chats);
+    const history = chat?.messages || [];
 
-    return NextResponse.json({ reply });
+    const dbMessage = filesContent
+      ? `[Archivos adjuntos]\n\n${message}\n\n---\n${filesContent}`
+      : message;
+    addMessage(chatId, "user", dbMessage, images);
 
+    const ollamaMessages = buildMessages(history, message, filesContent || undefined);
+
+    if (isVision && ollamaMessages.length > 0) {
+      const lastMsg = ollamaMessages[ollamaMessages.length - 1];
+      lastMsg.images = images;
+    }
+
+    const encoder = new TextEncoder();
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+
+    let fullReply = "";
+
+    const streamOllama = async () => {
+      try {
+        const generator = ollamaChatStream(model, ollamaMessages);
+        for await (const chunk of generator) {
+          fullReply += chunk;
+          await writer.write(encoder.encode(chunk));
+        }
+
+        if (!fullReply || fullReply.length < 2) {
+          throw new Error("respuesta vacía");
+        }
+      } catch {
+        console.log("⚡ retry con mismo modelo");
+
+        try {
+          fullReply = "";
+          const retryGen = ollamaChatStream(model, ollamaMessages);
+          for await (const chunk of retryGen) {
+            fullReply += chunk;
+            await writer.write(encoder.encode(chunk));
+          }
+        } catch {
+          const fallback = "No se pudo responder.";
+          fullReply = fallback;
+          await writer.write(encoder.encode(fallback));
+        }
+      } finally {
+        fullReply = fullReply
+          .replace(/<[^>]*>/g, "")
+          .replace(/\(.*?\)/g, "")
+          .replace(/[^\x00-\x7FáéíóúñÁÉÍÓÚÑ¿¡.,!?()\s]/g, "")
+          .trim();
+
+        if (fullReply) {
+          addMessage(chatId, "assistant", fullReply);
+        }
+
+        await writer.close();
+      }
+    };
+
+    streamOllama();
+
+    return new Response(readable, {
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
   } catch (e) {
-    console.error("POST ERROR:", e);
-    return NextResponse.json({ reply: "error server" });
+    console.error(e);
+    return new Response("Error: la IA no respondió.", { status: 500 });
+  }
+}
+
+export async function DELETE(req: Request) {
+
+  try {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get("id");
+
+    if (!id) {
+      return NextResponse.json({ error: "ID requerido" }, { status: 400 });
+    }
+
+    deleteChat(id);
+    return NextResponse.json({ success: true });
+  } catch {
+    return NextResponse.json({ error: "Error al eliminar" }, { status: 500 });
   }
 }

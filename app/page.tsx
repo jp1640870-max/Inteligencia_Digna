@@ -1,58 +1,83 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
+import Sidebar from "./components/Sidebar";
+import ChatMessage from "./components/ChatMessage";
+import ChatInput from "./components/ChatInput";
+import type { Msg, Chat } from "@/types";
 
-type Msg = {
-  role: "user" | "ai";
-  text?: string;
-  image?: string | null;
-  fileName?: string | null;
-};
-
-type Chat = {
-  id: string;
-  title: string;
-  messages: Msg[];
+type FileItem = {
+  file: File;
+  name: string;
+  size: number;
 };
 
 export default function Home() {
+  const router = useRouter();
   const [input, setInput] = useState("");
-  const [image, setImage] = useState<string | null>(null);
-  const [file, setFile] = useState<File | null>(null);
-
+  const [images, setImages] = useState<string[]>([]);
+  const [files, setFiles] = useState<FileItem[]>([]);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
-
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
+  const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [dragging, setDragging] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState(true);
 
   const [chatId, setChatId] = useState(uuidv4());
-  const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const handleClickOutside = () => setMenuOpen(null);
-    window.addEventListener("click", handleClickOutside);
-    return () => window.removeEventListener("click", handleClickOutside);
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    setAutoScroll(atBottom);
   }, []);
 
   useEffect(() => {
-    cargarChats();
-  }, []);
+    if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, autoScroll]);
+
+  const colors = {
+    bg: darkMode ? "bg-[#030812]" : "bg-white",
+    sidebar: darkMode ? "bg-[#0d131d]" : "bg-gray-100",
+    card: darkMode ? "bg-[#121824]" : "bg-white",
+    text: darkMode ? "text-white" : "text-gray-900",
+    muted: darkMode ? "text-gray-400" : "text-gray-500",
+    border: darkMode ? "border-[#202938]" : "border-gray-300",
+  };
 
   const cargarChats = async () => {
-    const res = await fetch("/api/chat");
-    const data = await res.json();
-    setChats(data);
+    try {
+      const res = await fetch("/api/chat");
+      if (res.status === 401) {
+        router.push("/login");
+        return;
+      }
+      const data = await res.json();
+      setChats(Array.isArray(data) ? data : []);
+    } catch {
+      setChats([]);
+    }
   };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cargarChats();
+  }, []);
 
   const nuevoChat = () => {
     setMessages([]);
     setInput("");
-    setImage(null);
-    setFile(null);
+    setImages([]);
+    setFiles([]);
     setChatId(uuidv4());
   };
 
@@ -61,80 +86,165 @@ export default function Home() {
     setMessages(chat.messages);
   };
 
-  const eliminarChat = (id: string) => {
+  const eliminarChat = async (id: string) => {
+    const res = await fetch(`/api/chat?id=${id}`, { method: "DELETE" });
+    if (res.status === 401) {
+      router.push("/login");
+      return;
+    }
     setChats((prev) => prev.filter((c) => c.id !== id));
-  };
-
-  const renombrarChat = (id: string) => {
-    const name = prompt("Nuevo nombre del chat:");
-    if (!name) return;
-
-    setChats((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, title: name } : c))
-    );
-  };
-
-  const anclarChat = (id: string) => {
-    setChats((prev) => {
-      const chat = prev.find((c) => c.id === id);
-      if (!chat) return prev;
-      return [chat, ...prev.filter((c) => c.id !== id)];
-    });
-  };
-
-  const archivarChat = (id: string) => {
-    setChats((prev) => prev.filter((c) => c.id !== id));
+    if (id === chatId) nuevoChat();
   };
 
   const compartirChat = async (chat: Chat) => {
     await navigator.clipboard.writeText(JSON.stringify(chat, null, 2));
-    alert("Chat copiado al portapapeles");
-  };
-
-  const crearImagen = () => {
-    alert("Modo creación de imagen activado (aquí conectas tu IA)");
-  };
-
-  const analizarArchivo = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0] || null;
-    if (f) setFile(f);
+    alert("Copiado ✅");
   };
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const items = e.clipboardData.items;
-
-    for (const item of items) {
+    for (const item of e.clipboardData.items) {
       if (item.type.includes("image")) {
         const file = item.getAsFile();
-        if (!file) return;
-
+        if (!file) continue;
         const reader = new FileReader();
-        reader.onload = () => setImage(reader.result as string);
+        reader.onload = () =>
+          setImages((prev) => [...prev, reader.result as string]);
         reader.readAsDataURL(file);
       }
     }
   };
 
-  const enviarMensaje = async () => {
-    if (!input.trim() && !image && !file) return;
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const dropped = Array.from(e.dataTransfer.files);
+    dropped.forEach((file) => {
+      if (file.type.startsWith("image/")) {
+        const reader = new FileReader();
+        reader.onload = () =>
+          setImages((prev) => [...prev, reader.result as string]);
+        reader.readAsDataURL(file);
+      } else {
+        setFiles((prev) => [...prev, { file, name: file.name, size: file.size }]);
+      }
+    });
+  };
+
+  const handleFilesSelected = (fileList: FileList) => {
+    const newFiles = Array.from(fileList).map((file) => ({
+      file,
+      name: file.name,
+      size: file.size,
+    }));
+    setFiles((prev) => [...prev, ...newFiles]);
+  };
+
+  const handleRegenerate = async () => {
+    if (!chatId || messages.length < 2) return;
+
+    setMessages((prev) => prev.slice(0, -1));
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/chat/regenerate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId }),
+      });
+
+      if (res.status === 401) {
+        router.push("/login");
+        return;
+      }
+
+      if (!res.body) throw new Error("Sin cuerpo de respuesta");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = "";
+
+      setMessages((prev) => [...prev, { role: "ai", text: "" }]);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        accumulated += decoder.decode(value, { stream: true });
+        setMessages((prev) => {
+          const copy = [...prev];
+          const last = copy[copy.length - 1];
+          if (last?.role === "ai") {
+            copy[copy.length - 1] = { role: "ai", text: accumulated };
+          }
+          return copy;
+        });
+      }
+
+      cargarChats();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const enviarMensaje = async (
+    textOverride?: string,
+    editFromIndex?: number
+  ) => {
+    const messageText = textOverride ?? input;
+
+    if (!messageText.trim() && images.length === 0 && files.length === 0) return;
 
     setLoading(true);
 
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", text: input, image, fileName: file?.name || null },
-    ]);
+    const extraImages = [...images];
+    let filesContent = "";
+    let fileNames: { name: string }[] = [];
+
+    if (files.length > 0) {
+      const uploadForm = new FormData();
+      files.forEach((f) => uploadForm.append("files", f.file));
+
+      try {
+        const uploadRes = await fetch("/api/upload", {
+          method: "POST",
+          body: uploadForm,
+        });
+
+        if (uploadRes.ok) {
+          const uploadData: { files: { name: string; content: string }[] } = await uploadRes.json();
+          filesContent = uploadData.files.map((f) => f.content).join("\n\n");
+          fileNames = uploadData.files.map((f) => ({ name: f.name }));
+        }
+      } catch {
+        // fallback: envía solo el texto
+      }
+    }
+
+    const visibleText = messageText || "Analiza este archivo";
 
     const formData = new FormData();
     formData.append("chatId", chatId);
-    formData.append("message", input);
+    formData.append("message", visibleText);
+    if (filesContent) formData.append("filesContent", filesContent);
 
-    if (image) formData.append("image", image);
-    if (file) formData.append("file", file);
+    extraImages.forEach((img, i) => {
+      formData.append(`image_${i}`, img);
+    });
+
+    if (editFromIndex !== undefined) {
+      formData.append("editFromIndex", String(editFromIndex));
+      setMessages((prev) => prev.slice(0, editFromIndex));
+    }
+
+    setInput("");
+    setImages([]);
+    setFiles([]);
+
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", text: visibleText, images: extraImages, files: fileNames },
+    ]);
+
+    setMessages((prev) => [...prev, { role: "ai", text: "" }]);
 
     try {
       const res = await fetch("/api/chat", {
@@ -142,212 +252,166 @@ export default function Home() {
         body: formData,
       });
 
-      const data = await res.json();
+      if (res.status === 401) {
+        router.push("/login");
+        return;
+      }
 
-      setMessages((prev) => [
-        ...prev,
-        { role: "ai", text: data.reply || "..." },
-      ]);
+      if (!res.body) throw new Error("Sin cuerpo de respuesta");
 
-      setInput("");
-      setImage(null);
-      setFile(null);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = "";
 
-      await cargarChats();
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        { role: "ai", text: "Error al conectar" },
-      ]);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        accumulated += decoder.decode(value, { stream: true });
+        setMessages((prev) => {
+          const copy = [...prev];
+          const last = copy[copy.length - 1];
+          if (last?.role === "ai") {
+            copy[copy.length - 1] = { role: "ai", text: accumulated };
+          }
+          return copy;
+        });
+      }
+
+      cargarChats();
     } finally {
       setLoading(false);
     }
   };
 
+  const handleEditMessage = (index: number, newText: string) => {
+    enviarMensaje(newText, index);
+  };
+
   return (
-    <main className="h-screen bg-[#030812] text-white flex">
+    <main
+      className={`h-screen flex ${colors.bg} ${colors.text} overflow-hidden`}
+      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={handleDrop}
+    >
+      <Sidebar
+        chats={chats}
+        search={search}
+        menuOpen={menuOpen}
+        sidebarOpen={sidebarOpen}
+        darkMode={darkMode}
+        onToggleDarkMode={() => setDarkMode((v) => !v)}
+        onNewChat={nuevoChat}
+        onOpenChat={abrirChat}
+        onDeleteChat={eliminarChat}
+        onShareChat={compartirChat}
+        onSearch={setSearch}
+        onMenuToggle={setMenuOpen}
+        onToggleSidebar={() => setSidebarOpen((v) => !v)}
+        onFilesSelected={handleFilesSelected}
+      />
 
-      {/* SIDEBAR */}
-      <div className="w-[300px] bg-[#0d131d] border-r border-[#202938] flex flex-col">
-
-        <div className="flex flex-col items-center pt-6 pb-6">
-          <img src="/logo.png" className="w-20 h-20" />
-
-          <p className="text-green-500 text-sm mt-3 text-center">
-            La salud es para todos
-          </p>
-        </div>
-
-        <div className="px-4 space-y-3">
-          <button onClick={nuevoChat} className="btn">
-            ➕ Nuevo chat
+      <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex items-center gap-3 px-4 pt-3">
+          <button
+            onClick={() => setSidebarOpen((v) => !v)}
+            className={`lg:hidden p-2 rounded-xl hover:bg-[#1e293b] transition text-lg ${colors.card}`}
+            title="Menú"
+          >
+            ☰
           </button>
-
-          <button onClick={crearImagen} className="btn">
-            🎨 Crear imagen
-          </button>
-
-          <button onClick={analizarArchivo} className="btn">
-            📄 Analizar archivo
-          </button>
-
-          <button onClick={() => alert("Sección de proyectos")} className="btn">
-            📁 Proyectos
-          </button>
-
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar chats..."
-            className="w-full p-3 rounded-xl bg-[#121824] outline-none"
-          />
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-3 mt-3">
-          <p className="text-xs text-gray-400 mb-2">Historial de chats</p>
-
-          {chats
-            .filter((c) =>
-              c.title.toLowerCase().includes(search.toLowerCase())
-            )
-            .map((chat) => (
-              <div
-                key={chat.id}
-                className="relative flex items-center justify-between p-3 rounded-xl hover:bg-[#121824] mb-2"
-              >
-                <button
-                  onClick={() => abrirChat(chat)}
-                  className="flex-1 text-left"
-                >
-                  {chat.title}
-                </button>
-
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setMenuOpen(menuOpen === chat.id ? null : chat.id);
-                  }}
-                >
-                  ⋮
-                </button>
-
-                {menuOpen === chat.id && (
-                  <div
-                    className="absolute right-2 top-10 bg-[#0d131d] border border-[#1f2632] rounded-xl w-44 z-50"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <button onClick={() => compartirChat(chat)} className="menu">📋 Compartir</button>
-                    <button onClick={() => renombrarChat(chat.id)} className="menu">✏️ Renombrar</button>
-                    <button onClick={() => anclarChat(chat.id)} className="menu">📌 Anclar</button>
-                    <button onClick={() => archivarChat(chat.id)} className="menu">📦 Archivar</button>
-                    <button onClick={() => eliminarChat(chat.id)} className="menu text-red-500">🗑 Eliminar</button>
-                  </div>
-                )}
-              </div>
-            ))}
-        </div>
-      </div>
-
-      {/* MAIN */}
-      <div className="flex-1 flex flex-col">
-
-        {/* HEADER */}
-        <div className="text-center mt-10">
-          <div className="flex justify-center items-center gap-3">
-
-            {/* LOGO reemplaza el círculo */}
-            <img src="/logo.png" className="w-10 h-10 rounded-full" />
-
-            <h1 className="text-4xl font-bold text-green-400">
+          <div className="text-center flex-1">
+            <h1 className="text-2xl lg:text-4xl font-bold text-green-400">
               Inteligencia Digna
             </h1>
+            <p className={`text-sm ${colors.muted}`}>by Salud Digna</p>
           </div>
-          <p className="text-gray-400">by Salud Digna</p>
+          <div className="w-10 lg:hidden" />
         </div>
 
-        {/* WELCOME */}
         {messages.length === 0 && (
-          <div className="flex-1 flex flex-col items-center justify-center">
-            <div className="bg-[#121824] p-6 rounded-2xl text-center max-w-[600px]">
-              <h2 className="text-xl">
-                ¡Hola! Soy Inteligencia Digna, tu asistente virtual.
-              </h2>
-              <p className="text-gray-400 mt-2">
+          <div className="flex-1 flex items-center justify-center">
+            <div className={`p-6 rounded-2xl text-center mx-4 ${colors.card}`}>
+              <h2>¡Hola! Soy Inteligencia Digna</h2>
+              <p className={`mt-2 ${colors.muted}`}>
                 ¿En qué puedo ayudarte hoy?
               </p>
             </div>
           </div>
         )}
 
-        {/* CHAT */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-6 max-w-2xl mx-auto w-full">
           {messages.map((m, i) => (
-            <div key={i}>
-              {m.text && (
-                <div
-                  className={`p-4 rounded-xl max-w-[700px] ${
-                    m.role === "user"
-                      ? "bg-green-600 ml-auto text-right"
-                      : "bg-[#121824]"
-                  }`}
-                >
-                  {m.text}
-                </div>
-              )}
-            </div>
+            <ChatMessage
+              key={m.id ?? i}
+              message={m}
+              index={i}
+              isLastAi={m.role === "ai" && i === messages.length - 1 && messages.length >= 2}
+              onEdit={m.role === "user" ? handleEditMessage : undefined}
+              onRegenerate={
+                m.role === "ai" && i === messages.length - 1 && messages.length >= 2
+                  ? handleRegenerate
+                  : undefined
+              }
+              darkMode={darkMode}
+            />
           ))}
 
-          {loading && <div>...</div>}
+          {loading && (
+            <div className="flex items-center gap-1.5 mb-4 ml-1">
+              <video
+                src="/typing.mp4"
+                autoPlay
+                loop
+                muted
+                playsInline
+                className="h-8"
+              />
+            </div>
+          )}
+          <div ref={bottomRef} />
         </div>
 
-        {/* INPUT */}
-        <div className="p-4 border-t border-[#1f2632]">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onPaste={handlePaste}
-            className="w-full p-3 rounded-xl bg-[#121824] outline-none"
-            placeholder="Escribe tu mensaje..."
-          />
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            className="hidden"
-            onChange={handleFileChange}
-          />
-
-          <button
-            onClick={enviarMensaje}
-            className="mt-2 text-green-400 text-xl"
-          >
-            ➤
-          </button>
-        </div>
-
+        <ChatInput
+          input={input}
+          images={images}
+          files={files.map((f) => ({ name: f.name, size: f.size }))}
+          loading={loading}
+          onInputChange={setInput}
+          onSend={() => enviarMensaje()}
+          onPaste={handlePaste}
+          onRemoveImage={(i) =>
+            setImages((prev) => prev.filter((_, idx) => idx !== i))
+          }
+          onRemoveFile={(i) =>
+            setFiles((prev) => prev.filter((_, idx) => idx !== i))
+          }
+          onFilesSelected={handleFilesSelected}
+        />
       </div>
 
       <style jsx>{`
-        .btn {
-          width: 100%;
-          background: #121824;
-          padding: 12px;
-          border-radius: 12px;
-          text-align: left;
+        ::-webkit-scrollbar {
+          width: 8px;
         }
-        .btn:hover {
-          background: #1b2433;
+        ::-webkit-scrollbar-track {
+          background: ${darkMode ? "#030812" : "#f1f5f9"};
         }
-        .menu {
-          width: 100%;
-          padding: 8px 12px;
-          text-align: left;
+        ::-webkit-scrollbar-thumb {
+          background: ${darkMode ? "#1e293b" : "#cbd5e1"};
+          border-radius: 10px;
         }
-        .menu:hover {
-          background: #121824;
+        ::-webkit-scrollbar-thumb:hover {
+          background: ${darkMode ? "#334155" : "#94a3b8"};
+        }
+        @keyframes bounce {
+          0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+          40% { opacity: 1; transform: translateY(-4px); }
+        }
+        .animate-bounce {
+          animation: bounce 1.2s infinite;
         }
       `}</style>
-
     </main>
   );
 }
