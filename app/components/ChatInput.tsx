@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useEffect } from "react";
+import { ArrowUp, Paperclip } from "lucide-react";
 
 type FilePreview = {
   name: string;
@@ -93,7 +94,7 @@ const ChatInput = ({
           className="p-1.5 rounded-lg hover:bg-[#1e293b] transition text-gray-400 hover:text-gray-200 shrink-0"
           title="Adjuntar archivo"
         >
-          <span className="text-lg">📎</span>
+          <Paperclip size={18} />
         </button>
 
         <input
@@ -128,7 +129,7 @@ const ChatInput = ({
           disabled={loading}
           className="p-1.5 rounded-lg bg-green-600 hover:bg-green-500 disabled:bg-gray-600 transition shrink-0"
         >
-          <span className="text-lg">➤</span>
+          <ArrowUp size={18} />
         </button>
       </form>
     </div>

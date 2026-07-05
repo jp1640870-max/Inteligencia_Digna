@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
+import { PanelLeft } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import ChatMessage from "./components/ChatMessage";
 import ChatInput from "./components/ChatInput";
@@ -37,6 +38,7 @@ export default function Home() {
   const [darkMode, setDarkMode] = useState(true);
   const [user, setUser] = useState<UserInfo | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const [chatId, setChatId] = useState(uuidv4());
   const [autoScroll, setAutoScroll] = useState(true);
@@ -315,6 +317,7 @@ export default function Home() {
         search={search}
         menuOpen={menuOpen}
         sidebarOpen={sidebarOpen}
+        collapsed={sidebarCollapsed}
         darkMode={darkMode}
         onToggleDarkMode={() => setDarkMode((v) => !v)}
         onNewChat={nuevoChat}
@@ -324,6 +327,7 @@ export default function Home() {
         onSearch={setSearch}
         onMenuToggle={setMenuOpen}
         onToggleSidebar={() => setSidebarOpen((v) => !v)}
+        onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
         onFilesSelected={handleFilesSelected}
       />
 
@@ -331,10 +335,10 @@ export default function Home() {
         <div className="flex items-center gap-3 px-4 pt-3">
           <button
             onClick={() => setSidebarOpen((v) => !v)}
-            className={`lg:hidden p-2 rounded-xl hover:bg-[#1e293b] transition text-lg ${colors.card}`}
+            className={`lg:hidden p-2 rounded-xl hover:bg-[#1e293b] transition ${colors.card}`}
             title="Menú"
           >
-            ☰
+            <PanelLeft size={20} />
           </button>
           <div className="text-center flex-1">
             <h1 className="text-2xl lg:text-4xl font-bold text-green-400">

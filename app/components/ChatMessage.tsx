@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { Paperclip } from "lucide-react";
 import CodeBlock from "./CodeBlock";
 import type { Msg } from "@/types";
 
@@ -102,7 +103,8 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
                       key={idx}
                       className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md ${colors.fileTagBg} ${colors.fileTagText}`}
                     >
-                      📄 {f.name}
+                      <Paperclip size={12} className="shrink-0" />
+                      {f.name}
                     </span>
                   ))}
                 </div>

@@ -9,6 +9,7 @@ const networkIPs = Object.values(networkInterfaces())
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: [...new Set(["localhost", ...networkIPs, "*.lvh.me", "*.ngrok-free.dev"])],
+  devIndicators: false,
 };
 
 export default nextConfig;
