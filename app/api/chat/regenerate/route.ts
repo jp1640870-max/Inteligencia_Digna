@@ -4,14 +4,23 @@ import { NextResponse } from "next/server";
 import { getChatById, getMessagesByChat, truncateMessagesToCount, addMessage } from "@/lib/db";
 import { ollamaChatStream } from "@/lib/ollama";
 import { buildMessages } from "@/lib/prompt-builder";
+import { getUserIdFromRequest } from "@/lib/auth";
 
 export async function POST(req: Request) {
+  const userId = await getUserIdFromRequest();
+  if (!userId) {
+    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+  }
+
   try {
     const { chatId } = await req.json();
 
     const chat = getChatById(chatId);
     if (!chat) {
       return NextResponse.json({ error: "Chat no encontrado" }, { status: 404 });
+    }
+    if (chat.user_id !== userId) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 403 });
     }
 
     const messages = getMessagesByChat(chatId);

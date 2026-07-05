@@ -14,6 +14,13 @@ type FileItem = {
   size: number;
 };
 
+type UserInfo = {
+  id: string;
+  email: string;
+  name: string | null;
+  picture: string | null;
+};
+
 export default function Home() {
   const router = useRouter();
   const [input, setInput] = useState("");
@@ -28,6 +35,8 @@ export default function Home() {
   const [dragging, setDragging] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(true);
+  const [user, setUser] = useState<UserInfo | null>(null);
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
   const [chatId, setChatId] = useState(uuidv4());
   const [autoScroll, setAutoScroll] = useState(true);
@@ -71,7 +80,14 @@ export default function Home() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     cargarChats();
+    fetch("/api/auth/me").then((r) => r.ok ? r.json() : null).then(setUser);
   }, []);
+
+  useEffect(() => {
+    const close = () => setShowUserMenu(false);
+    if (showUserMenu) document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [showUserMenu]);
 
   const nuevoChat = () => {
     setMessages([]);
@@ -326,7 +342,37 @@ export default function Home() {
             </h1>
             <p className={`text-sm ${colors.muted}`}>by Salud Digna</p>
           </div>
-          <div className="w-10 lg:hidden" />
+          {user ? (
+            <div className="relative">
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowUserMenu((v) => !v); }}
+                className="w-9 h-9 rounded-full overflow-hidden border-2 border-green-500 hover:opacity-80 transition"
+              >
+                {user.picture ? (
+                  <img src={user.picture} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full bg-green-600 flex items-center justify-center text-sm font-bold">
+                    {(user.name || user.email)[0].toUpperCase()}
+                  </div>
+                )}
+              </button>
+              {showUserMenu && (
+                <div className="absolute right-0 mt-2 w-56 bg-[#121824] border border-[#202938] rounded-xl p-2 shadow-xl z-50" onClick={(e) => e.stopPropagation()}>
+                  <p className="px-3 py-1 text-sm text-white font-medium truncate">{user.name || user.email}</p>
+                  <p className="px-3 py-1 text-xs text-gray-400 truncate">{user.email}</p>
+                  <hr className="border-[#202938] my-1" />
+                  <a
+                    href="/api/auth/logout"
+                    className="block w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-[#1e293b] rounded-lg"
+                  >
+                    Cerrar sesión
+                  </a>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="w-10 lg:hidden" />
+          )}
         </div>
 
         {messages.length === 0 && (

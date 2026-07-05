@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --experimental-https",
+    "dev": "node scripts/dev.js",
+    "dev:next": "next dev --experimental-https",
     "dev:login": "concurrently \"next dev --experimental-https\" \"wait-on https://lvh.me:3000 && start https://lvh.me:3000/login\"",
     "build": "next build",
     "start": "next start",

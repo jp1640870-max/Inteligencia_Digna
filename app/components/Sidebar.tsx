@@ -73,7 +73,11 @@ const Sidebar = ({
         } lg:translate-x-0`}
       >
         <div className="flex flex-col items-center pt-5 pb-4">
-          <img src="/logo.png" className="w-12 h-12" />
+          <img
+            src="/LogoSaludDigna.svg"
+            className="w-24 h-24"
+            alt="Logo"
+          />
         </div>
 
         <div className="px-3 space-y-0.5">

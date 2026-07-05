@@ -23,6 +23,7 @@ function initTables() {
       name TEXT,
       password_hash TEXT,
       google_id TEXT UNIQUE,
+      picture TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -47,6 +48,8 @@ function initTables() {
     CREATE INDEX IF NOT EXISTS idx_chats_user ON chats(user_id);
     CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id);
   `);
+
+  try { db.exec("ALTER TABLE users ADD COLUMN picture TEXT"); } catch {}
 }
 
 /* ============ USERS ============ */
@@ -56,14 +59,15 @@ export function createUser(
   email: string,
   name: string | null,
   passwordHash?: string,
-  googleId?: string
+  googleId?: string,
+  picture?: string
 ) {
   const d = getDb();
   const stmt = d.prepare(`
-    INSERT INTO users (id, email, name, password_hash, google_id)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO users (id, email, name, password_hash, google_id, picture)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
-  stmt.run(id, email, name, passwordHash || null, googleId || null);
+  stmt.run(id, email, name, passwordHash || null, googleId || null, picture || null);
 }
 
 export function getUserByEmail(email: string) {
@@ -79,6 +83,16 @@ export function getUserByGoogleId(googleId: string) {
 export function getUserById(id: string) {
   const d = getDb();
   return d.prepare("SELECT * FROM users WHERE id = ?").get(id) as any;
+}
+
+export function updateUserPicture(userId: string, picture: string | null) {
+  const d = getDb();
+  d.prepare("UPDATE users SET picture = ? WHERE id = ?").run(picture, userId);
+}
+
+export function updateUserGoogleId(userId: string, googleId: string, picture: string | null) {
+  const d = getDb();
+  d.prepare("UPDATE users SET google_id = ?, picture = ? WHERE id = ?").run(googleId, picture, userId);
 }
 
 /* ============ CHATS ============ */
@@ -102,6 +116,7 @@ export function getChatById(chatId: string) {
   if (!chat) return null;
   return {
     id: chat.id,
+    user_id: chat.user_id,
     title: chat.title,
     messages: getMessagesByChat(chat.id),
   };

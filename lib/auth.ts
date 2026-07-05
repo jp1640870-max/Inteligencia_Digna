@@ -31,7 +31,8 @@ export async function getUserIdFromRequest(): Promise<string | null> {
     if (!token) return null;
     const payload = verifyToken(token);
     return payload?.userId || null;
-  } catch {
+  } catch (e) {
+    console.error("[getUserIdFromRequest]", e);
     return null;
   }
 }

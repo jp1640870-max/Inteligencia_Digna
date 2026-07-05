@@ -11,16 +11,22 @@ import {
 } from "@/lib/db";
 import { ollamaChatStream } from "@/lib/ollama";
 import { buildMessages } from "@/lib/prompt-builder";
+import { getUserIdFromRequest } from "@/lib/auth";
 
-const DEV_USER_ID = "soporte-dev-user-id";
-
-export async function GET() {
-  const chats = getChatsByUser(DEV_USER_ID);
+export async function GET(_req: Request) {
+  const userId = await getUserIdFromRequest();
+  if (!userId) {
+    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+  }
+  const chats = getChatsByUser(userId);
   return NextResponse.json(chats);
 }
 
 export async function POST(req: Request) {
-  const userId = DEV_USER_ID;
+  const userId = await getUserIdFromRequest();
+  if (!userId) {
+    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+  }
 
   try {
     const form = await req.formData();
@@ -43,6 +49,10 @@ export async function POST(req: Request) {
 
     let chat;
     if (editFromIndex) {
+      chat = getChatById(chatId);
+      if (chat && chat.user_id !== userId) {
+        return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+      }
       truncateMessagesToCount(chatId, parseInt(editFromIndex));
       chat = getChatById(chatId);
     } else {
@@ -50,6 +60,8 @@ export async function POST(req: Request) {
       if (!chat) {
         createChat(chatId, userId, message.slice(0, 30));
         chat = getChatById(chatId);
+      } else if (chat.user_id !== userId) {
+        return NextResponse.json({ error: "No autorizado" }, { status: 403 });
       }
     }
 
@@ -126,6 +138,10 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  const userId = await getUserIdFromRequest();
+  if (!userId) {
+    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+  }
 
   try {
     const { searchParams } = new URL(req.url);
@@ -133,6 +149,14 @@ export async function DELETE(req: Request) {
 
     if (!id) {
       return NextResponse.json({ error: "ID requerido" }, { status: 400 });
+    }
+
+    const chat = getChatById(id);
+    if (!chat) {
+      return NextResponse.json({ error: "Chat no encontrado" }, { status: 404 });
+    }
+    if (chat.user_id !== userId) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 403 });
     }
 
     deleteChat(id);
