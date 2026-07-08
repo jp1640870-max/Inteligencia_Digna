@@ -88,6 +88,13 @@ export function getUserById(id: string) {
   return d.prepare("SELECT * FROM users WHERE id = ?").get(id) as any;
 }
 
+export function getUserStats(userId: string) {
+  const d = getDb();
+  const projectCount = (d.prepare("SELECT COUNT(*) as count FROM projects WHERE user_id = ?").get(userId) as any)?.count || 0;
+  const chatCount = (d.prepare("SELECT COUNT(*) as count FROM chats WHERE user_id = ?").get(userId) as any)?.count || 0;
+  return { projectCount, chatCount };
+}
+
 export function updateUserPicture(userId: string, picture: string | null) {
   const d = getDb();
   d.prepare("UPDATE users SET picture = ? WHERE id = ?").run(picture, userId);

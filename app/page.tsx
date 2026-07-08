@@ -7,7 +7,9 @@ import { PanelLeft } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import ChatMessage from "./components/ChatMessage";
 import ChatInput from "./components/ChatInput";
-import type { Msg, Chat } from "@/types";
+import ProjectDetailView from "./components/ProjectDetailView";
+import ProjectsListView from "./components/ProjectsListView";
+import type { Msg, Chat, Project } from "@/types";
 
 type FileItem = {
   file: File;
@@ -42,6 +44,17 @@ export default function Home() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+
+  // Project state
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectSearch, setProjectSearch] = useState("");
+  const [projectChats, setProjectChats] = useState<Record<string, Chat[]>>({});
+  const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
+  const [showNewProjectInput, setShowNewProjectInput] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [showAddChatProjectId, setShowAddChatProjectId] = useState<string | null>(null);
+  type ViewState = { type: "chat" } | { type: "projects" } | { type: "project"; id: string };
+  const [view, setView] = useState<ViewState>({ type: "chat" });
 
   const [chatId, setChatId] = useState(uuidv4());
   const [autoScroll, setAutoScroll] = useState(true);
@@ -82,9 +95,26 @@ export default function Home() {
     }
   };
 
+  const cargarProjects = async () => {
+    try {
+      const res = await fetch("/api/projects");
+      if (res.ok) setProjects(await res.json());
+    } catch {}
+  };
+
+  const cargarProjectChats = async (projectId: string) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/chats`);
+      if (res.ok) {
+        const data = await res.json();
+        setProjectChats((prev) => ({ ...prev, [projectId]: data }));
+      }
+    } catch {}
+  };
+
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     cargarChats();
+    cargarProjects();
     fetch("/api/auth/me").then((r) => r.ok ? r.json() : null).then(setUser);
 
     const params = new URLSearchParams(window.location.search);
@@ -105,12 +135,33 @@ export default function Home() {
     setInput("");
     setImages([]);
     setFiles([]);
-    setChatId(uuidv4());
+    const newId = uuidv4();
+    setChatId(newId);
+
+    if (currentProjectId) {
+      fetch("/api/projects/" + currentProjectId + "/chats/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "Nueva conversación" }),
+      }).then(() => {
+        cargarProjectChats(currentProjectId);
+        cargarProjects();
+      });
+    }
   };
 
   const abrirChat = (chat: Chat) => {
     setChatId(chat.id);
     setMessages(chat.messages);
+  };
+
+  const abrirChatEnProject = (chat: Chat, projectId: string) => {
+    setView({ type: "chat" });
+    setCurrentProjectId(projectId);
+    setChatId(chat.id);
+    const fullChat = chats.find((c) => c.id === chat.id);
+    setMessages(fullChat ? fullChat.messages : []);
+    window.history.replaceState(null, "", `/?projectId=${projectId}`);
   };
 
   const eliminarChat = async (id: string) => {
@@ -212,7 +263,7 @@ export default function Home() {
       const res = await fetch("/api/chat/regenerate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chatId }),
+        body: JSON.stringify({ chatId, projectId: currentProjectId }),
       });
 
       if (res.status === 401) {
@@ -357,6 +408,121 @@ export default function Home() {
     enviarMensaje(newText, index);
   };
 
+  // Project handlers
+  const handleToggleProject = (projectId: string) => {
+    if (projectId === "__toggle") {
+      setView({ type: "projects" });
+      return;
+    }
+    if (expandedProjectId === projectId) {
+      setExpandedProjectId(null);
+    } else {
+      setExpandedProjectId(projectId);
+      if (!projectChats[projectId]) {
+        cargarProjectChats(projectId);
+      }
+    }
+  };
+
+  const handleDoubleClickProject = (projectId: string) => {
+    setExpandedProjectId(null);
+    setView({ type: "project", id: projectId });
+  };
+
+  const handleRemoveChatFromProject = async (projectId: string, chatId: string) => {
+    try {
+      await fetch(`/api/projects/${projectId}/chats`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId }),
+      });
+      setProjectChats((prev) => ({
+        ...prev,
+        [projectId]: (prev[projectId] || []).filter((c) => c.id !== chatId),
+      }));
+      cargarProjects();
+      cargarChats();
+    } catch {}
+  };
+
+  const handleAddChatToProject = (projectId: string) => {
+    setShowAddChatProjectId(projectId);
+  };
+
+  const handleAddChatToProjectSubmit = async (projectId: string, chatId: string) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/chats`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setProjectChats((prev) => ({ ...prev, [projectId]: data }));
+        cargarProjects();
+      }
+    } catch {}
+    setShowAddChatProjectId(null);
+  };
+
+  const handleAddChatToProjectById = async (projectId: string, chatId: string) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/chats`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setProjectChats((prev) => ({ ...prev, [projectId]: data }));
+        cargarProjects();
+      }
+    } catch {}
+  };
+
+  const handleCreateProjectAndAddChat = async (name: string, chatId: string) => {
+    try {
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, instructions: "" }),
+      });
+      if (res.ok) {
+        const project = await res.json();
+        await handleAddChatToProjectById(project.id, chatId);
+      }
+    } catch {}
+  };
+
+  const handleCreateProject = async () => {
+    if (!newProjectName.trim()) return;
+    try {
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newProjectName.trim(), instructions: "" }),
+      });
+      if (res.ok) {
+        setNewProjectName("");
+        setShowNewProjectInput(false);
+        cargarProjects();
+      }
+    } catch {}
+  };
+
+  const handleOpenChatInProjectView = (chat: Chat, projectId: string) => {
+    setView({ type: "chat" });
+    setCurrentProjectId(projectId);
+    setChatId(chat.id);
+    const fullChat = chats.find((c) => c.id === chat.id);
+    setMessages(fullChat ? fullChat.messages : []);
+    window.history.replaceState(null, "", `/?projectId=${projectId}`);
+  };
+
+  const handleOpenProjectFromList = (projectId: string) => {
+    setView({ type: "project", id: projectId });
+  };
+
   return (
     <main
       className={`h-screen flex ${colors.bg} ${colors.text} overflow-hidden`}
@@ -371,6 +537,12 @@ export default function Home() {
         sidebarOpen={sidebarOpen}
         collapsed={sidebarCollapsed}
         darkMode={darkMode}
+        projects={projects}
+        projectChats={projectChats}
+        expandedProjectId={expandedProjectId}
+        projectSearch={projectSearch}
+        newProjectName={newProjectName}
+        showNewProjectInput={showNewProjectInput}
         onToggleDarkMode={() => setDarkMode((v) => !v)}
         onNewChat={nuevoChat}
         onOpenChat={abrirChat}
@@ -382,116 +554,153 @@ export default function Home() {
         onToggleSidebar={() => setSidebarOpen((v) => !v)}
         onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
         onFilesSelected={handleFilesSelected}
+        onToggleProject={handleToggleProject}
+        onDoubleClickProject={handleDoubleClickProject}
+        onOpenChatInProject={abrirChatEnProject}
+        onAddChatToProject={handleAddChatToProject}
+        onRemoveChatFromProject={handleRemoveChatFromProject}
+        onProjectSearch={setProjectSearch}
+        onNewProjectNameChange={setNewProjectName}
+        onShowNewProjectInput={setShowNewProjectInput}
+        onCreateProject={handleCreateProject}
+        onAddChatToProjectById={handleAddChatToProjectById}
+        onCreateProjectAndAddChat={handleCreateProjectAndAddChat}
       />
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex items-center gap-3 px-4 pt-3">
-          <button
-            onClick={() => setSidebarOpen((v) => !v)}
-            className={`lg:hidden p-2 rounded-xl hover:bg-[#1e293b] transition ${colors.card}`}
-            title="Menú"
-          >
-            <PanelLeft size={20} />
-          </button>
-          <div className="text-center flex-1">
-            <h1 className="text-2xl lg:text-4xl font-bold text-green-400">
-              Inteligencia Digna
-            </h1>
-            <p className={`text-sm ${colors.muted}`}>by Salud Digna</p>
-          </div>
-          {user ? (
-            <div className="relative">
-              <button
-                onClick={(e) => { e.stopPropagation(); setShowUserMenu((v) => !v); }}
-                className="w-9 h-9 rounded-full overflow-hidden border-2 border-green-500 hover:opacity-80 transition"
-              >
-                {user.picture ? (
-                  <img src={user.picture} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full bg-green-600 flex items-center justify-center text-sm font-bold">
-                    {(user.name || user.email)[0].toUpperCase()}
+      {view.type === "projects" && (
+        <ProjectsListView
+          darkMode={darkMode}
+          onOpenProject={handleOpenProjectFromList}
+          onBack={() => setView({ type: "chat" })}
+          onProjectChanged={() => cargarProjects()}
+        />
+      )}
+
+      {view.type === "project" && (
+        <ProjectDetailView
+          projectId={view.id}
+          darkMode={darkMode}
+          onBack={() => setView({ type: "chat" })}
+          onOpenChat={handleOpenChatInProjectView}
+          onProjectChanged={() => cargarProjects()}
+        />
+      )}
+
+      {view.type === "chat" && (
+        <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex items-center gap-3 px-4 pt-3">
+            <button
+              onClick={() => setSidebarOpen((v) => !v)}
+              className={`lg:hidden p-2 rounded-xl hover:bg-[#1e293b] transition ${colors.card}`}
+              title="Menú"
+            >
+              <PanelLeft size={20} />
+            </button>
+            <div className="text-center flex-1">
+              {currentProjectId && (
+                <span className="text-xs text-green-400 block">
+                  Proyecto activo
+                </span>
+              )}
+              <h1 className="text-2xl lg:text-4xl font-bold text-green-400">
+                Inteligencia Digna
+              </h1>
+              <p className={`text-sm ${colors.muted}`}>by Salud Digna</p>
+            </div>
+            {user ? (
+              <div className="relative">
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowUserMenu((v) => !v); }}
+                  className="w-9 h-9 rounded-full overflow-hidden border-2 border-green-500 hover:opacity-80 transition"
+                >
+                  {user.picture ? (
+                    <img src={user.picture} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full bg-green-600 flex items-center justify-center text-sm font-bold">
+                      {(user.name || user.email)[0].toUpperCase()}
+                    </div>
+                  )}
+                </button>
+                {showUserMenu && (
+                  <div className="absolute right-0 mt-2 w-56 bg-[#121824] border border-[#202938] rounded-xl p-2 shadow-xl z-50" onClick={(e) => e.stopPropagation()}>
+                    <p className="px-3 py-1 text-sm text-white font-medium truncate">{user.name || user.email}</p>
+                    <p className="px-3 py-1 text-xs text-gray-400 truncate">{user.email}</p>
+                    <hr className="border-[#202938] my-1" />
+                    <a
+                      href="/api/auth/logout"
+                      className="block w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-[#1e293b] rounded-lg"
+                    >
+                      Cerrar sesión
+                    </a>
                   </div>
                 )}
-              </button>
-              {showUserMenu && (
-                <div className="absolute right-0 mt-2 w-56 bg-[#121824] border border-[#202938] rounded-xl p-2 shadow-xl z-50" onClick={(e) => e.stopPropagation()}>
-                  <p className="px-3 py-1 text-sm text-white font-medium truncate">{user.name || user.email}</p>
-                  <p className="px-3 py-1 text-xs text-gray-400 truncate">{user.email}</p>
-                  <hr className="border-[#202938] my-1" />
-                  <a
-                    href="/api/auth/logout"
-                    className="block w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-[#1e293b] rounded-lg"
-                  >
-                    Cerrar sesión
-                  </a>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="w-10 lg:hidden" />
-          )}
-        </div>
-
-        {messages.length === 0 && (
-          <div className="flex-1 flex items-center justify-center">
-            <div className={`p-6 rounded-2xl text-center mx-4 ${colors.card}`}>
-              <h2>¡Hola! Soy Inteligencia Digna</h2>
-              <p className={`mt-2 ${colors.muted}`}>
-                ¿En qué puedo ayudarte hoy?
-              </p>
-            </div>
+              </div>
+            ) : (
+              <div className="w-10 lg:hidden" />
+            )}
           </div>
-        )}
 
-        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-6 max-w-2xl mx-auto w-full">
-          {messages.map((m, i) => (
-            <ChatMessage
-              key={m.id ?? i}
-              message={m}
-              index={i}
-              isLastAi={m.role === "ai" && i === messages.length - 1 && messages.length >= 2}
-              onEdit={m.role === "user" ? handleEditMessage : undefined}
-              onRegenerate={
-                m.role === "ai" && i === messages.length - 1 && messages.length >= 2
-                  ? handleRegenerate
-                  : undefined
-              }
-              darkMode={darkMode}
-            />
-          ))}
-
-          {loading && (
-            <div className="flex items-center gap-1.5 mb-4 ml-1">
-              <video
-                src="/typing.mp4"
-                autoPlay
-                loop
-                muted
-                playsInline
-                className="h-8"
-              />
+          {messages.length === 0 && (
+            <div className="flex-1 flex items-center justify-center">
+              <div className={`p-6 rounded-2xl text-center mx-4 ${colors.card}`}>
+                <h2>¡Hola! Soy Inteligencia Digna</h2>
+                <p className={`mt-2 ${colors.muted}`}>
+                  ¿En qué puedo ayudarte hoy?
+                </p>
+              </div>
             </div>
           )}
-          <div ref={bottomRef} />
-        </div>
 
-        <ChatInput
-          input={input}
-          images={images}
-          files={files.map((f) => ({ name: f.name, size: f.size }))}
-          loading={loading}
-          onInputChange={setInput}
-          onSend={() => enviarMensaje()}
-          onPaste={handlePaste}
-          onRemoveImage={(i) =>
-            setImages((prev) => prev.filter((_, idx) => idx !== i))
-          }
-          onRemoveFile={(i) =>
-            setFiles((prev) => prev.filter((_, idx) => idx !== i))
-          }
-          onFilesSelected={handleFilesSelected}
-        />
-      </div>
+          <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-6 max-w-2xl mx-auto w-full">
+            {messages.map((m, i) => (
+              <ChatMessage
+                key={m.id ?? i}
+                message={m}
+                index={i}
+                isLastAi={m.role === "ai" && i === messages.length - 1 && messages.length >= 2}
+                onEdit={m.role === "user" ? handleEditMessage : undefined}
+                onRegenerate={
+                  m.role === "ai" && i === messages.length - 1 && messages.length >= 2
+                    ? handleRegenerate
+                    : undefined
+                }
+                darkMode={darkMode}
+              />
+            ))}
+
+            {loading && (
+              <div className="flex items-center gap-1.5 mb-4 ml-1">
+                <video
+                  src="/typing.mp4"
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="h-8"
+                />
+              </div>
+            )}
+            <div ref={bottomRef} />
+          </div>
+
+          <ChatInput
+            input={input}
+            images={images}
+            files={files.map((f) => ({ name: f.name, size: f.size }))}
+            loading={loading}
+            onInputChange={setInput}
+            onSend={() => enviarMensaje()}
+            onPaste={handlePaste}
+            onRemoveImage={(i) =>
+              setImages((prev) => prev.filter((_, idx) => idx !== i))
+            }
+            onRemoveFile={(i) =>
+              setFiles((prev) => prev.filter((_, idx) => idx !== i))
+            }
+            onFilesSelected={handleFilesSelected}
+          />
+        </div>
+      )}
 
       {renameChat && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
@@ -526,6 +735,35 @@ export default function Home() {
                 Guardar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add chat to project modal */}
+      {showAddChatProjectId && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowAddChatProjectId(null)}>
+          <div className="bg-[#121824] border border-[#202938] rounded-2xl p-6 w-96 max-h-[70vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold mb-4">Agregar chat al proyecto</h3>
+            {(() => {
+              const projectChatIds = new Set((projectChats[showAddChatProjectId] || []).map((c) => c.id));
+              const available = chats.filter((c) => !projectChatIds.has(c.id));
+              return available.length === 0 ? (
+                <p className="text-sm text-gray-500">No hay chats disponibles para agregar</p>
+              ) : (
+                <div className="space-y-1">
+                  {available.map((chat) => (
+                    <button
+                      key={chat.id}
+                      onClick={() => handleAddChatToProjectSubmit(showAddChatProjectId, chat.id)}
+                      className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-[#1e293b] transition-colors"
+                    >
+                      {chat.title}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
+            <button onClick={() => setShowAddChatProjectId(null)} className="mt-4 text-sm text-gray-500 hover:underline">Cancelar</button>
           </div>
         </div>
       )}

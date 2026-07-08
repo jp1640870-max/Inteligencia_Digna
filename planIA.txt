@@ -1,6 +1,6 @@
 
 Mapa de dependencias entre fases
-Fase 0 (Preparación)
+Fase 0 (Preparación) (desactualizado. se necesita actualizar)
   │
   ├──► Fase 1 (Streaming + Contexto) ─── base para toda la UX
   │
@@ -13,22 +13,6 @@ Fase 0 (Preparación)
   ├──► Fase 4 (Editar/Regenerar) ─── necesita Fase 1
   │
   └──► Fase 6 (UX final) ─── depende de todas las anteriores
-
-
-TODO:
-Google OAuth — Crear credenciales
-Ir a https://console.cloud.google.com/apis/credentials
-Crear proyecto → "Credentials" → "OAuth 2.0 Client IDs"
-Añadir http://localhost:3000 como Authorized JavaScript origin
-Añadir http://localhost:3000/api/auth/google/callback como redirect URI
-
- Crear .env.local
-JWT_SECRET=<genera_un_hash_con_node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
-OLLAMA_URL=http://localhost:51234
-GOOGLE_CLIENT_ID=tu_client_id
-GOOGLE_CLIENT_SECRET=tu_client_secret
-NEXTAUTH_URL=http://localhost:3000
-
 
 
 dgx model optimizations:-------------------------||
@@ -141,68 +125,45 @@ Opcionales:
 - Safety net en prompt-builder.ts para limitar a ~20 mensajes máximos
 - Health-check automático en la app por si el modelo vuelve a fallar
 
+Propuesta v1: Columna shared_context TEXT en la tabla proyectos. El usuario puede editar un bloque de texto que funciona como "instrucciones compartidas" para todos los chats del proyecto. Al enviar un mensaje en cualquier chat dentro del proyecto, se inyecta ese texto como mensaje de sistema antes del historial.
+A futuro: Podríamos agregar resúmenes automáticos entre chats del proyecto, pero para empezar mantenemos algo simple y transparente para el usuario.
+
+
+Factores que más impactan
+Factor	Impacto	Se puede mejorar?
+Ollama 0.24.0 (muy viejo)	🟡 Falta flash-attention, optimizaciones GPU, mejor KV cache	Sí — actualizar a 0.5.x da ~2-3x más velocidad
+Sin num_predict	🟠 Sin límite, el modelo puede generar respuestas de 2000+ tokens	Sí — poner num_predict: 1024 en la app
+Contexto crece	🟠 Atención O(n²) — más historial = más lento	Sí — safety net de recortar a ~15 mensajes
+GPU layers	🔴 Podría estar ejecutando capas en CPU	Verificar con ps aux en DGX
 Consideraciones::---------------------------------||
 
-ChatGPT features:
-1. Streaming responses (done ✓)
-2. Conversations (done ✓)
-3. Chat history sidebar (done ✓)
-4. Model selector (Gemini, GPT-4o, etc.) - ❌ missing
-5. Edit sent messages - ❌ missing
-6. Regenerate responses - ❌ missing
-7. Copy message text (done ✓ in code block)
-8. Share conversations - ❌ missing
-9. Export conversations - ❌ missing
-10. Delete conversations (done ✓)
-11. Rename conversations - ❌ missing
-12. File uploads (images, PDF, etc.) (done ✓ but PDF broken)
-13. Voice input - ❌ missing
-14. Markdown rendering (done ✓)
-15. Code syntax highlighting (done ✓)
-16. Dark/light theme toggle - ❌ missing
-17. User settings menu - ❌ missing
-18. Search conversations (done ✓)
-19. Feedback (like/dislike on responses) - ❌ missing
-20. Multiple conversations (done ✓)
-21. System prompt customization - ❌ missing
-22. Temperature/settings controls - ❌ missing
-23. Streaming word-by-word (done ✓)
-24. Copy entire response - ❌ missing (only code blocks have copy)
-25. Thread/reply view - ❌ missing
-
-Gemini features:
-1. Google Drive/Workspace integration - N/A
-2. Image generation - ❌ missing
-3. File analysis (done ✓ but PDF broken)
-4. Chat history (done ✓)
-5. Pinned conversations - ❌ missing
-6. Multi-turn conversations (done ✓)
-7. Suggested prompts / starter prompts - ❌ missing
-8. Verification/search grounding - ❌ missing
-
-Grok features:
-1. Web search integration - ❌ missing
-2. Image generation - ❌ missing
-3. Post to X - N/A
-4. Trending topics context - N/A
-5. Conversation branching - ❌ missing
-
-General expectations:
-1. Responsive design (need to check)
-2. Keyboard shortcuts - ❌ missing
-3. Loading indicators (done?)
-4. Error handling with retry (done ✓)
-5. Auto-scroll (done?)
-6. Typing indicator (done via streaming)
-
-
-Podemos implementar lo siguiente para la validacion de google OAuth, ya que requiere  url con domino publico.
- C:\Windows\System32\drivers\etc\hosts como Administrador
-
-127.0.0.1   mi-ia.local
-127.0.0.1   10-0-122-57.mi-ia.local
-3. En Google Console:
-https://mi-ia.local:3000/api/auth/google/callback
-https://10-0-122-57.mi-ia.local:3000/api/auth/google/callback
-4. En .env.local:
-NEXTAUTH_URL=https://mi-ia.local:3000
+13.- 
+DB projects — resumen
+Tablas
+projects                   project_chats                  chats
+┌─ id (PK) ───────────┐   ┌─ project_id ────────┐        ┌─ id (PK) ────┐
+│  user_id → users.id  │──→│  chat_id → chats.id │←───────│  user_id     │
+│  name                │   │  added_at           │        │  title       │
+│  instructions        │   │  chat_title ← NUEVO │        │  messages…   │
+│  created_at          │   │  PK (project_id,    │        └──────────────┘
+└──────────────────────┘   │      chat_id)       │
+                           └─────────────────────┘
+Identificación
+- Proyectos: por projects.id (UUID), siempre filtrados por user_id
+- Chats: por chats.id (UUID), siempre filtrados por user_id
+- Relación: project_chats con PK compuesta (project_id, chat_id)
+Operaciones
+Acción	SQL que ejecuta
+Crear proyecto	INSERT INTO projects
+Crear chat en proyecto	INSERT INTO chats + INSERT INTO project_chats (con chat_title)
+Agregar chat existente	INSERT INTO project_chats (con chat_title desde chats.title)
+Quitar chat del proyecto	DELETE FROM project_chats WHERE project_id=? AND chat_id=?
+Eliminar proyecto	DELETE FROM project_chats WHERE project_id=? + DELETE FROM projects WHERE id=?
+Eliminar chat permanente	DELETE FROM chats WHERE id=? → CASCADE a project_chats automático
+Renombrar chat	UPDATE chats SET title=? + UPDATE project_chats SET chat_title=? WHERE chat_id=?
+Listar chats del proyecto	SELECT c.* FROM chats c JOIN project_chats pc ON c.id=pc.chat_id WHERE pc.project_id=? — retorna {id, title, project_name, chat_title, ...}
+Contar chats por proyecto	Subquery SELECT COUNT(*) FROM project_chats WHERE project_id=? (sin columna redundante)
+Consistencia
+- ON DELETE CASCADE en ambas FKs de project_chats — eliminar un proyecto o chat limpia las relaciones automáticamente
+- chat_title se sincroniza al renombrar (vía syncProjectChatTitle())
+- getUserStats() cuenta proyectos y chats con COUNT(*) en tiempo real

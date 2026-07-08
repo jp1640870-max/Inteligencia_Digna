@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getUserById } from "@/lib/db";
+import { getUserById, getUserStats } from "@/lib/db";
 import { getUserIdFromRequest } from "@/lib/auth";
 
 export async function GET(req: Request) {
@@ -13,10 +13,14 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
   }
 
+  const stats = getUserStats(userId);
+
   return NextResponse.json({
     id: user.id,
     email: user.email,
     name: user.name,
     picture: user.picture || null,
+    projectCount: stats.projectCount,
+    chatCount: stats.chatCount,
   });
 }

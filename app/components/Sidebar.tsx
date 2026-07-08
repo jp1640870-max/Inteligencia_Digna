@@ -15,8 +15,10 @@ import {
   Share2,
   Pencil,
   Trash2,
+  Plus,
+  X,
 } from "lucide-react";
-import type { Chat } from "@/types";
+import type { Chat, Project } from "@/types";
 
 type Props = {
   chats: Chat[];
@@ -25,6 +27,12 @@ type Props = {
   sidebarOpen: boolean;
   collapsed: boolean;
   darkMode: boolean;
+  projects: Project[];
+  projectChats: Record<string, Chat[]>;
+  expandedProjectId: string | null;
+  projectSearch: string;
+  newProjectName: string;
+  showNewProjectInput: boolean;
   onToggleDarkMode: () => void;
   onNewChat: () => void;
   onOpenChat: (chat: Chat) => void;
@@ -36,6 +44,17 @@ type Props = {
   onToggleSidebar: () => void;
   onToggleCollapse: () => void;
   onFilesSelected: (files: FileList) => void;
+  onToggleProject: (projectId: string) => void;
+  onDoubleClickProject: (projectId: string) => void;
+  onOpenChatInProject: (chat: Chat, projectId: string) => void;
+  onAddChatToProject: (projectId: string) => void;
+  onRemoveChatFromProject: (projectId: string, chatId: string) => void;
+  onProjectSearch: (val: string) => void;
+  onNewProjectNameChange: (val: string) => void;
+  onShowNewProjectInput: (val: boolean) => void;
+  onCreateProject: () => void;
+  onAddChatToProjectById: (projectId: string, chatId: string) => void;
+  onCreateProjectAndAddChat: (name: string, chatId: string) => void;
 };
 
 const SIDEBAR_DEFAULT_WIDTH = 280;
@@ -50,6 +69,12 @@ const Sidebar = ({
   sidebarOpen,
   collapsed,
   darkMode,
+  projects,
+  projectChats,
+  expandedProjectId,
+  projectSearch,
+  newProjectName,
+  showNewProjectInput,
   onToggleDarkMode,
   onNewChat,
   onOpenChat,
@@ -61,6 +86,17 @@ const Sidebar = ({
   onToggleSidebar,
   onToggleCollapse,
   onFilesSelected,
+  onToggleProject,
+  onDoubleClickProject,
+  onOpenChatInProject,
+  onAddChatToProject,
+  onRemoveChatFromProject,
+  onProjectSearch,
+  onNewProjectNameChange,
+  onShowNewProjectInput,
+  onCreateProject,
+  onAddChatToProjectById,
+  onCreateProjectAndAddChat,
 }: Props) => {
   const analyzeInputRef = useRef<HTMLInputElement>(null);
   const [searchPopoverOpen, setSearchPopoverOpen] = useState(false);
@@ -68,10 +104,14 @@ const Sidebar = ({
   const popoverRef = useRef<HTMLDivElement>(null);
   const searchBtnRef = useRef<HTMLButtonElement>(null);
 
+  const [showAddToProjectModal, setShowAddToProjectModal] = useState<string | null>(null);
+  const [newProjectNameInModal, setNewProjectNameInModal] = useState("");
+
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -139,6 +179,19 @@ const Sidebar = ({
     };
   }, [isResizing]);
 
+  const handleProjectClick = (projectId: string) => {
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+      onDoubleClickProject(projectId);
+    } else {
+      clickTimerRef.current = setTimeout(() => {
+        clickTimerRef.current = null;
+        onToggleProject(projectId);
+      }, 300);
+    }
+  };
+
   const colors = {
     sidebar: darkMode ? "bg-[#0d131d]" : "bg-gray-100",
     border: darkMode ? "border-[#202938]" : "border-gray-300",
@@ -190,6 +243,10 @@ const Sidebar = ({
     setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
   };
 
+  const filteredProjects = projects.filter((p) =>
+    p.name.toLowerCase().includes(projectSearch.toLowerCase())
+  );
+
   const renderExpanded = () => (
     <div
       ref={sidebarRef}
@@ -232,28 +289,136 @@ const Sidebar = ({
           <FileText size={18} />
           Analizar archivo
         </button>
-        <button
-          onClick={() => window.location.href = "/projects"}
-          className={`w-full flex items-center gap-3 px-3 py-2 text-sm ${colors.text} ${colors.hover} rounded-lg transition-colors`}
-        >
-          <Folder size={18} />
-          Proyectos
-        </button>
+      </div>
 
-        <div className="pt-3 pb-1">
-          <div className="relative">
-            <Search size={16} className={`absolute left-3 top-1/2 -translate-y-1/2 ${colors.textMuted}`} />
+      <div className="px-3 pt-3 pb-1">
+        <div className="flex items-center justify-between mb-1">
+          <button
+            onClick={() => onToggleProject("__toggle")}
+            className={`flex items-center gap-1.5 text-xs font-semibold ${colors.textMuted} uppercase tracking-wider hover:${colors.text} transition-colors`}
+          >
+            <Folder size={14} />
+            Proyectos
+            <span className={`text-[11px] ${colors.textMuted}`}>{projects.length}</span>
+          </button>
+          <button
+            onClick={() => onShowNewProjectInput(true)}
+            className={`p-1 rounded ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`}
+            title="Nuevo proyecto"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
+
+        {showNewProjectInput && (
+          <div className="mb-2">
             <input
-              value={search}
-              onChange={(e) => onSearch(e.target.value)}
-              placeholder="Buscar chats..."
-              className={`w-full pl-9 pr-3 py-2 text-sm ${colors.inputBg} ${colors.text} ${colors.placeholder} rounded-lg outline-none ${colors.inputFocus} transition-colors`}
+              value={newProjectName}
+              onChange={(e) => onNewProjectNameChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onCreateProject();
+                if (e.key === "Escape") onShowNewProjectInput(false);
+              }}
+              placeholder="Nombre del proyecto"
+              autoFocus
+              className={`w-full px-2.5 py-1.5 text-xs rounded-lg ${colors.inputBg} ${colors.border} border ${colors.text} ${colors.placeholder} outline-none ${colors.inputFocus} transition-colors`}
             />
+            <div className="flex gap-2 mt-1">
+              <button onClick={onCreateProject} className="text-xs text-green-400 hover:underline">Crear</button>
+              <button onClick={() => onShowNewProjectInput(false)} className={`text-xs ${colors.textMuted} hover:underline`}>Cancelar</button>
+            </div>
           </div>
+        )}
+
+        <div className="relative mt-1">
+          <Search size={14} className={`absolute left-2.5 top-1/2 -translate-y-1/2 ${colors.textMuted}`} />
+          <input
+            value={projectSearch}
+            onChange={(e) => onProjectSearch(e.target.value)}
+            placeholder="Buscar proyectos..."
+            className={`w-full pl-8 pr-2.5 py-1.5 text-xs rounded-lg ${colors.inputBg} ${colors.border} border ${colors.text} ${colors.placeholder} outline-none ${colors.inputFocus} transition-colors`}
+          />
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 mt-1">
+        {filteredProjects.length === 0 && (
+          <p className={`px-3 py-2 text-xs text-center ${colors.textMuted}`}>
+            {projectSearch ? "Sin resultados" : "Sin proyectos"}
+          </p>
+        )}
+        {filteredProjects.map((project) => {
+          const isExpanded = expandedProjectId === project.id;
+          const projectChatList = projectChats[project.id] || [];
+          return (
+            <div key={project.id} className="mb-0.5">
+              <div className={`flex items-center rounded-lg ${colors.hover} transition-colors`}>
+                <button
+                  onClick={() => handleProjectClick(project.id)}
+                  className={`flex-1 text-left px-3 py-2 text-sm ${colors.text} truncate flex items-center gap-1.5`}
+                  title="Click: expandir · Doble click: abrir"
+                >
+                  <span className="shrink-0 text-[10px]">{isExpanded ? "▾" : "▸"}</span>
+                  <Folder size={14} className="shrink-0" />
+                  <span className="truncate">{project.name}</span>
+                  <span className={`text-[10px] ${colors.textMuted} shrink-0`}>({project.chat_count || projectChatList.length})</span>
+                </button>
+                <button
+                  onClick={() => onAddChatToProject(project.id)}
+                  className={`px-2 py-2 ${colors.textMuted} ${colors.textHover} transition-colors`}
+                  title="Agregar chat"
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+
+              {isExpanded && (
+                <div className={`ml-4 border-l ${darkMode ? "border-[#202938]" : "border-gray-300"} pl-2 mt-0.5 space-y-0.5`}>
+                  {projectChatList.length === 0 ? (
+                    <p className={`px-2 py-1 text-xs ${colors.textMuted}`}>Sin chats</p>
+                  ) : (
+                    projectChatList.map((chat) => (
+                      <div key={chat.id} className={`flex items-center rounded-lg ${colors.hover} transition-colors`}>
+                        <button
+                          onClick={() => onOpenChatInProject(chat, project.id)}
+                          className={`flex-1 text-left px-2 py-1 text-xs ${colors.textMuted} truncate`}
+                        >
+                          {chat.title}
+                        </button>
+                        <button
+                          onClick={() => onRemoveChatFromProject(project.id, chat.id)}
+                          className={`px-1 py-1 ${colors.textMuted} hover:text-red-400 transition-colors`}
+                          title="Quitar del proyecto"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        <div className={`border-t ${colors.border} my-2`} />
+
+        <div className="px-3 py-1">
+          <div className="flex items-center gap-1.5 mb-1">
+            <span className={`text-xs font-semibold ${colors.textMuted} uppercase tracking-wider`}>Chats</span>
+            <span className={`text-[11px] ${colors.textMuted}`}>{filteredChats.length}</span>
+          </div>
+          <div className="relative">
+            <Search size={14} className={`absolute left-2.5 top-1/2 -translate-y-1/2 ${colors.textMuted}`} />
+            <input
+              value={search}
+              onChange={(e) => onSearch(e.target.value)}
+              placeholder="Buscar chats..."
+              className={`w-full pl-8 pr-2.5 py-1.5 text-xs rounded-lg ${colors.inputBg} ${colors.border} border ${colors.text} ${colors.placeholder} outline-none ${colors.inputFocus} transition-colors`}
+            />
+          </div>
+        </div>
+
         {filteredChats.length === 0 && (
           <p className={`px-3 py-4 text-xs text-center ${colors.textMuted}`}>
             {search ? "Sin resultados" : "No hay chats aún"}
@@ -288,6 +453,13 @@ const Sidebar = ({
                 >
                   <Pencil size={16} />
                   Renombrar
+                </button>
+                <button
+                  onClick={() => { onMenuToggle(null); setShowAddToProjectModal(chat.id); }}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${colors.text} ${colors.hover} transition-colors`}
+                >
+                  <Folder size={16} />
+                  Agregar a proyecto
                 </button>
                 <button
                   onClick={() => onDeleteChat(chat.id)}
@@ -360,7 +532,7 @@ const Sidebar = ({
         </button>
 
         <button
-          onClick={() => window.location.href = "/projects"}
+          onClick={() => onToggleProject("__toggle")}
           className={`p-2 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`}
           title="Proyectos"
         >
@@ -449,6 +621,72 @@ const Sidebar = ({
             </button>
           )}
         </>
+      )}
+
+      {/* Add to project modal */}
+      {showAddToProjectModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => { setShowAddToProjectModal(null); setNewProjectNameInModal(""); }}>
+          <div className="bg-[#121824] border border-[#202938] rounded-2xl p-6 w-96 max-h-[70vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold mb-4">Agregar a proyecto</h3>
+
+            {projects.length > 0 && (
+              <>
+                <p className="text-xs text-gray-500 mb-2">Proyectos existentes</p>
+                <div className="space-y-1 mb-4">
+                  {projects.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        onAddChatToProjectById(p.id, showAddToProjectModal);
+                        setShowAddToProjectModal(null);
+                      }}
+                      className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-[#1e293b] transition-colors flex items-center gap-2"
+                    >
+                      <Folder size={14} className="shrink-0 text-gray-400" />
+                      <span className="truncate">{p.name}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className={`border-t ${colors.border} my-3`} />
+              </>
+            )}
+
+            <p className="text-xs text-gray-500 mb-2">Crear nuevo proyecto</p>
+            <input
+              value={newProjectNameInModal}
+              onChange={(e) => setNewProjectNameInModal(e.target.value)}
+              placeholder="Nombre del proyecto"
+              className={`w-full px-3 py-2 text-sm rounded-lg ${colors.inputBg} ${colors.border} border ${colors.text} ${colors.placeholder} outline-none ${colors.inputFocus} transition-colors mb-2`}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newProjectNameInModal.trim()) {
+                  onCreateProjectAndAddChat(newProjectNameInModal.trim(), showAddToProjectModal);
+                  setShowAddToProjectModal(null);
+                  setNewProjectNameInModal("");
+                }
+              }}
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  if (!newProjectNameInModal.trim()) return;
+                  onCreateProjectAndAddChat(newProjectNameInModal.trim(), showAddToProjectModal);
+                  setShowAddToProjectModal(null);
+                  setNewProjectNameInModal("");
+                }}
+                disabled={!newProjectNameInModal.trim()}
+                className="flex-1 py-2 rounded-xl bg-green-500 hover:bg-green-600 disabled:opacity-50 text-sm font-medium transition-colors"
+              >
+                Crear y agregar
+              </button>
+              <button
+                onClick={() => { setShowAddToProjectModal(null); setNewProjectNameInModal(""); }}
+                className="px-4 py-2 text-sm text-gray-500 hover:underline"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

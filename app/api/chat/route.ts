@@ -13,7 +13,7 @@ import {
 import { ollamaChatStream } from "@/lib/ollama";
 import { buildMessages } from "@/lib/prompt-builder";
 import { getUserIdFromRequest } from "@/lib/auth";
-import { getProjectById } from "@/lib/projects";
+import { getProjectById, syncProjectChatTitle } from "@/lib/projects";
 
 export async function GET(_req: Request) {
   const userId = await getUserIdFromRequest();
@@ -202,6 +202,8 @@ export async function PATCH(req: Request) {
     if (!updated) {
       return NextResponse.json({ error: "No se pudo renombrar" }, { status: 400 });
     }
+
+    syncProjectChatTitle(id, title);
 
     return NextResponse.json({ success: true, id, title });
   } catch {

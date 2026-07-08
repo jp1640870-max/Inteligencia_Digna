@@ -1,4 +1,3 @@
-//archivo index este se encarga de exportar los tipos de datos que se van a utilizar en la aplicación
 export type Msg = {
   id?: number;
   role: "user" | "ai";
@@ -11,10 +10,30 @@ export type Chat = {
   id: string;
   title: string;
   messages: Msg[];
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type User = {
   id: string;
   email: string;
   name: string | null;
+};
+
+export type Project = {
+  id: string;
+  name: string;
+  instructions: string;
+  created_at: string;
+  chat_count?: number;
+};
+
+export type ProjectChat = {
+  project_id: string;
+  chat_id: string;
+  added_at: string;
+};
+
+export type ProyectoConChats = Project & {
+  chats: Chat[];
 };

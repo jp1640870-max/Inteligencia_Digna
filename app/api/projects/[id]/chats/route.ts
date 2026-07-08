@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserIdFromRequest } from "@/lib/auth";
-import { deleteProject, getProjectById, updateProject, getChatsByProject } from "@/lib/projects";
+import { addChatToProject, getChatsByProject, getProjectById, removeChatFromProject } from "@/lib/projects";
+import { getChatById } from "@/lib/db";
 
 export async function GET(
   _req: NextRequest,
@@ -12,20 +13,16 @@ export async function GET(
   }
 
   const { id } = await context.params;
-
   const project = getProjectById(id);
-  if (!project) {
-    return NextResponse.json({ error: "Proyecto no existe" }, { status: 404 });
-  }
-  if (project.user_id !== userId) {
+  if (!project || project.user_id !== userId) {
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   }
 
   const chats = getChatsByProject(id);
-  return NextResponse.json({ ...project, chats });
+  return NextResponse.json(chats);
 }
 
-export async function PATCH(
+export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
@@ -36,21 +33,27 @@ export async function PATCH(
 
   const { id } = await context.params;
   const project = getProjectById(id);
-  if (!project) {
-    return NextResponse.json({ error: "Proyecto no existe" }, { status: 404 });
-  }
-  if (project.user_id !== userId) {
+  if (!project || project.user_id !== userId) {
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   }
 
-  const body = await req.json();
-  updateProject(id, userId, body);
-  const updated = getProjectById(id);
-  return NextResponse.json(updated);
+  const { chatId } = await req.json();
+  if (!chatId) {
+    return NextResponse.json({ error: "chatId requerido" }, { status: 400 });
+  }
+
+  const chat = getChatById(chatId);
+  if (!chat || chat.user_id !== userId) {
+    return NextResponse.json({ error: "Chat no encontrado" }, { status: 404 });
+  }
+
+  addChatToProject(id, chatId);
+  const chats = getChatsByProject(id);
+  return NextResponse.json(chats);
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   const userId = await getUserIdFromRequest();
@@ -59,20 +62,16 @@ export async function DELETE(
   }
 
   const { id } = await context.params;
+  const { chatId } = await req.json();
+  if (!chatId) {
+    return NextResponse.json({ error: "chatId requerido" }, { status: 400 });
+  }
 
   const project = getProjectById(id);
-  if (!project) {
-    return NextResponse.json({ error: "Proyecto no existe" }, { status: 404 });
-  }
-  if (project.user_id !== userId) {
+  if (!project || project.user_id !== userId) {
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   }
 
-  const deleted = deleteProject(id, userId);
-
-  if (!deleted) {
-    return NextResponse.json({ error: "No se pudo eliminar" }, { status: 400 });
-  }
-
+  removeChatFromProject(id, chatId);
   return NextResponse.json({ success: true });
 }
