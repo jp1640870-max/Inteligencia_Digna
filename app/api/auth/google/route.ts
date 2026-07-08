@@ -9,7 +9,7 @@ export async function GET(req: Request) {
     );
   }
 
-  const redirectUri = `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/auth/google/callback`;
+  const redirectUri = `${new URL(req.url).origin}/api/auth/google/callback`;
 
   const params = new URLSearchParams({
     client_id: clientId,

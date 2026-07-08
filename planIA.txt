@@ -102,6 +102,40 @@ Prompt builder desde lib/prompt-builder.ts
 Sin cleanup — respuesta limpia directa
 Chats asociados a DEV_USER_ID
 
+12.- Cambiamos a gemma4:26b y eliminamos qwen:
+✅ Pros
+Aspecto	       Antes: (2 modelos)	                   Ahora: (Gemma 4 26B)	                  Impacto
+Calidad        Gemma 3 12B (~58% MMLU-Pro)	         82.6% MMLU-Pro	                       Respuestas mucho más precisas, mejor razonamiento
+texto	
+Calidad        Qwen 3 VL 4B (modelo pequeño)	       Gemma 4 26B (visión nativa)	         Las imágenes se analizan con un modelo 6x más grande
+visión	
+Contexto	      8K (gemma3) / 32K (qwen3)	           256K	                                 Documentos largos sin perder contexto
+Consistencia	  Dos modelos distintos respondían     Un solo modelo	                       Comportamiento uniforme siempre
+                diferente	
+Velocidad	      Densa 12B (~30-50 tok/s)	           MoE 4B activos (60+ tok/s)	           Más rápido a pesar de ser más grande
+Caché	          Había que mantener 2 modelos 	       Solo 1 modelo	                       Menos memoria total usada
+Licencia       	Gemma Terms	                         Apache 2.0	                           Sin restricciones
+
+Posibles contras:
+VRAM	Gemma 4 26B Q4_K_M ~16 GB vs gemma3 ~7 GB + qwen3 ~3 GB = ~10 GB. En DGX Spark (128 GB) no hay problema, pero si algún día cambian de servidor, es relevante.
+Prompt engineering	Gemma 4 puede ser más sensible a cómo se le pasan las imágenes. El formato actual (images[] con base64 sin prefijo) funciona, pero puede diferir ligeramente en cómo interpreta las imágenes vs qwen3-vl.
+Cold start	Primer request ~20s (viste en las pruebas) vs gemma3 que era ~4-7s. Con OLLAMA_KEEP_ALIVE=-1 se elimina después del primer uso.
+Tokens de más	Al ser más inteligente, tiende a generar respuestas más largas y detalladas. Las pruebas mostraron ~800-1200 tokens vs lo que gemma3 generaba. No es malo, pero consume más tokens por request.
+
+
+Estrategia de Despliegue:
+Para asegurar el éxito de la plataforma web corporativa,
+arquitectura de software para aprovechar las capacidades nativas de la dgx:
+
+Usa vLLM con soporte PagedAttention: 
+No despliegar con Ollama crudo para este volumen de usuarios. 
+Utiliza vLLM (que corre nativo en el stack de software de NVIDIA de tu Spark). 
+Su tecnología de PagedAttention optimiza el uso de la memoria unificada del sistema reduciendo el 
+desperdicio del KV Cache a casi cero.
+
+Habilitar el modo "Thinking" con moderación: Si tus usuarios van a usar el razonamiento profundo
+de Gemma 4 para tareas complejas, limita los tokens de pensamiento en la interfaz web para evitar
+que un solo usuario acapare la GPU por periodos largos de tiempo.
 
 Consideraciones::---------------------------------||
 
@@ -156,21 +190,6 @@ General expectations:
 4. Error handling with retry (done ✓)
 5. Auto-scroll (done?)
 6. Typing indicator (done via streaming)
-    
-Todavía no implementado
-🟡 Impacto medio-alto
-Like / Dislike en cada respuesta
-Renombrar chat (UI existe, sin lógica)
-Anclar chat (UI existe, sin lógica)
-Timestamps en los mensajes
-Model selector (gemma3:12b ↔ qwen3-vl:4b)
-🟢 Nice to have
-Feature
-Skeleton / shimmer en lugar de bouncing dots
-Theme toggle dark/light
-Atajos de teclado (Ctrl+K buscar, Ctrl+N nuevo chat)
-Contador de caracteres
-Menú de usuario / perfil
 
 
 Podemos implementar lo siguiente para la validacion de google OAuth, ya que requiere  url con domino publico.

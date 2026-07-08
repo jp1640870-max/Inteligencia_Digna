@@ -33,10 +33,7 @@ export async function POST(req: Request) {
     truncateMessagesToCount(chatId, messages.length - 1);
 
     const remainingMessages = getMessagesByChat(chatId);
-    const isVision = remainingMessages.some((m) => m.images && m.images.length > 0);
-    const TEXT_MODEL = process.env.TEXT_MODEL!;
-    const VISION_MODEL = process.env.VISION_MODEL!;
-    const model = isVision ? VISION_MODEL : TEXT_MODEL;
+    const model = process.env.TEXT_MODEL!;
 
     const ollamaMessages = buildMessages(remainingMessages);
 
@@ -64,6 +61,10 @@ export async function POST(req: Request) {
           for await (const chunk of retryGen) {
             fullReply += chunk;
             await writer.write(encoder.encode(chunk));
+          }
+
+          if (!fullReply || fullReply.length < 2) {
+            throw new Error("respuesta vacía");
           }
         } catch {
           const fallback = "No se pudo responder.";

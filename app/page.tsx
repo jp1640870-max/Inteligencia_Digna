@@ -175,6 +175,12 @@ export default function Home() {
         return;
       }
 
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        setMessages((prev) => [...prev, { role: "ai", text: errData.error || "Error al regenerar" }]);
+        return;
+      }
+
       if (!res.body) throw new Error("Sin cuerpo de respuesta");
 
       const reader = res.body.getReader();

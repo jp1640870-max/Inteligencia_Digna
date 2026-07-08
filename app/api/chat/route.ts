@@ -42,10 +42,7 @@ export async function POST(req: Request) {
       }
     });
 
-    const isVision = images.length > 0;
-    const TEXT_MODEL = process.env.TEXT_MODEL!;
-    const VISION_MODEL = process.env.VISION_MODEL!;
-    const model = isVision ? VISION_MODEL : TEXT_MODEL;
+    const model = process.env.TEXT_MODEL!;
 
     let chat;
     if (editFromIndex) {
@@ -74,7 +71,7 @@ export async function POST(req: Request) {
 
     const ollamaMessages = buildMessages(history, message, filesContent || undefined);
 
-    if (isVision && ollamaMessages.length > 0) {
+    if (images.length > 0 && ollamaMessages.length > 0) {
       const lastMsg = ollamaMessages[ollamaMessages.length - 1];
       lastMsg.images = images;
     }
@@ -87,11 +84,15 @@ export async function POST(req: Request) {
 
     const streamOllama = async () => {
       try {
+        console.log("🤖 Ollama modelo:", model, "| mensajes:", ollamaMessages.length);
         const generator = ollamaChatStream(model, ollamaMessages);
+        let cont = 0;
         for await (const chunk of generator) {
+          cont++;
           fullReply += chunk;
           await writer.write(encoder.encode(chunk));
         }
+        console.log(`🤖 OK: ${cont} chunks, ${fullReply.length} chars`);
 
         if (!fullReply || fullReply.length < 2) {
           throw new Error("respuesta vacía");
@@ -102,9 +103,17 @@ export async function POST(req: Request) {
         try {
           fullReply = "";
           const retryGen = ollamaChatStream(model, ollamaMessages);
+          let cont2 = 0;
           for await (const chunk of retryGen) {
+            cont2++;
             fullReply += chunk;
             await writer.write(encoder.encode(chunk));
+          }
+          console.log(`⚡ Retry OK: ${cont2} chunks, ${fullReply.length} chars`);
+
+          if (!fullReply || fullReply.length < 2) {
+            console.log("⚡ Retry vacío también");
+            throw new Error("respuesta vacía");
           }
         } catch {
           const fallback = "No se pudo responder.";
@@ -112,14 +121,13 @@ export async function POST(req: Request) {
           await writer.write(encoder.encode(fallback));
         }
       } finally {
-        fullReply = fullReply
-          .replace(/<[^>]*>/g, "")
-          .replace(/\(.*?\)/g, "")
-          .replace(/[^\x00-\x7FáéíóúñÁÉÍÓÚÑ¿¡.,!?()\s]/g, "")
-          .trim();
+        fullReply = fullReply.trim();
 
         if (fullReply) {
           addMessage(chatId, "assistant", fullReply);
+          console.log("💾 DB guardado:", fullReply.length, "chars");
+        } else {
+          console.log("⚠️ No se guardó en DB (fullReply vacío)");
         }
 
         await writer.close();
