@@ -137,6 +137,10 @@ Habilitar el modo "Thinking" con moderación: Si tus usuarios van a usar el razo
 de Gemma 4 para tareas complejas, limita los tokens de pensamiento en la interfaz web para evitar
 que un solo usuario acapare la GPU por periodos largos de tiempo.
 
+Opcionales:
+- Safety net en prompt-builder.ts para limitar a ~20 mensajes máximos
+- Health-check automático en la app por si el modelo vuelve a fallar
+
 Consideraciones::---------------------------------||
 
 ChatGPT features:
