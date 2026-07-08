@@ -17,10 +17,18 @@ type HistoryItem = {
 export function buildMessages(
   history: HistoryItem[],
   newMessage?: string,
-  filesContent?: string
+  filesContent?: string,
+  projectContext?: string
 ): OllamaMessage[] {
+  const systemPrompt = projectContext
+    ? `${SYSTEM_PROMPT}
+
+CONTEXTO DEL PROYECTO:
+${projectContext}`
+    : SYSTEM_PROMPT;
+
   const messages: OllamaMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: systemPrompt },
   ];
 
   for (const msg of history) {

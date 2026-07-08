@@ -30,6 +30,7 @@ type Props = {
   onOpenChat: (chat: Chat) => void;
   onDeleteChat: (id: string) => void;
   onShareChat: (chat: Chat) => void;
+  onRenameChat: (chat: Chat) => void;
   onSearch: (val: string) => void;
   onMenuToggle: (id: string | null) => void;
   onToggleSidebar: () => void;
@@ -54,6 +55,7 @@ const Sidebar = ({
   onOpenChat,
   onDeleteChat,
   onShareChat,
+  onRenameChat,
   onSearch,
   onMenuToggle,
   onToggleSidebar,
@@ -230,7 +232,10 @@ const Sidebar = ({
           <FileText size={18} />
           Analizar archivo
         </button>
-        <button className={`w-full flex items-center gap-3 px-3 py-2 text-sm ${colors.text} ${colors.hover} rounded-lg transition-colors`}>
+        <button
+          onClick={() => window.location.href = "/projects"}
+          className={`w-full flex items-center gap-3 px-3 py-2 text-sm ${colors.text} ${colors.hover} rounded-lg transition-colors`}
+        >
           <Folder size={18} />
           Proyectos
         </button>
@@ -277,7 +282,10 @@ const Sidebar = ({
                   <Share2 size={16} />
                   Compartir
                 </button>
-                <button className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${colors.text} ${colors.hover} transition-colors`}>
+                <button
+                  onClick={() => onRenameChat(chat)}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${colors.text} ${colors.hover} transition-colors`}
+                >
                   <Pencil size={16} />
                   Renombrar
                 </button>
@@ -351,7 +359,11 @@ const Sidebar = ({
           <MessageSquarePlus size={20} />
         </button>
 
-        <button className={`p-2 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`} title="Proyectos">
+        <button
+          onClick={() => window.location.href = "/projects"}
+          className={`p-2 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`}
+          title="Proyectos"
+        >
           <Folder size={20} />
         </button>
 

@@ -1,1 +1,16 @@
-[]
+[
+  {
+    "id": "b9f0b4a3-fd56-45e4-bab1-9423e07e85db",
+    "name": "prueba ia",
+    "instructions": "crear proyecto optimizar ollama",
+    "files": [],
+    "createdAt": "2026-07-08T03:17:11.726Z"
+  },
+  {
+    "id": "c87291b5-6dff-4cfb-8676-96225970a9fe",
+    "name": "prueba ia",
+    "instructions": "prueba",
+    "files": [],
+    "createdAt": "2026-07-08T03:20:29.738Z"
+  }
+]

@@ -16,6 +16,8 @@ db.exec(`
     name TEXT,
     password_hash TEXT,
     google_id TEXT UNIQUE,
+    picture TEXT,
+    role TEXT DEFAULT 'user',
     created_at TEXT DEFAULT (datetime('now'))
   );
 
@@ -41,22 +43,29 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id);
 `);
 
+try { db.exec("ALTER TABLE users ADD COLUMN picture TEXT"); } catch {}
+try { db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'"); } catch {}
+
 const id = "soporte-dev-user-id";
 const email = "Admin@digna.com";
 const userName = "Soporte";
 const passwordHash = bcrypt.hashSync("Admin123", 10);
+const role = "admin";
+
+// SQL equivalente:
+// INSERT INTO users (email, password, role) VALUES ('Admin@digna.com', 'Admin123', 'admin');
 
 const existing = db.prepare("SELECT id FROM users WHERE id = ?").get(id);
 
 if (existing) {
   db.prepare(
-    "UPDATE users SET email = ?, password_hash = ? WHERE id = ?"
-  ).run(email, passwordHash, id);
+    "UPDATE users SET email = ?, password_hash = ?, role = ? WHERE id = ?"
+  ).run(email, passwordHash, role, id);
   console.log("✅ Usuario Soporte actualizado.");
 } else {
   db.prepare(
-    "INSERT INTO users (id, email, name, password_hash) VALUES (?, ?, ?, ?)"
-  ).run(id, email, userName, passwordHash);
+    "INSERT INTO users (id, email, name, password_hash, role) VALUES (?, ?, ?, ?, ?)"
+  ).run(id, email, userName, passwordHash, role);
   console.log("✅ Usuario Soporte creado con ID:", id);
 }
 

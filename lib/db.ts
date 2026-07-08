@@ -24,6 +24,7 @@ function initTables() {
       password_hash TEXT,
       google_id TEXT UNIQUE,
       picture TEXT,
+      role TEXT DEFAULT 'user',
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -50,6 +51,7 @@ function initTables() {
   `);
 
   try { db.exec("ALTER TABLE users ADD COLUMN picture TEXT"); } catch {}
+  try { db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'"); } catch {}
 }
 
 /* ============ USERS ============ */
@@ -60,14 +62,15 @@ export function createUser(
   name: string | null,
   passwordHash?: string,
   googleId?: string,
-  picture?: string
+  picture?: string,
+  role?: string
 ) {
   const d = getDb();
   const stmt = d.prepare(`
-    INSERT INTO users (id, email, name, password_hash, google_id, picture)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO users (id, email, name, password_hash, google_id, picture, role)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
-  stmt.run(id, email, name, passwordHash || null, googleId || null, picture || null);
+  stmt.run(id, email, name, passwordHash || null, googleId || null, picture || null, role || "user");
 }
 
 export function getUserByEmail(email: string) {
@@ -131,11 +134,13 @@ export function createChat(id: string, userId: string, title: string) {
   );
 }
 
-export function updateChatTitle(id: string, title: string) {
+export function updateChatTitle(id: string, userId: string, title: string) {
   const d = getDb();
-  d.prepare(
-    "UPDATE chats SET title = ?, updated_at = datetime('now') WHERE id = ?"
-  ).run(title, id);
+  const result = d.prepare(
+    "UPDATE chats SET title = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?"
+  ).run(title, id, userId);
+
+  return result.changes > 0;
 }
 
 export function deleteChat(id: string) {

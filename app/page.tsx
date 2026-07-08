@@ -32,6 +32,8 @@ export default function Home() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const [renameChat, setRenameChat] = useState<Chat | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [dragging, setDragging] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -39,6 +41,7 @@ export default function Home() {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
 
   const [chatId, setChatId] = useState(uuidv4());
   const [autoScroll, setAutoScroll] = useState(true);
@@ -83,6 +86,12 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     cargarChats();
     fetch("/api/auth/me").then((r) => r.ok ? r.json() : null).then(setUser);
+
+    const params = new URLSearchParams(window.location.search);
+    const projectId = params.get("projectId");
+    if (projectId) {
+      setCurrentProjectId(projectId);
+    }
   }, []);
 
   useEffect(() => {
@@ -117,6 +126,42 @@ export default function Home() {
   const compartirChat = async (chat: Chat) => {
     await navigator.clipboard.writeText(JSON.stringify(chat, null, 2));
     alert("Copiado ✅");
+  };
+
+  const renombrarChat = async (chat: Chat) => {
+    setRenameChat(chat);
+    setRenameValue(chat.title || "");
+    setMenuOpen(null);
+  };
+
+  const guardarRenombreChat = async () => {
+    if (!renameChat) return;
+
+    const nuevoTitulo = renameValue.trim();
+    if (!nuevoTitulo) return;
+
+    const res = await fetch("/api/chat", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: renameChat.id,
+        title: nuevoTitulo,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      alert(data.error || "No se pudo renombrar");
+      return;
+    }
+
+    setChats((prev) =>
+      prev.map((c) => (c.id === renameChat.id ? { ...c, title: nuevoTitulo } : c))
+    );
+
+    setRenameChat(null);
+    setRenameValue("");
   };
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -248,6 +293,7 @@ export default function Home() {
     const formData = new FormData();
     formData.append("chatId", chatId);
     formData.append("message", visibleText);
+    if (currentProjectId) formData.append("projectId", currentProjectId);
     if (filesContent) formData.append("filesContent", filesContent);
 
     extraImages.forEach((img, i) => {
@@ -330,6 +376,7 @@ export default function Home() {
         onOpenChat={abrirChat}
         onDeleteChat={eliminarChat}
         onShareChat={compartirChat}
+        onRenameChat={renombrarChat}
         onSearch={setSearch}
         onMenuToggle={setMenuOpen}
         onToggleSidebar={() => setSidebarOpen((v) => !v)}
@@ -445,6 +492,43 @@ export default function Home() {
           onFilesSelected={handleFilesSelected}
         />
       </div>
+
+      {renameChat && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-[#121824] border border-[#202938] rounded-2xl p-6 w-[360px] shadow-xl">
+            <h2 className="text-lg font-bold text-white mb-4">
+              Renombrar conversación
+            </h2>
+
+            <input
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              autoFocus
+              className="w-full bg-[#030812] border border-[#202938] rounded-xl px-4 py-3 text-white outline-none mb-4"
+              placeholder="Nuevo nombre"
+            />
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setRenameChat(null);
+                  setRenameValue("");
+                }}
+                className="px-4 py-2 rounded-xl bg-gray-700 hover:bg-gray-600"
+              >
+                Cancelar
+              </button>
+
+              <button
+                onClick={guardarRenombreChat}
+                className="px-4 py-2 rounded-xl bg-green-500 hover:bg-green-600 text-white"
+              >
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style jsx>{`
         ::-webkit-scrollbar {

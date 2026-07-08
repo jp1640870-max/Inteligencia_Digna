@@ -44,4 +44,12 @@ certificates
 
 # database & uploads
 data/app.db*
-uploads/
+uploads/env.download
+.env
+.env.local
+
+env.download
+.env
+.env.local
+data/app.db
+*.db

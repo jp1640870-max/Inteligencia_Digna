@@ -7,11 +7,13 @@ import {
   createChat,
   addMessage,
   deleteChat,
+  updateChatTitle,
   truncateMessagesToCount,
 } from "@/lib/db";
 import { ollamaChatStream } from "@/lib/ollama";
 import { buildMessages } from "@/lib/prompt-builder";
 import { getUserIdFromRequest } from "@/lib/auth";
+import { getProjectById } from "@/lib/projects";
 
 export async function GET(_req: Request) {
   const userId = await getUserIdFromRequest();
@@ -34,6 +36,7 @@ export async function POST(req: Request) {
     const message = (form.get("message") as string) || "";
     const filesContent = (form.get("filesContent") as string) || "";
     const editFromIndex = form.get("editFromIndex") as string | null;
+    const projectId = form.get("projectId") as string | null;
 
     const images: string[] = [];
     form.forEach((value, key) => {
@@ -64,12 +67,31 @@ export async function POST(req: Request) {
 
     const history = chat?.messages || [];
 
+    let projectContext = "";
+
+    if (projectId) {
+      const project = getProjectById(projectId);
+      if (project && project.user_id === userId) {
+        const projectFiles = Array.isArray(project.files)
+          ? (project.files as Array<{ name: string; content: string }>)
+          : [];
+
+        projectContext = `Nombre del proyecto: ${project.name}
+
+Instrucciones del proyecto:
+${project.instructions}
+
+Archivos del proyecto:
+${projectFiles.map((f) => `Archivo: ${f.name}\n${f.content}`).join("\n\n")}`;
+      }
+    }
+
     const dbMessage = filesContent
       ? `[Archivos adjuntos]\n\n${message}\n\n---\n${filesContent}`
       : message;
     addMessage(chatId, "user", dbMessage, images);
 
-    const ollamaMessages = buildMessages(history, message, filesContent || undefined);
+    const ollamaMessages = buildMessages(history, message, filesContent || undefined, projectContext || undefined);
 
     if (images.length > 0 && ollamaMessages.length > 0) {
       const lastMsg = ollamaMessages[ollamaMessages.length - 1];
@@ -142,6 +164,48 @@ export async function POST(req: Request) {
   } catch (e) {
     console.error(e);
     return new Response("Error: la IA no respondió.", { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request) {
+  const userId = await getUserIdFromRequest();
+
+  if (!userId) {
+    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+  }
+
+  try {
+    const body = await req.json();
+    const id = body.id;
+    const title = String(body.title || "").trim();
+
+    if (!id) {
+      return NextResponse.json({ error: "ID requerido" }, { status: 400 });
+    }
+
+    if (!title) {
+      return NextResponse.json({ error: "Título requerido" }, { status: 400 });
+    }
+
+    const chat = getChatById(id);
+
+    if (!chat) {
+      return NextResponse.json({ error: "Chat no encontrado" }, { status: 404 });
+    }
+
+    if (chat.user_id !== userId) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    }
+
+    const updated = updateChatTitle(id, userId, title);
+
+    if (!updated) {
+      return NextResponse.json({ error: "No se pudo renombrar" }, { status: 400 });
+    }
+
+    return NextResponse.json({ success: true, id, title });
+  } catch {
+    return NextResponse.json({ error: "Error al renombrar" }, { status: 500 });
   }
 }
 
