@@ -6,6 +6,7 @@ import { ollamaChatStream } from "@/lib/ollama";
 import { buildMessages } from "@/lib/prompt-builder";
 import { getUserIdFromRequest } from "@/lib/auth";
 
+
 export async function POST(req: Request) {
   const userId = await getUserIdFromRequest();
   if (!userId) {
@@ -55,27 +56,31 @@ export async function POST(req: Request) {
           throw new Error("respuesta vacía");
         }
       } catch {
-        try {
-          fullReply = "";
-          const retryGen = ollamaChatStream(model, ollamaMessages);
-          for await (const chunk of retryGen) {
-            fullReply += chunk;
-            await writer.write(encoder.encode(chunk));
-          }
+        if (fullReply) {
+          console.log("⚡ regeneración abortada por el cliente, parcial:", fullReply.length, "chars");
+        } else {
+          try {
+            fullReply = "";
+            const retryGen = ollamaChatStream(model, ollamaMessages);
+            for await (const chunk of retryGen) {
+              fullReply += chunk;
+              await writer.write(encoder.encode(chunk));
+            }
 
-          if (!fullReply || fullReply.length < 2) {
-            throw new Error("respuesta vacía");
+            if (!fullReply || fullReply.length < 2) {
+              throw new Error("respuesta vacía");
+            }
+          } catch {
+            const fallback = "No se pudo responder.";
+            fullReply = fallback;
+            try { await writer.write(encoder.encode(fallback)); } catch {}
           }
-        } catch {
-          const fallback = "No se pudo responder.";
-          fullReply = fallback;
-          await writer.write(encoder.encode(fallback));
         }
       } finally {
-        if (fullReply) {
+        if (fullReply && fullReply !== "No se pudo responder.") {
           addMessage(chatId, "assistant", fullReply);
         }
-        await writer.close();
+        try { await writer.close(); } catch {}
       }
     };
 

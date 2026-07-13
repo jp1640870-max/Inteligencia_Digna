@@ -25,6 +25,7 @@ type Props = {
   search: string;
   menuOpen: string | null;
   sidebarOpen: boolean;
+  currentChatId: string;
   collapsed: boolean;
   darkMode: boolean;
   projects: Project[];
@@ -69,6 +70,7 @@ const Sidebar = ({
   sidebarOpen,
   collapsed,
   darkMode,
+  currentChatId,
   projects,
   projectChats,
   expandedProjectId,
@@ -378,10 +380,16 @@ const Sidebar = ({
                     <p className={`px-2 py-1 text-xs ${colors.textMuted}`}>Sin chats</p>
                   ) : (
                     projectChatList.map((chat) => (
-                      <div key={chat.id} className={`flex items-center rounded-lg ${colors.hover} transition-colors`}>
+                      <div key={chat.id} className={`flex items-center rounded-lg transition-colors ${
+                        chat.id === currentChatId
+                          ? "bg-[#1e293b] border-l-2 border-green-500 rounded-l-none"
+                          : colors.hover
+                      }`}>
                         <button
                           onClick={() => onOpenChatInProject(chat, project.id)}
-                          className={`flex-1 text-left px-2 py-1 text-xs ${colors.textMuted} truncate`}
+                          className={`flex-1 text-left px-2 py-1 text-xs truncate ${
+                            chat.id === currentChatId ? "text-white" : colors.textMuted
+                          }`}
                         >
                           {chat.title}
                         </button>
@@ -426,16 +434,24 @@ const Sidebar = ({
         )}
         {filteredChats.map((chat) => (
           <div key={chat.id} className="relative mb-0.5">
-            <div className={`flex items-center rounded-lg ${colors.hover} transition-colors`}>
+            <div className={`flex items-center rounded-lg transition-colors ${
+              chat.id === currentChatId
+                ? `bg-[#1e293b] border-l-2 border-green-500 rounded-l-none`
+                : colors.hover
+            }`}>
               <button
                 onClick={() => handleOpenChat(chat)}
-                className={`flex-1 text-left px-3 py-2 text-sm ${colors.textMuted} truncate`}
+                className={`flex-1 text-left px-3 py-2 text-sm truncate ${
+                  chat.id === currentChatId ? "text-white" : colors.textMuted
+                }`}
               >
                 {chat.title}
               </button>
               <button
                 onClick={() => onMenuToggle(menuOpen === chat.id ? null : chat.id)}
-                className={`px-2 py-2 ${colors.textMuted} ${colors.textHover} transition-colors`}
+                className={`px-2 py-2 ${
+                  chat.id === currentChatId ? "text-white" : colors.textMuted
+                } ${colors.textHover} transition-colors`}
               >
                 <EllipsisVertical size={16} />
               </button>

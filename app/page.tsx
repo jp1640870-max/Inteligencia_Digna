@@ -3,13 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
-import { PanelLeft } from "lucide-react";
+import { PanelLeft, Search } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import ChatMessage from "./components/ChatMessage";
 import ChatInput from "./components/ChatInput";
 import ProjectDetailView from "./components/ProjectDetailView";
 import ProjectsListView from "./components/ProjectsListView";
-import type { Msg, Chat, Project } from "@/types";
+import type { Msg, Chat, Project, EditResult, SearchResult } from "@/types";
 
 type FileItem = {
   file: File;
@@ -45,6 +45,13 @@ export default function Home() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
 
+  // Edit mode state
+  const [editFile, setEditFile] = useState<File | null>(null);
+  const [editInstruction, setEditInstruction] = useState("");
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [typeChoiceFile, setTypeChoiceFile] = useState<File | null>(null);
+
   // Project state
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectSearch, setProjectSearch] = useState("");
@@ -60,6 +67,27 @@ export default function Home() {
   const [autoScroll, setAutoScroll] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const [searching, setSearching] = useState(false);
+
+  const SEARCH_KEYWORDS = [
+    "noticias", "noticia", "últimas", "ultimas", "última", "ultima",
+    "clima", "temperatura", "lluvia",
+    "hoy", "ahora", "actual", "reciente", "recién", "recien",
+    "2026", "2025", "2027",
+    "elecciones", "presidente", "gobierno", "política", "politica",
+    "economía", "economia", "inflación", "inflacion", "dólar", "dolar", "peso",
+    "covid", "pandemia", "vacuna",
+    "facebook", "google", "twitter", "whatsapp",
+    "resultados", "partido", "fútbol", "futbol",
+    "precio", "cuánto", "cuanto", "cuesta", "vale",
+    "terremoto", "sismo", "huracán", "huracan",
+  ];
+
+  function checkAutoSearch(text: string): boolean {
+    const lower = text.toLowerCase();
+    return SEARCH_KEYWORDS.some((kw) => lower.includes(kw));
+  }
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -232,7 +260,10 @@ export default function Home() {
     e.preventDefault();
     setDragging(false);
     const dropped = Array.from(e.dataTransfer.files);
-    dropped.forEach((file) => {
+    const editable = dropped.filter((f) => /\.(xlsx|xls|docx|pdf)$/i.test(f.name));
+    const others = dropped.filter((f) => !/\.(xlsx|xls|docx|pdf)$/i.test(f.name));
+
+    others.forEach((file) => {
       if (file.type.startsWith("image/")) {
         const reader = new FileReader();
         reader.onload = () =>
@@ -242,6 +273,10 @@ export default function Home() {
         setFiles((prev) => [...prev, { file, name: file.name, size: file.size }]);
       }
     });
+
+    if (editable.length > 0) {
+      setTypeChoiceFile(editable[0]);
+    }
   };
 
   const handleFilesSelected = (fileList: FileList) => {
@@ -253,17 +288,123 @@ export default function Home() {
     setFiles((prev) => [...prev, ...newFiles]);
   };
 
+  const handleEditFileToggle = () => {
+    if (isEditMode) {
+      setEditInstruction("");
+      setEditFile(null);
+    }
+    setIsEditMode((v) => !v);
+  };
+
+  const handleEditFileSelected = (file: File) => {
+    if (!file) return;
+    const ext = file.name.split(".").pop()?.toLowerCase() || "";
+    if (!["xlsx", "xls", "docx", "pdf"].includes(ext)) {
+      alert("Solo se admiten archivos .xlsx, .docx y .pdf para edición");
+      return;
+    }
+    setEditFile(file);
+    setIsEditMode(true);
+  };
+
+  const handleTypeChoiceAction = (file: File, action: "analyze" | "edit") => {
+    setTypeChoiceFile(null);
+    if (action === "edit") {
+      setEditFile(file);
+      setIsEditMode(true);
+    } else {
+      setFiles((prev) => [...prev, { file, name: file.name, size: file.size }]);
+    }
+  };
+
+  const handleEditFlow = async (file: File, instruction: string) => {
+    if (editLoading) return;
+    setEditLoading(true);
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("instruction", instruction);
+    formData.append("chatId", chatId);
+
+    try {
+      const res = await fetch("/api/document/edit", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (res.status === 401) {
+        router.push("/login");
+        return;
+      }
+
+      const editResultHeader = res.headers.get("X-Edit-Result");
+      const editResult: EditResult = editResultHeader
+        ? JSON.parse(editResultHeader)
+        : { success: false, format: "pdf", filename: file.name, originalName: file.name, changesCount: 0, error: "Error desconocido" };
+
+      if (res.ok && editResult.success) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        editResult.downloadUrl = url;
+
+        setMessages((prev) => [
+          ...prev,
+          { role: "user", text: `✏️ Editar archivo: ${file.name}\n\n${instruction}`, files: [{ name: file.name }] },
+          { role: "ai", text: "", editResult },
+        ]);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setMessages((prev) => [
+          ...prev,
+          { role: "user", text: `✏️ Editar archivo: ${file.name}\n\n${instruction}`, files: [{ name: file.name }] },
+          { role: "ai", text: data.error || "No se pudo editar el documento" },
+        ]);
+      }
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { role: "user", text: `✏️ Editar archivo: ${file.name}\n\n${instruction}`, files: [{ name: file.name }] },
+        { role: "ai", text: "Error de conexión al editar el documento" },
+      ]);
+    } finally {
+      setEditLoading(false);
+      setIsEditMode(false);
+      setEditFile(null);
+      setEditInstruction("");
+    }
+  };
+
+  const handleSendEditInstruction = () => {
+    if (!editFile || !editInstruction.trim()) return;
+    handleEditFlow(editFile, editInstruction);
+  };
+
+  const handleSend = () => {
+    if (isEditMode) {
+      handleSendEditInstruction();
+    } else {
+      enviarMensaje();
+    }
+  };
+
+  const handleStop = () => abortRef.current?.abort();
+
   const handleRegenerate = async () => {
     if (!chatId || messages.length < 2) return;
 
     setMessages((prev) => prev.slice(0, -1));
     setLoading(true);
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let accumulated = "";
+
     try {
       const res = await fetch("/api/chat/regenerate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ chatId, projectId: currentProjectId }),
+        signal: controller.signal,
       });
 
       if (res.status === 401) {
@@ -281,9 +422,8 @@ export default function Home() {
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let accumulated = "";
 
-      setMessages((prev) => [...prev, { role: "ai", text: "" }]);
+    setMessages((prev) => [...prev, { role: "ai", text: "", searching: false }]);
 
       while (true) {
         const { done, value } = await reader.read();
@@ -298,12 +438,28 @@ export default function Home() {
           return copy;
         });
       }
-
-      cargarChats();
+    } catch (err: any) {
+      if (err?.name === "AbortError") {
+        if (accumulated) {
+          try {
+            await fetch("/api/chat/save-partial", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ chatId, content: accumulated }),
+            });
+          } catch {}
+        }
+      } else {
+        console.error("Error al regenerar:", err);
+      }
     } finally {
+      abortRef.current = null;
       setLoading(false);
+      cargarChats();
     }
   };
+
+  const EDIT_KEYWORDS = /\b(agrega|añade|inserta|elimina|borra|modifica|cambia|edita|editar|columna|fila|celda|renombra|actualiza|pone|pon)\b/i;
 
   const enviarMensaje = async (
     textOverride?: string,
@@ -312,6 +468,18 @@ export default function Home() {
     const messageText = textOverride ?? input;
 
     if (!messageText.trim() && images.length === 0 && files.length === 0) return;
+
+    // Auto-detección: si hay archivo editable + keywords de edición, redirigir a edit flow
+    if (messageText.trim() && files.length > 0) {
+      const editableFile = files.find((f) => /\.(xlsx|xls|docx|pdf)$/i.test(f.name));
+      if (editableFile && EDIT_KEYWORDS.test(messageText)) {
+        setInput("");
+        setImages([]);
+        setFiles([]);
+        await handleEditFlow(editableFile.file, messageText);
+        return;
+      }
+    }
 
     setLoading(true);
 
@@ -322,6 +490,8 @@ export default function Home() {
     if (files.length > 0) {
       const uploadForm = new FormData();
       files.forEach((f) => uploadForm.append("files", f.file));
+      uploadForm.append("chatId", chatId);
+      if (currentProjectId) uploadForm.append("projectId", currentProjectId);
 
       try {
         const uploadRes = await fetch("/api/upload", {
@@ -356,6 +526,9 @@ export default function Home() {
       setMessages((prev) => prev.slice(0, editFromIndex));
     }
 
+    const willSearch = checkAutoSearch(visibleText);
+    if (willSearch) setSearching(true);
+
     setInput("");
     setImages([]);
     setFiles([]);
@@ -367,10 +540,15 @@ export default function Home() {
 
     setMessages((prev) => [...prev, { role: "ai", text: "" }]);
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let accumulated = "";
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         body: formData,
+        signal: controller.signal,
       });
 
       if (res.status === 401) {
@@ -378,29 +556,99 @@ export default function Home() {
         return;
       }
 
+      const contentType = res.headers.get("Content-Type") || "";
+
+      if (contentType.includes("application/json")) {
+        const data = await res.json();
+        setLoading(false);
+        setSearching(false);
+        if (data.type === "document" && data.editResult) {
+          let editResult = data.editResult;
+          if (editResult.dataUri) {
+            try {
+              const dataResp = await fetch(editResult.dataUri);
+              const blob = await dataResp.blob();
+              editResult = { ...editResult, downloadUrl: URL.createObjectURL(blob) };
+            } catch {}
+          }
+          setMessages((prev) => {
+            const copy = [...prev];
+            const last = copy[copy.length - 1];
+            if (last?.role === "ai") {
+              copy[copy.length - 1] = { role: "ai", text: data.text, editResult };
+            }
+            return copy;
+          });
+        } else {
+          setMessages((prev) => {
+            const copy = [...prev];
+            const last = copy[copy.length - 1];
+            if (last?.role === "ai") {
+              copy[copy.length - 1] = { role: "ai", text: data.text || "" };
+            }
+            return copy;
+          });
+        }
+        cargarChats();
+        return;
+      }
+
       if (!res.body) throw new Error("Sin cuerpo de respuesta");
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let accumulated = "";
+      let firstChunk = true;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (firstChunk) {
+          firstChunk = false;
+          setSearching(false);
+        }
         accumulated += decoder.decode(value, { stream: true });
+        // Parse sources from the end of the stream
+        let displayText = accumulated;
+        let sources: SearchResult[] = [];
+        const sourcesMatch = accumulated.match(/__SOURCES__:(.+)$/);
+        if (sourcesMatch) {
+          try {
+            sources = JSON.parse(sourcesMatch[1]);
+            displayText = accumulated.slice(0, accumulated.lastIndexOf("__SOURCES__:")).trim();
+          } catch {}
+        }
         setMessages((prev) => {
           const copy = [...prev];
           const last = copy[copy.length - 1];
           if (last?.role === "ai") {
-            copy[copy.length - 1] = { role: "ai", text: accumulated };
+            copy[copy.length - 1] = {
+              ...last,
+              text: displayText,
+              sources: sources.length > 0 ? sources : undefined,
+            };
           }
           return copy;
         });
       }
-
-      cargarChats();
+    } catch (err: any) {
+      if (err?.name === "AbortError") {
+        if (accumulated) {
+          try {
+            await fetch("/api/chat/save-partial", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ chatId, content: accumulated }),
+            });
+          } catch {}
+        }
+      } else {
+        console.error("Error al enviar mensaje:", err);
+      }
     } finally {
+      abortRef.current = null;
       setLoading(false);
+      setSearching(false);
+      cargarChats();
     }
   };
 
@@ -537,6 +785,7 @@ export default function Home() {
         sidebarOpen={sidebarOpen}
         collapsed={sidebarCollapsed}
         darkMode={darkMode}
+        currentChatId={chatId}
         projects={projects}
         projectChats={projectChats}
         expandedProjectId={expandedProjectId}
@@ -668,7 +917,18 @@ export default function Home() {
               />
             ))}
 
-            {loading && (
+            {searching && (
+              <div className="flex items-center gap-2 mb-4 ml-1 text-green-400">
+                <Search size={16} className="animate-pulse" />
+                <span className="text-sm font-medium">Buscando en la web...</span>
+                <span className="flex gap-0.5">
+                  <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                  <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                  <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                </span>
+              </div>
+            )}
+            {loading && !searching && (
               <div className="flex items-center gap-1.5 mb-4 ml-1">
                 <video
                   src="/typing.mp4"
@@ -687,9 +947,10 @@ export default function Home() {
             input={input}
             images={images}
             files={files.map((f) => ({ name: f.name, size: f.size }))}
-            loading={loading}
+            loading={loading || editLoading}
             onInputChange={setInput}
-            onSend={() => enviarMensaje()}
+            onSend={handleSend}
+            onStop={handleStop}
             onPaste={handlePaste}
             onRemoveImage={(i) =>
               setImages((prev) => prev.filter((_, idx) => idx !== i))
@@ -698,6 +959,15 @@ export default function Home() {
               setFiles((prev) => prev.filter((_, idx) => idx !== i))
             }
             onFilesSelected={handleFilesSelected}
+            onEditFile={handleEditFileToggle}
+            isEditMode={isEditMode}
+            editInstruction={editInstruction}
+            onEditInstructionChange={setEditInstruction}
+            onEditFileSelected={handleEditFileSelected}
+            typeChoiceFile={typeChoiceFile}
+            onTypeChoiceAction={handleTypeChoiceAction}
+            onDismissTypeChoice={() => setTypeChoiceFile(null)}
+            onShowTypeChoice={(file) => setTypeChoiceFile(file)}
           />
         </div>
       )}

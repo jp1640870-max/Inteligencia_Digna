@@ -167,3 +167,14 @@ Consistencia
 - ON DELETE CASCADE en ambas FKs de project_chats — eliminar un proyecto o chat limpia las relaciones automáticamente
 - chat_title se sincroniza al renombrar (vía syncProjectChatTitle())
 - getUserStats() cuenta proyectos y chats con COUNT(*) en tiempo real
+
+Fecha actual	❌ No la usa	✅ Inyectada en system prompt
+Cache de decisión	Solo por prompt	Por prompt + historial reciente
+Robustez Chromium	Sin health-check	Con health-check + reinicio
+Contexto web	Mezclado (combinedContext)	Separado, inyectado en user message
+Reglas del prompt	8 reglas verbosas	4-5 reglas concisas + fecha
+Falsos negativos	Posibles (16 tokens)	Menos (64 tokens, + keywords temporales)
+Formato RAG	CONTEXTO RAG DE ARCHIVOS ADJUNTOS (ya está bien)	Mantenemos ese mismo formato 👍
+
+ Configurar proxy corporativo en Chromium (--proxy-server detectando HTTPS_PROXY/HTTP_PROXY)
+

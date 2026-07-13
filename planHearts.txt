@@ -1,0 +1,499 @@
+PLAN COMPLETO: Sistema de Hearts (Gems)
+FASE 0 — DGX (Servidor)
+0.1 Actualizar Modelfile del modelo
+# En la DGX
+ollama show gemma4-corporativo --modelfile > /tmp/Modelfile.backup
+
+cat > /tmp/Modelfile << 'MODEL'
+FROM /home/sd_soporteinfra/ollama_personal/models2/blobs/sha256-7121486771cbfe218851513210c40b35dbdee93ab1ef43fe36283c883980f0df
+
+PARAMETER num_ctx 65536
+PARAMETER num_predict 4096
+PARAMETER temperature 0.3
+PARAMETER top_k 64
+PARAMETER top_p 0.95
+MODEL
+
+ollama rm gemma4-corporativo
+ollama create gemma4-corporativo -f /tmp/Modelfile
+0.2 Activar optimizaciones en el servicio
+pkill -f ollama_personal
+
+export OLLAMA_FLASH_ATTENTION=1
+export OLLAMA_KV_CACHE_TYPE=q8_0
+export OLLAMA_NUM_PARALLEL=10
+export OLLAMA_KEEP_ALIVE=-1
+
+nohup /home/sd_soporteinfra/ollama_personal/ollama serve > ~/ollama.log 2>&1 &
+0.3 Verificar
+curl -s http://localhost:51234/api/show -d '{"model":"gemma4-corporativo"}' | python3 -m json.tool
+FASE 1 — BASE DE DATOS (SQLite)
+Archivo: lib/db.ts — agregar al final de initTables()
+1.1 Nueva tabla hearts
+CREATE TABLE IF NOT EXISTS hearts (
+  id              TEXT PRIMARY KEY,
+  user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  role            TEXT DEFAULT '',          -- Mentor, Coach, Analista, etc.
+  tone            TEXT DEFAULT '',          -- Formal, Casual, Técnico, etc.
+  instructions    TEXT DEFAULT '',          -- Instrucciones detalladas
+  limitations     TEXT DEFAULT '',          -- Lo que NO debe hacer
+  temperature     REAL DEFAULT 0.7,
+  knowledge_files TEXT DEFAULT '[]',        -- JSON array [{name, content, size}]
+  tools           TEXT DEFAULT '[]',        -- JSON array ["read_files", "generate_docs"]
+  agent_memory    TEXT DEFAULT '',          -- Memoria persistente entre sesiones
+  is_public       INTEGER DEFAULT 0,        -- 1 = compartido con la empresa
+  is_preset       INTEGER DEFAULT 0,        -- 1 = heart precargado por admin
+  created_at      TEXT DEFAULT (datetime('now')),
+  updated_at      TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_hearts_user ON hearts(user_id);
+CREATE INDEX IF NOT EXISTS idx_hearts_public ON hearts(is_public);
+1.2 Columna nueva en chats
+ALTER TABLE chats ADD COLUMN heart_id TEXT REFERENCES hearts(id);
+1.3 Migración silenciosa
+try { db.exec("ALTER TABLE chats ADD COLUMN heart_id TEXT REFERENCES hearts(id)"); } catch {}
+FASE 2 — BACKEND: Capa de datos (lib/hearts.ts)
+Crear archivo nuevo siguiendo el patrón exacto de lib/projects.ts.
+Funciones
+// CRUD básico
+getHeartsByUser(userId: string): Heart[]
+getHeartById(id: string): Heart | null
+createHeart(userId: string, data: CreateHeartInput): Heart
+updateHeart(id: string, userId: string, data: Partial<UpdateHeartInput>): void
+deleteHeart(id: string, userId: string): boolean
+
+// Búsqueda y sharing
+searchPublicHearts(userId: string, query?: string): Heart[]
+getPresetHearts(): Heart[]              // hearts precargados por admin
+cloneHeart(heartId: string, userId: string): Heart  // copiar heart público a propio
+
+// Memoria
+updateHeartMemory(id: string, userId: string, memory: string): void
+Tipos nuevos en types/index.ts
+export type Heart = {
+  id: string;
+  user_id: string;
+  name: string;
+  role: string;
+  tone: string;
+  instructions: string;
+  limitations: string;
+  temperature: number;
+  knowledge_files: HeartFile[];
+  tools: string[];
+  agent_memory: string;
+  is_public: number;
+  is_preset: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HeartFile = {
+  name: string;
+  content: string;
+  size: number;
+};
+
+export type CreateHeartInput = {
+  name: string;
+  role?: string;
+  tone?: string;
+  instructions?: string;
+  limitations?: string;
+  temperature?: number;
+  tools?: string[];
+};
+FASE 3 — BACKEND: API Routes
+Todas las rutas siguen el patrón exacto de app/api/projects/.
+3.1 app/api/hearts/route.ts
+Método	Función
+GET	Lista hearts del usuario + públicos + presets
+POST	Crear heart nuevo
+3.2 app/api/hearts/[id]/route.ts
+Método	Función
+GET	Obtener heart por ID (verificar propiedad o público)
+PATCH	Actualizar heart (solo dueño)
+DELETE	Eliminar heart (solo dueño)
+3.3 app/api/hearts/[id]/clone/route.ts
+Método	Función
+POST	Clonar heart público a mis hearts
+3.4 app/api/hearts/presets/route.ts
+Método	Función
+GET	Listar hearts precargados por la empresa
+3.5 Modificar app/api/chat/route.ts
+Cambios en POST:
+// 1. Obtener heart_id del chat (si existe)
+const chat = getChatById(chatId);
+const heartId = chat?.heart_id || form.get("heartId");
+let heart = null;
+if (heartId) {
+  heart = getHeartById(heartId);
+}
+
+// 2. Pasar heart a buildMessages
+const ollamaMessages = buildMessages(
+  history,
+  message,
+  filesContent || undefined,
+  projectContext || undefined,
+  heart  // NUEVO
+);
+
+// 3. Agregar options.num_ctx
+body: JSON.stringify({
+  model,
+  messages: ollamaMessages,
+  stream: true,
+  options: {
+    num_ctx: Number(process.env.OLLAMA_CONTEXT_LENGTH) || 65536,
+  },
+}),
+3.6 Modificar app/api/chat/regenerate/route.ts
+Misma lógica: leer heart_id del chat, pasarlo a buildMessages.
+3.7 app/api/chat/[id]/heart/route.ts (cambiar heart de un chat)
+PATCH /api/chat/:id/heart  →  body: { heartId: string | null }
+FASE 4 — BACKEND: Prompt Builder (lib/prompt-builder.ts)
+Reemplazar buildMessages con versión que acepta heart:
+export function buildMessages(
+  history: HistoryItem[],
+  newMessage?: string,
+  filesContent?: string,
+  projectContext?: string,
+  heart?: Heart | null
+): OllamaMessage[] {
+  const parts: string[] = [
+    "Responde en español de forma clara, directa y útil.",
+    "Si das código, usa bloques markdown con el lenguaje correspondiente.",
+    "NO uses HTML.",
+    "No repitas la pregunta.",
+    "Sé conciso pero completo.",
+  ];
+
+  // ─── HEART: personalidad ───
+  if (heart) {
+    if (heart.role) {
+      parts.push(`\nEres un ${heart.role}.`);
+    }
+    if (heart.tone) {
+      parts.push(`\nTONO: ${heart.tone}.`);
+    }
+    if (heart.instructions) {
+      parts.push(`\nINSTRUCCIONES:\n${heart.instructions}`);
+    }
+    if (heart.limitations) {
+      parts.push(`\nLIMITACIONES:\n${heart.limitations}`);
+    }
+    if (heart.tools?.length) {
+      parts.push(`\nHERRAMIENTAS DISPONIBLES:\n${
+        heart.tools.map(t => `- ${getToolDescription(t)}`).join('\n')
+      }`);
+    }
+    if (heart.agent_memory) {
+      parts.push(`\nNOTAS PERSISTENTES:\n${heart.agent_memory}`);
+    }
+    if (heart.knowledge_files?.length) {
+      parts.push(`\nINFORMACIÓN DE REFERENCIA:\n${
+        heart.knowledge_files.map(f => f.content).join('\n---\n')
+      }`);
+    }
+  }
+
+  // ─── PROYECTO ───
+  if (projectContext) {
+    parts.push(`\nCONTEXTO DEL PROYECTO:\n${projectContext}`);
+  }
+
+  const systemPrompt = parts.join('\n');
+  // ...resto igual, construye messages con history + newMessage
+}
+Tool descriptions
+function getToolDescription(tool: string): string {
+  const map: Record<string, string> = {
+    read_files: "Lee y analiza archivos PDF, DOCX, XLSX, TXT subidos por el usuario",
+    generate_docs: "Genera documentos Word/Excel con los datos de la conversación",
+    web_search: "Busca información actualizada en internet",
+    analyze_images: "Analiza imágenes y extrae información visual",
+  };
+  return map[tool] || tool;
+}
+FASE 5 — BACKEND: Sistema de memoria (resúmenes)
+5.1 lib/chat-summary.ts — nuevo
+// 1. Detectar si el historial se acerca al límite (>50K tokens)
+export function shouldSummarize(history: HistoryItem[]): boolean
+
+// 2. Pedir resumen a Ollama
+export async function summarizeHistory(model: string, history: HistoryItem[]): Promise<string>
+
+// 3. Comprimir historial: reemplazar mensajes viejos por resumen
+export function compressHistory(history: HistoryItem[], summary: string): HistoryItem[]
+5.2 Integrar en app/api/chat/route.ts
+// Antes de enviar a Ollama
+if (shouldSummarize(history)) {
+  const summary = await summarizeHistory(model, history.slice(0, -10));
+  const heart = heartId ? getHeartById(heartId) : null;
+  const ollamaMessages = buildMessages(
+    [{ role: "ai", text: `[RESUMEN DE CONVERSACIÓN ANTERIOR]\n${summary}` }],
+    message,
+    filesContent || undefined,
+    projectContext || undefined,
+    heart
+  );
+}
+FASE 6 — FRONTEND: UI de Hearts
+6.1 app/components/HeartManager.tsx — nuevo
+Formulario para crear/editar hearts. Sigue el patrón visual de ProjectDetailView.tsx:
+┌─ GESTIONAR HEART ─────────────────────────────┐
+│                                                 │
+│  Nombre:    [___________________________]       │
+│                                                 │
+│  Rol:       [Seleccionar...    ▾]               │
+│             Mentor | Coach | Analista           │
+│             Escritor | Traductor | Crítico      │
+│             Personalizado                       │
+│                                                 │
+│  Tono:      [Seleccionar...    ▾]               │
+│             Formal | Casual | Técnico           │
+│             Motivacional | Humor | Neutral      │
+│                                                 │
+│  Temperatura: ├────●────────────┤ 0.7           │
+│               0.0             2.0               │
+│                                                 │
+│  Instrucciones:                                 │
+│  ┌──────────────────────────────────────────┐   │
+│  │ ...                                      │   │
+│  └──────────────────────────────────────────┘   │
+│                                                 │
+│  Limitaciones:                                  │
+│  ┌──────────────────────────────────────────┐   │
+│  │ ...                                      │   │
+│  └──────────────────────────────────────────┘   │
+│                                                 │
+│  Herramientas:                                  │
+│  ☑ Leer archivos   ☐ Generar documentos        │
+│  ☐ Web search      ☐ Analizar imágenes         │
+│                                                 │
+│  Archivos de conocimiento:                      │
+│  [+ Adjuntar]  (máx 3 archivos, 2000 tok c/u)   │
+│  › manual_ventas.pdf  [×]                       │
+│                                                 │
+│  Compartir:  ☐ Disponible para la empresa      │
+│                                                 │
+│  [💾 Guardar]  [🗑 Eliminar]                    │
+└─────────────────────────────────────────────────┘
+6.2 app/components/HeartCard.tsx — nuevo
+Card para listar hearts en grid/lista:
+┌───────────────────────┐
+│  [icono]  Analista    │
+│           de Datos    │
+│                       │
+│  Técnico · 0.3 ·      │
+│  📄 2 archivos       │
+│                       │
+│  [Usar]  [Editar]     │
+└───────────────────────┘
+6.3 app/components/HeartSelector.tsx — nuevo
+Dropdown en el header del chat para seleccionar heart:
+[Heart: Analista de Datos ▾]  ← dropdown
+  ├── Sin heart (modo general)
+  ├── ─────────────────
+  ├──  Analista de Datos      ← actual
+  ├──  Mentor de Ventas
+  ├──  Redactor Corporativo
+  ├── ─────────────────
+  ├── + Gestionar Hearts
+6.4 app/components/HeartsLibraryView.tsx — nuevo
+Vista de biblioteca/catálogo de hearts (públicos + presets + propios):
+
+┌─ BIBLIOTECA DE HEARTS ────────────────────────┐
+│                                               │
+│  [🔍 Buscar hearts...                   ]    │
+│                                               │
+│  ┌─── TUS HEARTS ────────────────────────┐    │
+│  │ [Card] [Card] [Card] [+ Crear]        │    │
+│  └───────────────────────────────────────┘    │
+│                                               │
+│  ┌─── PRECARGADOS (empresa) ─────────────┐    │
+│  │ [Card] [Card] [Card]                  │    │
+│  └───────────────────────────────────────┘    │
+│                                               │
+│  ┌─── PÚBLICOS ──────────────────────────┐    │
+│  │ [Card] [Card] [Card]                  │    │
+│  └───────────────────────────────────────┘    │
+└───────────────────────────────────────────────┘
+
+6.5 Modificar app/components/Sidebar.tsx
+Agregar en la sección de botones principales (después de "Analizar archivo"):
+<button onClick={() => onOpenHearts()}>
+  <Heart size={18} />
+  Hearts
+</button>
+Nuevas props:
+onOpenHearts: () => void;
+6.6 Modificar app/page.tsx
+Nuevo estado:
+type ViewState = 
+  | { type: "chat" } 
+  | { type: "projects" } 
+  | { type: "project"; id: string }
+  | { type: "hearts" }          // NUEVO: biblioteca
+  | { type: "heart"; id: string }  // NUEVO: detalle/edición
+  | { type: "heart-new" }       // NUEVO: creación
+Nuevos estados:
+const [selectedHeartId, setSelectedHeartId] = useState<string | null>(null);
+const [heartId, setHeartId] = useState<string | null>(null);  // heart activo en el chat
+Enviar heartId en POST /api/chat:
+if (heartId) formData.append("heartId", heartId);
+Mostrar badge de heart activo:
+{heartId && (
+  <span className="text-xs text-purple-400">
+    Heart: {heartName}
+  </span>
+)}
+FASE 7 — BACKEND: Herramientas
+7.1 lib/doc-generator.ts — nuevo
+export function generateDocx(content: string, filename: string): Buffer
+export function generateXlsx(data: any[][], filename: string): Buffer
+7.2 Integrar herramientas en app/api/chat/route.ts
+Al final del stream, detectar comandos de herramientas:
+if (heart?.tools?.includes("generate_docs")) {
+  const docMatch = fullReply.match(/\[GENERAR_DOC:([^\]]+)\]\n([\s\S]*)/);
+  if (docMatch) {
+    const buffer = await generateDocx(docMatch[2], docMatch[1]);
+    // Guardar y devolver URL de descarga
+  }
+}
+FASE 8 — SEED: Hearts precargados
+En scripts/seed.ts, agregar:
+const presetHearts = [
+  {
+    name: "Asistente Corporativo",
+    role: "Asistente corporativo",
+    tone: "Formal y profesional",
+    instructions: "Responde consultas generales sobre la empresa...",
+    temperature: 0.3,
+    is_preset: 1,
+  },
+  {
+    name: "Analista de Datos",
+    role: "Analista de datos",
+    tone: "Técnico y preciso",
+    instructions: "Analiza datos, genera reportes y visualizaciones...",
+    temperature: 0.2,
+    tools: ["read_files", "generate_docs"],
+    is_preset: 1,
+  },
+  {
+    name: "Mentor de Ventas",
+    role: "Mentor de ventas",
+    tone: "Motivacional y práctico",
+    instructions: "Ayuda a mejorar técnicas de venta...",
+    temperature: 0.7,
+    is_preset: 1,
+  },
+  {
+    name: "Redactor de Contenido",
+    role: "Redactor profesional",
+    tone: "Creativo y versátil",
+    instructions: "Redacta, edita y mejora contenido escrito...",
+    temperature: 0.8,
+    is_preset: 1,
+  },
+];
+RESUMEN: Archivos a modificar/crear
+Archivos NUEVOS
+Archivo	Líneas
+lib/hearts.ts	~120
+lib/chat-summary.ts	~80
+lib/doc-generator.ts	~60
+app/api/hearts/route.ts	~40
+app/api/hearts/[id]/route.ts	~60
+app/api/hearts/[id]/clone/route.ts	~25
+app/api/hearts/presets/route.ts	~20
+app/api/chat/[id]/heart/route.ts	~30
+app/components/HeartManager.tsx	~250
+app/components/HeartCard.tsx	~60
+app/components/HeartSelector.tsx	~80
+app/components/HeartsLibraryView.tsx	~150
+Total nuevos	~975
+Archivos a MODIFICAR
+Archivo	Cambio
+lib/db.ts	+ tabla hearts, + columna heart_id en chats
+lib/prompt-builder.ts	+ parámetro heart, compilación de personalidad
+lib/ollama.ts	+ options.num_ctx en body
+types/index.ts	+ tipos Heart, HeartFile, CreateHeartInput
+app/api/chat/route.ts	+ heart_id, + options.num_ctx, + herramientas, + resúmenes
+app/api/chat/regenerate/route.ts	+ heart_id
+app/page.tsx	+ vistas hearts, + estado heartId
+app/components/Sidebar.tsx	+ botón Hearts, + props
+app/api/upload/route.ts	(opcional) validar tamaño de archivos para knowledge
+scripts/seed.ts	+ preset hearts
+.env.local	+ OLLAMA_CONTEXT_LENGTH
+ORDEN DE IMPLEMENTACIÓN
+Semana 1: DGX + DB (Fase 0-1)       → servidor optimizado, esquema listo
+Semana 2: Backend datos + API (2-3)  → hearts creados desde curl
+Semana 3: Prompt + memoria (4-5)    → hearts funcionales en chat
+Semana 4: Frontend Hearts (6)       → UI completa
+Semana 5: Herramientas + Seed (7-8) → docs, presets
+
+
+
+
+
+
+
+
+
+Cuando la conversación supera ~12K tokens, el servidor:
+1. Pide a Ollama: "Resume esta conversación en 2 párrafos"
+2. Guarda el resumen como un mensaje system en la DB
+3. En la siguiente request, envía: [RESUMEN] + [últimos 5 mensajes]
+
+Persistencia:
+Cada agente tiene un campo agent_memory (texto) que persiste entre sesiones. El agente puede actualizarlo con instrucciones como:
+"Actualiza tu nota: El cliente prefiere contacto por email"
+Al inicio de cada conversación se inyecta:
+NOTAS PERSISTENTES:
+[agent_memory]
+Así el agente recuerda información clave aunque pasen días entre usos.
+
+Aplicable en chat general? learning? me estoy volviendo loco?
+
+Diagrama de flujo de contexto
+SIN MEMORIA:
+  [System Prompt] ── [Historial completo ~8 msg] ── [Nuevo mensaje]
+                    ↑ Se pierde cuando llega a ~16K
+
+CON RESUMEN:
+  [System Prompt] ── [RESUMEN] ── [Últimos 5 msg] ── [Nuevo mensaje]
+                    ↑ Ocupa ~500 tokens, no crece
+
+CON MEMORIA PERSISTENTE:
+  [System Prompt] ── [NOTAS] ── [RESUMEN] ── [Últimos 5 msg] ── [Nuevo mensaje]
+                    ↑ ~300 tokens        ↑ ~500 tokens
+
+3. Herramientas de los agentes
+Actualmente ya tienes la base para varias:
+Herramienta	                 Estado	                 Cómo funciona
+Leer archivos	            ✅ Ya funciona	        PDF, DOCX, XLSX, TXT, imágenes vía upload → se inyecta en el prompt
+Generar documentos	        🟡 Fácil	             Usar docx y xlsx que ya están en package.json. El agente decide cuándo generar
+Analizar imágenes	        ✅ Ya funciona	        Gemma 4 es multimodal
+Web search	                🔶 Medio	             API externa (Google Custom Search, SerpAPI) o internal search
+Ejecutar código	            🔴 Complejo	             Requiere sandbox seguro
+
+Implementación de herramientas:
+Tabla agents, columna tools (JSON):
+["read_files", "generate_docs", "search_knowledge"]
+Cuando el usuario envía un mensaje, el server:
+1. Detecta qué herramientas tiene el agente
+2. Las inyecta en el system prompt como capacidades disponibles
+3. El modelo "decide" usarlas y el backend las ejecuta
+Ejemplo en el prompt:
+HERRAMIENTAS DISPONIBLES:
+- read_files: Lee y analiza PDF, DOCX, XLSX subidos por el usuario
+- generate_docs: Genera documentos Word/Excel con los datos de la conversación
+Para generate_docs, el flujo sería:
+1. El modelo responde: [GENERAR_DOC:reporte_ventas.docx]
+2. El frontend/backend intercepta, llama a lib/doc-generator.ts
+3. Devuelve el archivo generado al usuario

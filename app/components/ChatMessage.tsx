@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { Paperclip } from "lucide-react";
+import { Download, ExternalLink, FileSpreadsheet, FileText, FileType2, Paperclip, Pencil, RefreshCw, Copy, Check } from "lucide-react";
 import CodeBlock from "./CodeBlock";
-import type { Msg } from "@/types";
+import type { Msg, EditResult, SearchResult } from "@/types";
 
 type Props = {
   message: Msg;
@@ -19,6 +19,7 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.text || "");
   const [copied, setCopied] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const colors = {
     aiBg: darkMode ? "bg-[#121824]" : "bg-gray-100",
@@ -35,6 +36,8 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
     textareaText: darkMode ? "text-white" : "text-gray-900",
     cancelBtn: darkMode ? "bg-[#1e293b] hover:bg-[#2a3a4f]" : "bg-gray-200 hover:bg-gray-300",
     saveBtn: "bg-green-600 hover:bg-green-500",
+    editResultBg: darkMode ? "bg-[#0f1a1a]" : "bg-green-50",
+    editResultBorder: darkMode ? "border-green-800/40" : "border-green-300",
   };
 
   const handleCopy = async () => {
@@ -51,6 +54,72 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
   const handleCancelEdit = () => {
     setEditValue(message.text || "");
     setEditing(false);
+  };
+
+  const handleDownloadEditResult = async (editResult: EditResult) => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      let url: string;
+      if (editResult.downloadUrl) {
+        url = editResult.downloadUrl;
+      } else if (editResult.dataUri) {
+        const resp = await fetch(editResult.dataUri);
+        const blob = await resp.blob();
+        url = URL.createObjectURL(blob);
+      } else {
+        throw new Error("No hay URL de descarga");
+      }
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = editResult.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      alert("No se pudo descargar el archivo");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const renderEditResult = (editResult: EditResult) => {
+    const formatIcon = editResult.format === "xlsx"
+      ? <FileSpreadsheet size={16} />
+      : editResult.format === "docx"
+        ? <FileText size={16} />
+        : <FileType2 size={16} />;
+
+    const formatLabel = editResult.format === "xlsx" ? "Excel"
+      : editResult.format === "docx" ? "Word"
+        : "PDF";
+
+    return (
+      <div className={`mt-3 rounded-lg border ${colors.editResultBorder} ${colors.editResultBg} p-3`}>
+        <div className="flex items-center gap-2 mb-2">
+          {formatIcon}
+          <span className="text-sm font-medium">
+            {editResult.success ? "✅ Documento modificado" : "❌ Error al modificar"}
+          </span>
+        </div>
+        <p className="text-xs text-gray-500 mb-2">
+          {editResult.changesCount > 0
+            ? `${editResult.changesCount} cambio(s) aplicado(s) a ${editResult.originalName}`
+            : editResult.error || "No se realizaron cambios"}
+        </p>
+        {(editResult.success && (editResult.downloadUrl || editResult.dataUri)) && (
+          <button
+            onClick={() => handleDownloadEditResult(editResult)}
+            disabled={downloading}
+            className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs transition ${colors.buttonBg} ${colors.buttonHover}`}
+          >
+            <Download size={14} className={downloading ? "animate-bounce" : ""} />
+            Descargar {formatLabel}
+          </button>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -93,61 +162,105 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
                 message.role === "user" ? colors.userBg : colors.aiBg
               }`}
             >
-              <ReactMarkdown components={{ code: CodeBlock }}>
-                {message.text || ""}
-              </ReactMarkdown>
-              {message.files && message.files.length > 0 && (
-                <div className={`flex flex-wrap gap-1.5 mt-2 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                  {message.files.map((f, idx) => (
-                    <span
-                      key={idx}
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md ${colors.fileTagBg} ${colors.fileTagText}`}
-                    >
-                      <Paperclip size={12} className="shrink-0" />
-                      {f.name}
-                    </span>
+              {message.editResult ? (
+                renderEditResult(message.editResult)
+              ) : (
+                <>
+                  <ReactMarkdown
+                    components={{
+                      code: CodeBlock,
+                      a: ({ href, children }) => (
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-green-400 hover:text-green-300 underline decoration-green-400/30 hover:decoration-green-400 transition-all"
+                        >
+                          {children}
+                        </a>
+                      ),
+                    }}
+                  >
+                    {message.text || ""}
+                  </ReactMarkdown>
+                  {message.sources && message.sources.length > 0 && (
+                    <div className={`mt-4 pt-3 border-t ${darkMode ? "border-[#202938]" : "border-gray-300"}`}>
+                      <p className={`text-xs font-semibold mb-2 ${colors.muted}`}>
+                        Fuentes consultadas:
+                      </p>
+                      <div className="space-y-1.5">
+                        {message.sources.map((src, i) => (
+                          <a
+                            key={i}
+                            href={src.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={`group flex items-center gap-2 rounded-lg px-3 py-2 text-xs transition-all ${colors.fileTagBg} ${colors.fileTagText} hover:bg-green-600/20 hover:text-green-400 hover:border-green-500/30 border border-transparent`}
+                          >
+                            <ExternalLink size={12} className="shrink-0 text-green-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            <span className="font-medium text-green-500 shrink-0">[{i + 1}]</span>
+                            <span className="truncate">{src.title}</span>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {message.files && message.files.length > 0 && (
+                    <div className={`flex flex-wrap gap-1.5 mt-2 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                      {message.files.map((f, idx) => (
+                        <span
+                          key={idx}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md ${colors.fileTagBg} ${colors.fileTagText}`}
+                        >
+                          <Paperclip size={12} className="shrink-0" />
+                          {f.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {message.images?.map((img, idx) => (
+                    <img key={idx} src={img} className="mt-2 max-h-40 rounded-lg" />
                   ))}
-                </div>
+                </>
               )}
-              {message.images?.map((img, idx) => (
-                <img key={idx} src={img} className="mt-2 max-h-40 rounded-lg" />
-              ))}
             </div>
 
-            <div
-              className={`flex gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity ${
-                message.role === "user" ? "justify-end" : "justify-start"
-              }`}
-            >
-              {message.role === "user" && onEdit && (
-                <button
-                  onClick={() => {
-                    setEditValue(message.text || "");
-                    setEditing(true);
-                  }}
-                  className={`text-xs px-2 py-1 rounded transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
-                  title="Editar mensaje"
-                >
-                  ✏️
-                </button>
-              )}
-              {message.role === "ai" && isLastAi && onRegenerate && (
-                <button
-                  onClick={onRegenerate}
-                  className={`text-xs px-2 py-1 rounded transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
-                  title="Regenerar respuesta"
-                >
-                  🔄
-                </button>
-              )}
-              <button
-                onClick={handleCopy}
-                className={`text-xs px-2 py-1 rounded transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
-                title="Copiar mensaje"
+            {!message.editResult && (
+              <div
+                className={`flex gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity ${
+                  message.role === "user" ? "justify-end" : "justify-start"
+                }`}
               >
-                {copied ? "✅" : "📋"}
-              </button>
-            </div>
+                {message.role === "user" && onEdit && (
+                  <button
+                    onClick={() => {
+                      setEditValue(message.text || "");
+                      setEditing(true);
+                    }}
+                    className={`text-xs px-2 py-1 rounded transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+                    title="Editar mensaje"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                )}
+                {message.role === "ai" && isLastAi && onRegenerate && (
+                  <button
+                    onClick={onRegenerate}
+                    className={`text-xs px-2 py-1 rounded transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+                    title="Regenerar respuesta"
+                  >
+                    <RefreshCw size={14} />
+                  </button>
+                )}
+                <button
+                  onClick={handleCopy}
+                  className={`text-xs px-2 py-1 rounded transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+                  title="Copiar mensaje"
+                >
+                  {copied ? <Check size={14} /> : <Copy size={14} />}
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
