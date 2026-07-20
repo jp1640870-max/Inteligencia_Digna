@@ -597,11 +597,11 @@ export function getKnowledgeEntries(category?: string) {
   initKnowledgeTable();
   if (category) {
     return d
-      .prepare("SELECT * FROM knowledge_entries WHERE category = ? ORDER BY updated_at DESC")
+      .prepare("SELECT ke.*, CASE WHEN u.role = 'super_admin' THEN '—' ELSE u.name END AS created_by_name FROM knowledge_entries ke LEFT JOIN users u ON ke.created_by = u.id WHERE ke.category = ? ORDER BY ke.updated_at DESC")
       .all(category) as any[];
   }
   return d
-    .prepare("SELECT ke.*, u.name AS created_by_name FROM knowledge_entries ke LEFT JOIN users u ON ke.created_by = u.id ORDER BY ke.updated_at DESC")
+    .prepare("SELECT ke.*, CASE WHEN u.role = 'super_admin' THEN '—' ELSE u.name END AS created_by_name FROM knowledge_entries ke LEFT JOIN users u ON ke.created_by = u.id ORDER BY ke.updated_at DESC")
     .all() as any[];
 }
 
@@ -711,7 +711,7 @@ export function logAudit(userId: string | null, action: string, details?: string
     .run(userId, action, details || "", ip || "");
 }
 
-export function getAuditLogs(limit = 100, offset = 0, action?: string, userId?: string) {
+export function getAuditLogs(limit = 100, offset = 0, action?: string, userId?: string, callerRole?: string) {
   const d = getDb();
   initAuditTable();
   let sql = `
@@ -721,6 +721,11 @@ export function getAuditLogs(limit = 100, offset = 0, action?: string, userId?: 
     WHERE 1=1
   `;
   const params: any[] = [];
+  // No-super_admin no ven acciones de super_admin
+  if (callerRole && callerRole !== "super_admin") {
+    sql += " AND (u.role IS NULL OR u.role != ?)";
+    params.push("super_admin");
+  }
   if (action) { sql += " AND a.action = ?"; params.push(action); }
   if (userId) { sql += " AND a.user_id = ?"; params.push(userId); }
   sql += " ORDER BY a.created_at DESC LIMIT ? OFFSET ?";
@@ -728,13 +733,17 @@ export function getAuditLogs(limit = 100, offset = 0, action?: string, userId?: 
   return d.prepare(sql).all(...params) as any[];
 }
 
-export function countAuditLogs(action?: string, userId?: string) {
+export function countAuditLogs(action?: string, userId?: string, callerRole?: string) {
   const d = getDb();
   initAuditTable();
-  let sql = "SELECT COUNT(*) as c FROM audit_log WHERE 1=1";
+  let sql = "SELECT COUNT(*) as c FROM audit_log a LEFT JOIN users u ON a.user_id = u.id WHERE 1=1";
   const params: any[] = [];
-  if (action) { sql += " AND action = ?"; params.push(action); }
-  if (userId) { sql += " AND user_id = ?"; params.push(userId); }
+  if (callerRole && callerRole !== "super_admin") {
+    sql += " AND (u.role IS NULL OR u.role != ?)";
+    params.push("super_admin");
+  }
+  if (action) { sql += " AND a.action = ?"; params.push(action); }
+  if (userId) { sql += " AND a.user_id = ?"; params.push(userId); }
   const row = d.prepare(sql).get(...params) as any;
   return row?.c || 0;
 }
@@ -767,7 +776,7 @@ export function getAnnouncements(activeOnly = false) {
   const d = getDb();
   initAnnouncementsTable();
   let sql = `
-    SELECT a.*, u.name AS created_by_name
+    SELECT a.*, CASE WHEN u.role = 'super_admin' THEN '—' ELSE u.name END AS created_by_name
     FROM announcements a
     LEFT JOIN users u ON a.created_by = u.id
   `;

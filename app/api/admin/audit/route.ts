@@ -3,8 +3,8 @@ import { requireRole } from "@/lib/auth";
 import { getAuditLogs, countAuditLogs, getAuditActions } from "@/lib/db";
 
 export async function GET(req: NextRequest) {
-  const { allowed } = await requireRole(["super_admin", "admin"]);
-  if (!allowed) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+  const { allowed, user } = await requireRole(["super_admin", "admin"]);
+  if (!allowed || !user) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
   const limit = parseInt(searchParams.get("limit") || "100");
@@ -12,8 +12,8 @@ export async function GET(req: NextRequest) {
   const action = searchParams.get("action") || undefined;
   const userId = searchParams.get("userId") || undefined;
 
-  const logs = getAuditLogs(limit, offset, action, userId);
-  const total = countAuditLogs(action, userId);
+  const logs = getAuditLogs(limit, offset, action, userId, user.role);
+  const total = countAuditLogs(action, userId, user.role);
   const actions = getAuditActions();
 
   return NextResponse.json({ logs, total, actions });
