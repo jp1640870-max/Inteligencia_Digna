@@ -4,8 +4,9 @@ import { readWordStructure, applyWordEdits } from "@/lib/editors/word-editor";
 import { readPdfStructure, applyPdfEdits } from "@/lib/editors/pdf-editor";
 import { ollamaChat } from "@/lib/ollama";
 import type { OllamaMessage } from "@/lib/ollama";
+import { env } from "@/lib/env";
 
-const MODEL = process.env.TEXT_MODEL || "llama3.2";
+const MODEL = env.TEXT_MODEL;
 
 function getExtension(filename: string): string {
   return filename.split(".").pop()?.toLowerCase() || "";

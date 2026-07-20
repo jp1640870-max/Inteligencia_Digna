@@ -1,6 +1,7 @@
 import type { SearchResult } from "@/types";
+import { env } from "@/lib/env";
 
-const SEARXNG_URL = process.env.SEARXNG_URL || "http://localhost:4000";
+const SEARXNG_URL = env.SEARXNG_URL || "http://localhost:4000";
 const SEARCH_TIMEOUT = 10_000;
 const MAX_RESULTS = 5;
 

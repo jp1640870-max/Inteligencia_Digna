@@ -1,26 +1,11 @@
 import { NextResponse } from "next/server";
-import { getUserById, getUserStats } from "@/lib/db";
-import { getUserIdFromRequest } from "@/lib/auth";
+import { getAuthUserFromRequest } from "@/lib/auth";
 
-export async function GET(req: Request) {
-  const userId = await getUserIdFromRequest();
-  if (!userId) {
+export async function GET() {
+  const user = await getAuthUserFromRequest();
+  if (!user) {
     return NextResponse.json({ error: "No autenticado" }, { status: 401 });
   }
 
-  const user = getUserById(userId);
-  if (!user) {
-    return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
-  }
-
-  const stats = getUserStats(userId);
-
-  return NextResponse.json({
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    picture: user.picture || null,
-    projectCount: stats.projectCount,
-    chatCount: stats.chatCount,
-  });
+  return NextResponse.json(user);
 }

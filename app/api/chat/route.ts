@@ -17,6 +17,8 @@ import { getProjectById, syncProjectChatTitle } from "@/lib/projects";
 import { generateDocument } from "@/lib/document-generator";
 import { searchWeb, formatSearchResults, shouldAutoSearch } from "@/lib/web-search";
 import { retrieveRelevantChunks, formatRagContext } from "@/lib/rag";
+import { log, childLogger } from "@/lib/logger";
+import { checkRateLimit } from "@/lib/rate-limit";
 import type { DocGenStructure, DocGenFormat, EditResult, SearchResult } from "@/types";
 
 
@@ -244,14 +246,29 @@ export async function GET(_req: Request) {
 }
 
 export async function POST(req: Request) {
+  const startTime = Date.now();
   const userId = await getUserIdFromRequest();
   if (!userId) {
     return NextResponse.json({ error: "No autenticado" }, { status: 401 });
   }
 
+  // ─── Rate limiting ───
+  const rateCheck = checkRateLimit(userId);
+  if (!rateCheck.allowed) {
+    log.warn({ userId, ...rateCheck }, "Rate limit excedido en /api/chat");
+    return NextResponse.json(
+      { error: "Demasiadas solicitudes. Intenta de nuevo en unos segundos." },
+      { status: 429, headers: rateCheck.headers }
+    );
+  }
+
+  let chatId = crypto.randomUUID();
+  let model = process.env.TEXT_MODEL!;
+  let reqLog = childLogger({ userId });
+
   try {
     const form = await req.formData();
-    const chatId = (form.get("chatId") as string) || crypto.randomUUID();
+    chatId = (form.get("chatId") as string) || crypto.randomUUID();
     const message = (form.get("message") as string) || "";
     const filesContent = (form.get("filesContent") as string) || "";
     const editFromIndex = form.get("editFromIndex") as string | null;
@@ -263,7 +280,10 @@ export async function POST(req: Request) {
       }
     });
 
-    const model = process.env.TEXT_MODEL!;
+    model = process.env.TEXT_MODEL!;
+    reqLog = childLogger({ userId, chatId, model, projectId: projectId || undefined });
+
+    reqLog.info({ msgLen: message.length, images: images.length, files: filesContent ? "yes" : "no" }, "Chat request iniciado");
 
     let chat;
     if (editFromIndex) {
@@ -443,8 +463,11 @@ ${projectFiles.map((f) => `Archivo: ${f.name}\n${f.content}`).join("\n\n")}`;
       headers: { "Content-Type": "text/plain; charset=utf-8" },
     });
   } catch (e) {
-    console.error(e);
+    reqLog.error({ err: e instanceof Error ? e.message : String(e) }, "Error en chat POST");
     return new Response("Error: la IA no respondió.", { status: 500 });
+  } finally {
+    const elapsed = Date.now() - startTime;
+    log.info({ userId, chatId, elapsedMs: elapsed }, "Chat request completado");
   }
 }
 

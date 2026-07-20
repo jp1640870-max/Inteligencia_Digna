@@ -1,4 +1,6 @@
-const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
+import { env } from "@/lib/env";
+
+const OLLAMA_URL = env.OLLAMA_URL;
 
 export type OllamaMessage = {
   role: "system" | "user" | "assistant";

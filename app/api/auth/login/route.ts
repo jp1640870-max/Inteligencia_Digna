@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getUserByEmail } from "@/lib/db";
+import { getUserByEmail, logAudit } from "@/lib/db";
 import { verifyPassword, signToken } from "@/lib/auth";
 
 export async function POST(req: Request) {
@@ -28,11 +28,19 @@ export async function POST(req: Request) {
       );
     }
 
-    const token = signToken({ userId: user.id, email: user.email });
+    const role = user.role || "user";
+    const token = signToken({ userId: user.id, email: user.email, role });
+
+    logAudit(user.id, "login", `Login exitoso: ${user.email}`, req.headers.get("x-forwarded-for") || "");
 
     const response = NextResponse.json({
       token,
-      user: { id: user.id, email: user.email, name: user.name },
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role,
+      },
     });
 
     response.cookies.set("token", token, {

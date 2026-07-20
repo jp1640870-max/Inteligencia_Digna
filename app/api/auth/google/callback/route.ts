@@ -82,7 +82,8 @@ export async function GET(req: Request) {
       updateUserPicture(user.id, googleUser.picture || null);
     }
 
-    const token = signToken({ userId: user.id, email: user.email });
+    const userRole = user.role || "user";
+    const token = signToken({ userId: user.id, email: user.email, role: userRole });
 
     const baseUrl = new URL(req.url).origin;
     const response = NextResponse.redirect(new URL("/", baseUrl));

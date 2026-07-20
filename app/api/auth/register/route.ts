@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { createUser, getUserByEmail } from "@/lib/db";
+import { createUser, getUserByEmail, logAudit } from "@/lib/db";
 import { hashPassword, signToken } from "@/lib/auth";
 
 export async function POST(req: Request) {
@@ -26,11 +26,13 @@ export async function POST(req: Request) {
     const passwordHash = hashPassword(password);
     createUser(id, email, name || null, passwordHash);
 
-    const token = signToken({ userId: id, email });
+    const role = "user"; // Nuevos registros siempre empiezan como user
+    const token = signToken({ userId: id, email, role });
+    logAudit(id, "register", `Nuevo registro: ${email}`, req.headers.get("x-forwarded-for") || "");
 
     const response = NextResponse.json({
       token,
-      user: { id, email, name: name || null },
+      user: { id, email, name: name || null, role },
     });
 
     response.cookies.set("token", token, {

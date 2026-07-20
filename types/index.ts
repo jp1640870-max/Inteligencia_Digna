@@ -23,10 +23,28 @@ export type Chat = {
   updated_at?: string;
 };
 
+// ─── Roles de usuario ───
+export type UserRole =
+  | "super_admin"   // Acceso TOTAL al panel + gestión de admins
+  | "admin"         // Gestiona usuarios, Hearts, config, contenido
+  | "editor"        // Gestiona Hearts públicos, knowledge base
+  | "viewer"        // Solo lectura del panel
+  | "power_user"    // Features avanzadas (ilimitado, docs)
+  | "user"          // Features base (chats, archivos)
+  | "restricted";   // Solo chats básicos, sin archivos ni web search
+
+export const ADMIN_ROLES: UserRole[] = ["super_admin", "admin", "editor", "viewer"];
+
+export function isAdminRole(role?: string): boolean {
+  if (!role) return false;
+  return ADMIN_ROLES.includes(role as UserRole);
+}
+
 export type User = {
   id: string;
   email: string;
   name: string | null;
+  role: UserRole;
 };
 
 export type Project = {
