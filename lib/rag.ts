@@ -2,7 +2,7 @@ import { storeChunk, getChunksByChat, deleteChunksByDocument } from "@/lib/db";
 import { env } from "@/lib/env";
 
 const OLLAMA_URL = env.OLLAMA_URL;
-const EMBEDDING_MODEL = "nomic-embed-text";
+const EMBEDDING_MODEL = "bge-m3:latest";
 const CHUNK_SIZE = 500;
 const CHUNK_OVERLAP = 50;
 const TOP_K = 3;

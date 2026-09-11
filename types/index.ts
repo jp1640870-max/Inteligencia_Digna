@@ -146,3 +146,65 @@ export type DocGenStructure = {
   sheets?: DocGenSheet[];
   content?: DocGenContentBlock[];
 };
+
+// ─── Knowledge Base ───
+
+export type KbFileStatus = "processing" | "active" | "hold";
+
+export type KbCategory = {
+  id: string;
+  name: string;
+  label: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type KbFile = {
+  id: string;
+  filename: string;
+  format: string;
+  size_bytes: number;
+  category_id: string | null;
+  category_name?: string;
+  category_label?: string;
+  status: KbFileStatus;
+  conflict_with: string | null;
+  conflict_with_filename?: string | null;
+  content: string;
+  checksum: string | null;
+  uploaded_by: string | null;
+  uploader_name?: string | null;
+  created_at: string;
+  updated_at: string;
+  chunk_count?: number;
+};
+
+export type KbChunk = {
+  id: string;
+  file_id: string;
+  category_id: string | null;
+  chunk_index: number;
+  content: string;
+  embedding: string;
+  created_at?: string;
+};
+
+/**
+ * Fuente KB citada por una respuesta del asistente (solo para auditoría admin,
+ * nunca se muestra al usuario final).
+ */
+export type KbSource = {
+  file_id: string;
+  filename: string;
+  category: string | null;
+  chunk_index: number;
+  score: number;
+};
+
+export type KbConflictAction =
+  | "keep-both"
+  | "delete-new"
+  | "delete-old"
+  | "reactivate"
+  | "reindex"
+  | "move";

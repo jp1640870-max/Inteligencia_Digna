@@ -17,9 +17,10 @@ import { getProjectById, syncProjectChatTitle } from "@/lib/projects";
 import { generateDocument } from "@/lib/document-generator";
 import { searchWeb, formatSearchResults, shouldAutoSearch } from "@/lib/web-search";
 import { retrieveRelevantChunks, formatRagContext } from "@/lib/rag";
+import { retrieveKb, getKbScopeIdsForUser, formatKbContext, toKbSources } from "@/lib/kb";
 import { log, childLogger } from "@/lib/logger";
 import { checkRateLimit } from "@/lib/rate-limit";
-import type { DocGenStructure, DocGenFormat, EditResult, SearchResult } from "@/types";
+import type { DocGenStructure, DocGenFormat, EditResult, SearchResult, KbSource } from "@/types";
 
 
 
@@ -71,8 +72,10 @@ async function handleDocumentCreation(
   images: string[],
   projectContext: string,
   ragContext: string,
+  kbContext: string,
+  kbSources: KbSource[],
   format: DocGenFormat
-): Promise<{ text: string; editResult: EditResult; docData: string }> {
+): Promise<{ text: string; editResult: EditResult; docData: string; kbSources: KbSource[] }> {
   const formatLabel = { xlsx: "Excel", docx: "Word", pdf: "PDF" }[format];
 
   const jsonPrompt = `Genera ÚNICAMENTE un JSON válido para crear un archivo ${formatLabel} con el siguiente contenido:
@@ -122,7 +125,7 @@ REGLAS:
     { role: "user", content: jsonPrompt },
   ];
 
-  const normalMessages = buildMessages(history, message, filesContent || undefined, projectContext || undefined, undefined, ragContext || undefined);
+  const normalMessages = buildMessages(history, message, filesContent || undefined, projectContext || undefined, undefined, ragContext || undefined, kbContext || undefined);
   if (images.length > 0 && normalMessages.length > 0) {
     normalMessages[normalMessages.length - 1].images = images;
   }
@@ -166,7 +169,7 @@ REGLAS:
     dataUri: `data:${CONTENT_TYPE_MAP[format]};base64,${base64}`,
   };
 
-  return { text: textResponse, editResult, docData };
+  return { text: textResponse, editResult, docData, kbSources };
 }
 
 
@@ -177,6 +180,7 @@ async function doStream(
   encoder: TextEncoder,
   chatId: string,
   onFullReply: (reply: string) => void,
+  kbSources?: KbSource[],
 ): Promise<void> {
   let fullReply = "";
   const startTime = Date.now();
@@ -228,7 +232,7 @@ async function doStream(
   } finally {
     fullReply = fullReply.trim();
     if (fullReply && fullReply !== "No se pudo responder.") {
-      try { addMessage(chatId, "assistant", fullReply); } catch {}
+      try { addMessage(chatId, "assistant", fullReply, undefined, undefined, kbSources); } catch {}
       console.log("💾 DB guardado:", fullReply.length, "chars");
     }
     onFullReply(fullReply);
@@ -341,6 +345,24 @@ ${projectFiles.map((f) => `Archivo: ${f.name}\n${f.content}`).join("\n\n")}`;
       console.log(`🧠 RAG error: ${e instanceof Error ? e.message : String(e)}`);
     }
 
+    // --- KB retrieval (base de conocimiento compartida) ---
+    let kbContext = "";
+    let kbSources: KbSource[] = [];
+    try {
+      const scopeIds = getKbScopeIdsForUser();
+      if (scopeIds.length > 0) {
+        const kbHits = await retrieveKb(message, scopeIds);
+        if (kbHits.length > 0) {
+          kbContext = formatKbContext(kbHits);
+          kbSources = toKbSources(kbHits);
+          const scores = kbHits.map((h) => h.score.toFixed(2)).join(", ");
+          console.log(`📚 KB: ${kbHits.length} fragmentos recuperados [scores: ${scores}]`);
+        }
+      }
+    } catch (e) {
+      console.log(`📚 KB error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
     // --- Document creation detection ---
     let wantsDoc = DOC_PATTERN.test(message) || DOC_PATTERN.test(dbMessage);
     let docMessageForContent = message;
@@ -359,10 +381,10 @@ ${projectFiles.map((f) => `Archivo: ${f.name}\n${f.content}`).join("\n\n")}`;
       console.log(`📄 Detección de creación de documento: formato=${format}`);
 
       const result = await handleDocumentCreation(
-        model, chatId, docMessageForContent, filesContent, history, images, projectContext, ragContext, format
+        model, chatId, docMessageForContent, filesContent, history, images, projectContext, ragContext, kbContext, kbSources, format
       );
 
-      try { addMessage(chatId, "assistant", result.text, undefined, result.docData); } catch {}
+      try { addMessage(chatId, "assistant", result.text, undefined, result.docData, result.kbSources); } catch {}
       console.log(`💾 DB guardado (doc): ${result.text.length} chars`);
 
       return NextResponse.json({
@@ -397,6 +419,7 @@ ${projectFiles.map((f) => `Archivo: ${f.name}\n${f.content}`).join("\n\n")}`;
         projectContext || undefined,
         undefined,
         ragContext || undefined,
+        kbContext || undefined,
       );
       if (images.length > 0 && decisionMessages.length > 0) {
         decisionMessages[decisionMessages.length - 1].images = images;
@@ -424,6 +447,7 @@ ${projectFiles.map((f) => `Archivo: ${f.name}\n${f.content}`).join("\n\n")}`;
       projectContext || undefined,
       searchSources.length > 0 ? formatSearchResults(searchSources) : undefined,
       ragContext || undefined,
+      kbContext || undefined,
     );
 
     if (images.length > 0 && ollamaMessages.length > 0) {
@@ -435,7 +459,7 @@ ${projectFiles.map((f) => `Archivo: ${f.name}\n${f.content}`).join("\n\n")}`;
     const { readable, writable } = new TransformStream();
     const writer = writable.getWriter();
 
-    doStream(model, ollamaMessages, writer, encoder, chatId, () => {});
+    doStream(model, ollamaMessages, writer, encoder, chatId, () => {}, kbSources);
 
     // Wrap readable in an outer stream that appends sources at the end
     const bodyStream = new ReadableStream({

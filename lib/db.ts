@@ -4,6 +4,7 @@ import path from "path";
 const DB_PATH = path.join(process.cwd(), "data", "app.db");
 
 let db: Database.Database;
+let kbInitBusy = false;
 
 function getDb(): Database.Database {
   if (!db) {
@@ -54,10 +55,14 @@ function initTables() {
   try { db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'"); } catch {}
   try { db.exec("ALTER TABLE messages ADD COLUMN doc_data TEXT"); } catch {}
   try { db.exec("ALTER TABLE chats ADD COLUMN heart_id TEXT REFERENCES hearts(id)"); } catch {}
+  try { db.exec("ALTER TABLE messages ADD COLUMN kb_sources TEXT"); } catch {}
 
   // Inicializar tablas de admin
   initHeartsTable();
   seedDefaultConfig();
+
+  // Inicializar tablas de Knowledge Base
+  initKbTables();
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS rag_chunks (
@@ -224,12 +229,20 @@ export function addMessage(
   role: string,
   content: string,
   images?: string[],
-  docData?: string
+  docData?: string,
+  kbSources?: any[]
 ) {
   const d = getDb();
   d.prepare(
-    "INSERT INTO messages (chat_id, role, content, images, doc_data) VALUES (?, ?, ?, ?, ?)"
-  ).run(chatId, role, content, images ? JSON.stringify(images) : null, docData || null);
+    "INSERT INTO messages (chat_id, role, content, images, doc_data, kb_sources) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(
+    chatId,
+    role,
+    content,
+    images ? JSON.stringify(images) : null,
+    docData || null,
+    kbSources && kbSources.length > 0 ? JSON.stringify(kbSources) : null
+  );
 
   d.prepare("UPDATE chats SET updated_at = datetime('now') WHERE id = ?").run(
     chatId
@@ -625,6 +638,371 @@ export function updateKnowledgeEntry(id: string, title: string, content: string,
   d.prepare(
     "UPDATE knowledge_entries SET title = ?, content = ?, category = ?, updated_at = datetime('now') WHERE id = ?"
   ).run(title, content, category, id);
+}
+
+/* ============ KB: TABLES & CATEGORIES ============ */
+
+const KB_SEED_CATEGORIES: Array<{ name: string; label: string }> = [
+  { name: "general", label: "General" },
+  { name: "legal", label: "Legal" },
+  { name: "medico", label: "Médico" },
+  { name: "procesos", label: "Procesos" },
+  { name: "faq", label: "FAQ" },
+  { name: "seguridad", label: "Seguridad" },
+];
+
+export function initKbTables() {
+  // Guard anti-reentrada: initKbTables → migrate → (getKbCategoryBySlug) →
+  // initKbTables es un ciclo válido en 1º acceso pero la llamada interna debe
+  // retornar de inmediato; sin esto, stack overflow en el primer request KB.
+  if (kbInitBusy) return;
+  kbInitBusy = true;
+  try {
+  const d = getDb();
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS kb_categories (
+      id         TEXT PRIMARY KEY,
+      name       TEXT UNIQUE NOT NULL,
+      label      TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS kb_files (
+      id            TEXT PRIMARY KEY,
+      filename      TEXT NOT NULL,
+      format        TEXT NOT NULL,
+      size_bytes    INTEGER DEFAULT 0,
+      category_id   TEXT REFERENCES kb_categories(id),
+      status        TEXT DEFAULT 'processing',
+      conflict_with TEXT REFERENCES kb_files(id),
+      content       TEXT NOT NULL DEFAULT '',
+      checksum      TEXT,
+      uploaded_by   TEXT REFERENCES users(id),
+      created_at    TEXT DEFAULT (datetime('now')),
+      updated_at    TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS kb_chunks (
+      id           TEXT PRIMARY KEY,
+      file_id      TEXT NOT NULL REFERENCES kb_files(id) ON DELETE CASCADE,
+      category_id  TEXT,
+      chunk_index  INTEGER NOT NULL,
+      content      TEXT NOT NULL,
+      embedding    TEXT NOT NULL,
+      created_at   TEXT DEFAULT (datetime('now'))
+    );
+  `);
+  try { d.exec("CREATE INDEX IF NOT EXISTS idx_kb_categories_name ON kb_categories(name)"); } catch {}
+  try { d.exec("CREATE INDEX IF NOT EXISTS idx_kb_files_category ON kb_files(category_id)"); } catch {}
+  try { d.exec("CREATE INDEX IF NOT EXISTS idx_kb_files_status   ON kb_files(status)"); } catch {}
+  try { d.exec("CREATE INDEX IF NOT EXISTS idx_kb_files_name     ON kb_files(filename)"); } catch {}
+  try { d.exec("CREATE INDEX IF NOT EXISTS idx_kb_chunks_file     ON kb_chunks(file_id)"); } catch {}
+  try { d.exec("CREATE INDEX IF NOT EXISTS idx_kb_chunks_category ON kb_chunks(category_id)"); } catch {}
+
+  seedDefaultKbCategories();
+  migrateKnowledgeEntriesToKb();
+  } finally {
+    kbInitBusy = false;
+  }
+}
+
+function seedDefaultKbCategories() {
+  const d = getDb();
+  for (const cat of KB_SEED_CATEGORIES) {
+    d.prepare(`
+      INSERT INTO kb_categories (id, name, label) VALUES (?, ?, ?)
+      ON CONFLICT(name) DO NOTHING
+    `).run(crypto.randomUUID(), cat.name, cat.label);
+  }
+}
+
+export function getKbCategories() {
+  const d = getDb();
+  initKbTables();
+  const rows = d.prepare(`
+    SELECT c.*,
+      (SELECT COUNT(*) FROM kb_files f WHERE f.category_id = c.id) AS file_count,
+      (SELECT COUNT(*) FROM kb_files f WHERE f.category_id = c.id AND f.status = 'active') AS active_count
+    FROM kb_categories c
+    ORDER BY CASE WHEN c.name = 'general' THEN 0 ELSE 1 END, c.label ASC
+  `).all() as any[];
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    label: r.label,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+    file_count: r.file_count,
+    active_count: r.active_count,
+  }));
+}
+
+export function getKbCategoryById(id: string) {
+  const d = getDb();
+  initKbTables();
+  return d.prepare("SELECT * FROM kb_categories WHERE id = ?").get(id) as any;
+}
+
+export function getKbCategoryBySlug(name: string) {
+  const d = getDb();
+  initKbTables();
+  return d.prepare("SELECT * FROM kb_categories WHERE name = ?").get(name) as any;
+}
+
+export function createKbCategory(name: string, label: string) {
+  const d = getDb();
+  initKbTables();
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const id = crypto.randomUUID();
+  d.prepare("INSERT INTO kb_categories (id, name, label) VALUES (?, ?, ?)").run(id, slug, label.trim());
+  return getKbCategoryById(id);
+}
+
+export function updateKbCategory(id: string, data: { name?: string; label?: string }) {
+  const d = getDb();
+  initKbTables();
+  const cat = getKbCategoryById(id);
+  if (!cat) return false;
+  if (cat.name === "general" && data.name && data.name !== "general") return false;
+
+  const name = data.name ? data.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") : cat.name;
+  const label = data.label !== undefined ? data.label.trim() : cat.label;
+  const r = d.prepare("UPDATE kb_categories SET name = ?, label = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(name, label, id);
+  return r.changes > 0;
+}
+
+export function deleteKbCategory(id: string) {
+  const d = getDb();
+  initKbTables();
+  const cat = getKbCategoryById(id);
+  if (!cat || cat.name === "general") return false;
+  const r = d.prepare("DELETE FROM kb_categories WHERE id = ?").run(id);
+  return r.changes > 0;
+}
+
+/* ============ KB: FILES ============ */
+
+export function getKbFiles(filters?: { categoryId?: string; status?: string; search?: string }) {
+  const d = getDb();
+  initKbTables();
+  let sql = `
+    SELECT f.*, c.name AS category_name, c.label AS category_label,
+      u.name AS uploader_name,
+      cf.filename AS conflict_with_filename,
+      (SELECT COUNT(*) FROM kb_chunks kc WHERE kc.file_id = f.id) AS chunk_count
+    FROM kb_files f
+    LEFT JOIN kb_categories c ON f.category_id = c.id
+    LEFT JOIN users u ON f.uploaded_by = u.id
+    LEFT JOIN kb_files cf ON f.conflict_with = cf.id
+    WHERE 1=1
+  `;
+  const params: any[] = [];
+  if (filters?.categoryId) { sql += " AND f.category_id = ?"; params.push(filters.categoryId); }
+  if (filters?.status) { sql += " AND f.status = ?"; params.push(filters.status); }
+  if (filters?.search) {
+    sql += " AND (f.filename LIKE ? OR f.content LIKE ?)";
+    const q = `%${filters.search}%`;
+    params.push(q, q);
+  }
+  sql += " ORDER BY f.created_at DESC";
+  return d.prepare(sql).all(...params) as any[];
+}
+
+export function getKbFileById(id: string) {
+  const d = getDb();
+  initKbTables();
+  return d.prepare(`
+    SELECT f.*, c.name AS category_name, c.label AS category_label,
+      u.name AS uploader_name,
+      cf.filename AS conflict_with_filename
+    FROM kb_files f
+    LEFT JOIN kb_categories c ON f.category_id = c.id
+    LEFT JOIN users u ON f.uploaded_by = u.id
+    LEFT JOIN kb_files cf ON f.conflict_with = cf.id
+    WHERE f.id = ?
+  `).get(id) as any;
+}
+
+export function insertKbFile(data: {
+  id: string;
+  filename: string;
+  format: string;
+  size_bytes?: number;
+  category_id?: string | null;
+  status?: string;
+  conflict_with?: string | null;
+  content?: string;
+  checksum?: string | null;
+  uploaded_by?: string | null;
+}) {
+  const d = getDb();
+  initKbTables();
+  d.prepare(`
+    INSERT INTO kb_files (id, filename, format, size_bytes, category_id, status, conflict_with, content, checksum, uploaded_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    data.id,
+    data.filename,
+    data.format,
+    data.size_bytes || 0,
+    data.category_id ?? null,
+    data.status || "processing",
+    data.conflict_with ?? null,
+    data.content || "",
+    data.checksum ?? null,
+    data.uploaded_by ?? null
+  );
+}
+
+export function updateKbFile(id: string, data: Record<string, any>, includeUpdatedAt = true) {
+  const d = getDb();
+  initKbTables();
+  const fields = Object.keys(data).filter((k) => !["id", "created_at", "updated_at"].includes(k));
+  if (fields.length === 0) return;
+  const sets = fields.map((k) => `${k} = ?`).join(", ");
+  const values = fields.map((k) => (typeof data[k] === "undefined" ? null : data[k]));
+  const ts = includeUpdatedAt ? ", updated_at = datetime('now')" : "";
+  d.prepare(`UPDATE kb_files SET ${sets}${ts} WHERE id = ?`).run(...values, id);
+}
+
+export function deleteKbFileById(id: string) {
+  const d = getDb();
+  initKbTables();
+  // Liberar conflictos que apuntan a este archivo
+  d.prepare("UPDATE kb_files SET conflict_with = NULL WHERE conflict_with = ?").run(id);
+  const r = d.prepare("DELETE FROM kb_files WHERE id = ?").run(id);
+  return r.changes > 0;
+}
+
+export function findKbFileByName(name: string) {
+  const d = getDb();
+  initKbTables();
+  return d.prepare("SELECT * FROM kb_files WHERE filename = ? ORDER BY created_at DESC").all(name) as any[];
+}
+
+export function getActiveKbFileIds(categoryIds?: string[]) {
+  const d = getDb();
+  initKbTables();
+  if (categoryIds && categoryIds.length > 0) {
+    const placeholders = categoryIds.map(() => "?").join(",");
+    return d.prepare(`SELECT id FROM kb_files WHERE status = 'active' AND category_id IN (${placeholders})`)
+      .all(...categoryIds) as any[];
+  }
+  return d.prepare("SELECT id FROM kb_files WHERE status = 'active'").all() as any[];
+}
+
+/* ============ KB: CHUNKS ============ */
+
+export function storeKbChunks(chunks: Array<{
+  id: string;
+  file_id: string;
+  category_id: string | null;
+  chunk_index: number;
+  content: string;
+  embedding: string;
+}>) {
+  const d = getDb();
+  initKbTables();
+  const insert = d.prepare(`
+    INSERT INTO kb_chunks (id, file_id, category_id, chunk_index, content, embedding)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  const tx = d.transaction((items: typeof chunks) => {
+    for (const c of items) {
+      insert.run(c.id, c.file_id, c.category_id, c.chunk_index, c.content, c.embedding);
+    }
+  });
+  tx(chunks);
+}
+
+export function getKbChunksByFile(fileId: string) {
+  const d = getDb();
+  initKbTables();
+  return d.prepare("SELECT * FROM kb_chunks WHERE file_id = ? ORDER BY chunk_index ASC").all(fileId) as any[];
+}
+
+export function countKbChunksByFile(fileId: string) {
+  const d = getDb();
+  initKbTables();
+  const row = d.prepare("SELECT COUNT(*) as c FROM kb_chunks WHERE file_id = ?").get(fileId) as any;
+  return row?.c || 0;
+}
+
+export function deleteKbChunksByFile(fileId: string) {
+  const d = getDb();
+  initKbTables();
+  d.prepare("DELETE FROM kb_chunks WHERE file_id = ?").run(fileId);
+}
+
+export function updateKbChunksCategory(fileId: string, categoryId: string | null) {
+  const d = getDb();
+  initKbTables();
+  d.prepare("UPDATE kb_chunks SET category_id = ? WHERE file_id = ?").run(categoryId, fileId);
+}
+
+export function getKbChunksByCategoryIds(categoryIds: string[]) {
+  const d = getDb();
+  initKbTables();
+  if (categoryIds.length === 0) return [];
+  const placeholders = categoryIds.map(() => "?").join(",");
+  return d.prepare(`
+    SELECT kc.*, f.filename, f.category_id
+    FROM kb_chunks kc
+    JOIN kb_files f ON kc.file_id = f.id
+    WHERE kc.category_id IN (${placeholders}) AND f.status = 'active'
+  `).all(...categoryIds) as any[];
+}
+
+/* ============ KB: MIGRATION (legacy knowledge_entries) ============ */
+
+export function migrateKnowledgeEntriesToKb(): { migrated: number; failed: number } {
+  const d = getDb();
+  // Nota: la migración la invoca initKbTables (que ya creó kb_*); no llamar
+  // initKbTables aquí o se forma una recursión infinita.
+  // One-shot migration con flag en config
+  const alreadyDone = getConfig("kb_entries_migrated");
+  if (alreadyDone === "true") return { migrated: 0, failed: 0 };
+
+  const entries = d.prepare("SELECT * FROM knowledge_entries").all() as any[];
+  if (entries.length === 0) {
+    setConfig("kb_entries_migrated", "true", "Entradas legacy migradas a kb_files");
+    return { migrated: 0, failed: 0 };
+  }
+
+  let migrated = 0;
+  let failed = 0;
+  for (const entry of entries) {
+    try {
+      // Resolver categoría por nombre (o default general)
+      const cat = getKbCategoryBySlug(entry.category || "general");
+      const existing = d.prepare("SELECT id FROM kb_files WHERE filename = ?").get(entry.title) as any;
+      if (existing) {
+        // Ya migrada: actualizar contenido
+        d.prepare("UPDATE kb_files SET content = ?, updated_at = datetime('now') WHERE id = ?")
+          .run(entry.content, existing.id);
+      } else {
+        const id = crypto.randomUUID();
+        insertKbFile({
+          id,
+          filename: entry.title,
+          format: "text",
+          category_id: cat?.id || null,
+          // Queda en 'processing' hasta reindexar (genera chunks/embeddings)
+          status: "processing",
+          content: entry.content,
+          uploaded_by: entry.created_by || null,
+        });
+      }
+      migrated++;
+    } catch (e) {
+      failed++;
+    }
+  }
+
+  setConfig("kb_entries_migrated", "true", "Entradas legacy migradas a kb_files");
+  return { migrated, failed };
 }
 
 /* ============ ADMIN: CHAT DETAIL ============ */

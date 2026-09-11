@@ -2,7 +2,15 @@
 
 import { useEffect, useState, use, useRef } from "react";
 import Link from "next/link";
-import { ArrowLeft, MessageSquare, User, Clock, Heart, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowLeft, MessageSquare, User, Clock, Heart, ChevronDown, ChevronUp, BookOpen } from "lucide-react";
+
+type KbSource = {
+  file_id: string;
+  filename: string;
+  category: string;
+  chunk_index: number;
+  score: number;
+};
 
 type Message = {
   id: number;
@@ -11,6 +19,7 @@ type Message = {
   content: string;
   images: string | null;
   files: string | null;
+  kb_sources: string | null;
   created_at: string;
 };
 
@@ -139,6 +148,34 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
                   ))}
                 </div>
               )}
+
+              {msg.kb_sources && (() => {
+                let sources: KbSource[] = [];
+                try { sources = JSON.parse(msg.kb_sources); } catch { return null; }
+                if (!sources.length) return null;
+                const uniqueFiles = [...new Map(sources.map((s) => [s.file_id, s])).values()];
+                return (
+                  <div className="mt-2 pt-2 border-t border-[#202938]">
+                    <p className="text-[10px] text-gray-600 flex items-center gap-1 mb-1.5">
+                      <BookOpen size={12} />
+                      Fuentes de conocimiento consultadas
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {uniqueFiles.map((src, i) => (
+                        <span
+                          key={`${src.file_id}-${i}`}
+                          className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-green-600/10 border border-green-500/20 text-[11px] text-green-400"
+                          title={`Relevancia: ${Math.round(src.score * 100)}%`}
+                        >
+                          <BookOpen size={11} />
+                          {src.filename}
+                          <span className="text-green-500/60">{Math.round(src.score * 100)}%</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {isLong && (
                 <button

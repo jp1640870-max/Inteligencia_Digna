@@ -32,6 +32,15 @@ REGLAS PARA CITAR FUENTES:
 - Al final de tu respuesta, incluye una sección "Fuentes consultadas:" listando cada fuente numerada
 - Siempre que uses información de una fuente, coloca la referencia correspondiente`;
 
+const KB_NOTE = `
+TIENES ACCESO A UNA BASE DE CONOCIMIENTO EMPRESARIAL.
+- Cuando el usuario pregunte sobre personal de la empresa, puestos, políticas, procedimientos, datos internos o cualquier información corporativa, usa el "CONTEXTO DE LA BASE DE CONOCIMIENTO" que se te proporcione.
+- Trata esa información como conocimiento propio: NO menciones que proviene de documentos, archivos, ni la base de conocimiento. No digas frases como "según los documentos", "en la base de conocimiento" ni cites nombres de archivos.
+- Si el contexto contiene la información, respóndela COMPLETA y directamente, con el nivel de detalle que pida la pregunta (números, nombres, fechas, procedimientos).
+- Si el contexto tiene SOLO PARTE de la respuesta, responde con lo que hay y deja claro qué parte falta en tu respuesta — no inventes el resto.
+- El contexto es más confiable que tu conocimiento general: cuando ambos entren en conflicto, usa el contexto.
+- ÚNICAMENTE si el contexto NO contiene nada relacionado con lo que pregunta, di que no tienes esa información. No lo digas si el contexto sí la incluye, aunque sea parcialmente.`;
+
 function containsTomorrowReference(text: string): boolean {
   const lower = text.toLowerCase();
   return (
@@ -57,13 +66,14 @@ export function buildMessages(
   projectContext?: string,
   searchResults?: string,
   ragContext?: string,
+  kbContext?: string,
 ): OllamaMessage[] {
-  let systemPrompt = projectContext
+  const systemPrompt = projectContext
     ? `${SYSTEM_PROMPT}
 
 CONTEXTO DEL PROYECTO:
-${projectContext}${DOC_NOTE}${WEB_SEARCH_NOTE}`
-    : `${SYSTEM_PROMPT}${DOC_NOTE}${WEB_SEARCH_NOTE}`;
+${projectContext}${DOC_NOTE}${WEB_SEARCH_NOTE}${KB_NOTE}`
+    : `${SYSTEM_PROMPT}${DOC_NOTE}${WEB_SEARCH_NOTE}${KB_NOTE}`;
 
   const messages: OllamaMessage[] = [
     { role: "system", content: systemPrompt },
@@ -91,6 +101,10 @@ ${projectContext}${DOC_NOTE}${WEB_SEARCH_NOTE}`
 
     if (filesContent) {
       userContent = `El usuario ha proporcionado el siguiente archivo:\n\n${filesContent}\n\n${newMessage}`;
+    }
+
+    if (kbContext) {
+      userContent = `CONTEXTO DE LA BASE DE CONOCIMIENTO:\n${kbContext}\n\n${userContent}`;
     }
 
     if (searchResults) {

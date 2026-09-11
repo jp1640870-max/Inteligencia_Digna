@@ -5,6 +5,8 @@ import { getChatById, getMessagesByChat, truncateMessagesToCount, addMessage } f
 import { ollamaChatStream } from "@/lib/ollama";
 import { buildMessages } from "@/lib/prompt-builder";
 import { getUserIdFromRequest } from "@/lib/auth";
+import { retrieveKb, getKbScopeIdsForUser, formatKbContext, toKbSources } from "@/lib/kb";
+import type { KbSource } from "@/types";
 
 
 export async function POST(req: Request) {
@@ -36,7 +38,22 @@ export async function POST(req: Request) {
     const remainingMessages = getMessagesByChat(chatId);
     const model = process.env.TEXT_MODEL!;
 
-    const ollamaMessages = buildMessages(remainingMessages);
+    // --- KB retrieval para regeneración ---
+    let kbContext = "";
+    let kbSources: KbSource[] = [];
+    try {
+      const scopeIds = getKbScopeIdsForUser();
+      const lastUserMsg = [...remainingMessages].reverse().find((m) => m.role === "user");
+      if (scopeIds.length > 0 && lastUserMsg?.text) {
+        const kbHits = await retrieveKb(lastUserMsg.text, scopeIds);
+        if (kbHits.length > 0) {
+          kbContext = formatKbContext(kbHits);
+          kbSources = toKbSources(kbHits);
+        }
+      }
+    } catch {}
+
+    const ollamaMessages = buildMessages(remainingMessages, undefined, undefined, undefined, undefined, undefined, kbContext || undefined);
 
     const encoder = new TextEncoder();
     const { readable, writable } = new TransformStream();
@@ -78,7 +95,7 @@ export async function POST(req: Request) {
         }
       } finally {
         if (fullReply && fullReply !== "No se pudo responder.") {
-          addMessage(chatId, "assistant", fullReply);
+          addMessage(chatId, "assistant", fullReply, undefined, undefined, kbSources);
         }
         try { await writer.close(); } catch {}
       }
