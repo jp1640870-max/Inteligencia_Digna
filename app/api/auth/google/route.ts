@@ -9,7 +9,8 @@ export async function GET(req: Request) {
     );
   }
 
-  const redirectUri = `${new URL(req.url).origin}/api/auth/google/callback`;
+  const origin = process.env.NEXTAUTH_URL || new URL(req.url).origin;
+  const redirectUri = `${origin}/api/auth/google/callback`;
 
   const params = new URLSearchParams({
     client_id: clientId,

@@ -50,5 +50,6 @@ dashboardplan.txxt
 
 # database & uploads
 data/app.db*
+data/Backups/
 uploads/
 generated/

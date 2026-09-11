@@ -19,7 +19,8 @@ export async function GET(req: Request) {
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    const redirectUri = `${new URL(req.url).origin}/api/auth/google/callback`;
+    const origin = process.env.NEXTAUTH_URL || new URL(req.url).origin;
+    const redirectUri = `${origin}/api/auth/google/callback`;
 
     if (!clientId || !clientSecret) {
       return NextResponse.redirect(
@@ -85,7 +86,7 @@ export async function GET(req: Request) {
     const userRole = user.role || "user";
     const token = signToken({ userId: user.id, email: user.email, role: userRole });
 
-    const baseUrl = new URL(req.url).origin;
+    const baseUrl = process.env.NEXTAUTH_URL || new URL(req.url).origin;
     const response = NextResponse.redirect(new URL("/", baseUrl));
 
     response.cookies.set("token", token, {
