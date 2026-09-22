@@ -8,7 +8,9 @@
     "dev:login": "concurrently \"next dev --experimental-https\" \"wait-on https://lvh.me:3000 && start https://lvh.me:3000/login\"",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "tsx --test --env-file=tests/.env.test \"tests/*.test.ts\"",
+    "smoke:db": "tsx --env-file=tests/.env.test scripts/smoke-db.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -37,7 +39,7 @@
     "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.13",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/node": "^20",
+    "@types/node": "^26.6.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/react-syntax-highlighter": "^15.5.13",
@@ -45,6 +47,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5",
     "wait-on": "^9.0.10"
   }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useEffect } from "react";
+import Image from "next/image";
 import { ArrowUp, FileEdit, Paperclip, Search, Wand2 } from "lucide-react";
 
 type FilePreview = {
@@ -84,7 +85,7 @@ const ChatInput = ({
         <div className="flex gap-2 mb-2 flex-wrap">
           {images.map((img, i) => (
             <div key={i} className="relative">
-              <img src={img} className="h-16 rounded" />
+              <Image src={img} alt="Vista previa de imagen adjunta" width={64} height={64} className="h-16 w-auto rounded" />
               <button
                 onClick={() => onRemoveImage(i)}
                 className="absolute top-0 right-0 bg-red-500 text-xs px-1 rounded"

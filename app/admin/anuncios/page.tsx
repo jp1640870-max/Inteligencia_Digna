@@ -39,7 +39,13 @@ export default function AdminAnuncios() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { loadAnnouncements(); }, [loadAnnouncements]);
+  // Fetch inicial diferido a una macrotarea: evita setState síncrono dentro
+  // del efecto (react-hooks/set-state-in-effect) sin cambiar comportamiento.
+  // TODO(Fase 2): migrar a fetching dirigido por eventos/Suspense.
+  useEffect(() => {
+    const id = setTimeout(() => { void loadAnnouncements(); }, 0);
+    return () => clearTimeout(id);
+  }, [loadAnnouncements]);
 
   const handleCreate = async () => {
     if (!form.title.trim() || !form.content.trim()) return;

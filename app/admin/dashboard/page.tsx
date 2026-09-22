@@ -9,7 +9,6 @@ import {
   Brain,
   Activity,
   ChevronRight,
-  BarChart3,
   Settings,
   Shield,
   BookOpen,

@@ -240,7 +240,7 @@ async function doStream(
   }
 }
 
-export async function GET(_req: Request) {
+export async function GET() {
   const userId = await getUserIdFromRequest();
   if (!userId) {
     return NextResponse.json({ error: "No autenticado" }, { status: 401 });
@@ -314,17 +314,12 @@ export async function POST(req: Request) {
     if (projectId) {
       const project = getProjectById(projectId);
       if (project && project.user_id === userId) {
-        const projectFiles = Array.isArray(project.files)
-          ? (project.files as Array<{ name: string; content: string }>)
-          : [];
-
+        // NOTA: la tabla projects no tiene columna `files`; el contexto
+        // incluye solo nombre e instrucciones (ver schema en lib/projects.ts).
         projectContext = `Nombre del proyecto: ${project.name}
 
 Instrucciones del proyecto:
-${project.instructions}
-
-Archivos del proyecto:
-${projectFiles.map((f) => `Archivo: ${f.name}\n${f.content}`).join("\n\n")}`;
+${project.instructions}`;
       }
     }
 

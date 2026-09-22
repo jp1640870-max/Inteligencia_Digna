@@ -173,7 +173,7 @@ export function canViewUser(actorRole: string, targetRole: string, actorId: stri
  * Además remueve al propio caller si es super_admin (no se necesita en listas).
  * NOTA: el propio super_admin sí debe verse a sí mismo en la lista.
  */
-export function filterVisibleUsers(users: any[], caller: { id: string; role: string }): any[] {
+export function filterVisibleUsers<T extends { role: string }>(users: T[], caller: { id: string; role: string }): T[] {
   if (caller.role === "super_admin") return users;
   return users.filter((u) => u.role !== "super_admin");
 }
@@ -181,7 +181,7 @@ export function filterVisibleUsers(users: any[], caller: { id: string; role: str
 /**
  * Filtra una lista de chats/proyectos: remueve los de super_admin si el caller no es super_admin.
  */
-export function filterVisibleItems(items: any[], caller: { id: string; role: string }): any[] {
+export function filterVisibleItems<T extends { user_role?: unknown }>(items: T[], caller: { id: string; role: string }): T[] {
   if (caller.role === "super_admin") return items;
-  return items.filter((item: any) => item.user_role !== "super_admin");
+  return items.filter((item) => item.user_role !== "super_admin");
 }

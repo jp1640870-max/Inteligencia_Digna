@@ -1,22 +1,48 @@
-import Database from "better-sqlite3";
-import path from "path";
+import type Database from "better-sqlite3";
+import { getSharedDb } from "./db-connection";
+import type {
+  AnnouncementRow,
+  AuditLogRow,
+  BackupRow,
+  ChatAdminRow,
+  ChatRow,
+  ChatWithOwnerRow,
+  ConfigRow,
+  CountRow,
+  HeartRow,
+  HeartWithOwnerRow,
+  KbCategory,
+  KbCategoryWithCounts,
+  KbChunk,
+  KbFile,
+  KbSource,
+  KnowledgeEntryRow,
+  MessageRow,
+  Msg,
+  ProjectAdminRow,
+  ProjectRow,
+  RagChunkRow,
+  UserRow,
+  UserWithCountsRow,
+} from "@/types";
 
-const DB_PATH = path.join(process.cwd(), "data", "app.db");
-
-let db: Database.Database;
 let kbInitBusy = false;
+let tablesInit = false;
 
 function getDb(): Database.Database {
-  if (!db) {
-    db = new Database(DB_PATH);
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    initTables();
+  const db = getSharedDb();
+  if (!tablesInit) {
+    // Marcar ANTES de inicializar: initTables() reentra a getDb() vía
+    // initHeartsTable()/seedDefaultConfig()/initKbTables(). Si el flag se
+    // marcara después, la reentrada causaría recursión infinita
+    // (getDb → initTables → initHeartsTable → getDb → …).
+    tablesInit = true;
+    initTables(db);
   }
   return db;
 }
 
-function initTables() {
+function initTables(db: Database.Database) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -103,23 +129,23 @@ export function createUser(
 
 export function getUserByEmail(email: string) {
   const d = getDb();
-  return d.prepare("SELECT * FROM users WHERE email = ?").get(email) as any;
+  return d.prepare("SELECT * FROM users WHERE email = ?").get(email) as UserRow;
 }
 
 export function getUserByGoogleId(googleId: string) {
   const d = getDb();
-  return d.prepare("SELECT * FROM users WHERE google_id = ?").get(googleId) as any;
+  return d.prepare("SELECT * FROM users WHERE google_id = ?").get(googleId) as UserRow;
 }
 
 export function getUserById(id: string) {
   const d = getDb();
-  return d.prepare("SELECT * FROM users WHERE id = ?").get(id) as any;
+  return d.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow;
 }
 
 export function getUserStats(userId: string) {
   const d = getDb();
-  const projectCount = (d.prepare("SELECT COUNT(*) as count FROM projects WHERE user_id = ?").get(userId) as any)?.count || 0;
-  const chatCount = (d.prepare("SELECT COUNT(*) as count FROM chats WHERE user_id = ?").get(userId) as any)?.count || 0;
+  const projectCount = (d.prepare("SELECT COUNT(*) as count FROM projects WHERE user_id = ?").get(userId) as CountRow)?.count || 0;
+  const chatCount = (d.prepare("SELECT COUNT(*) as count FROM chats WHERE user_id = ?").get(userId) as CountRow)?.count || 0;
   return { projectCount, chatCount };
 }
 
@@ -139,7 +165,7 @@ export function getChatsByUser(userId: string) {
   const d = getDb();
   const rows = d
     .prepare("SELECT * FROM chats WHERE user_id = ? ORDER BY updated_at DESC")
-    .all(userId) as any[];
+    .all(userId) as ChatRow[];
 
   return rows.map((row) => ({
     id: row.id,
@@ -150,7 +176,7 @@ export function getChatsByUser(userId: string) {
 
 export function getChatById(chatId: string) {
   const d = getDb();
-  const chat = d.prepare("SELECT * FROM chats WHERE id = ?").get(chatId) as any;
+  const chat = d.prepare("SELECT * FROM chats WHERE id = ?").get(chatId) as ChatRow;
   if (!chat) return null;
   return {
     id: chat.id,
@@ -195,10 +221,10 @@ export function getMessagesByChat(chatId: string) {
   const d = getDb();
   const rows = d
     .prepare("SELECT * FROM messages WHERE chat_id = ? ORDER BY id ASC")
-    .all(chatId) as any[];
+    .all(chatId) as MessageRow[];
 
   return rows.map((row) => {
-    const msg: any = {
+    const msg: Msg = {
       id: row.id,
       role: row.role === "assistant" ? "ai" : (row.role as "user" | "ai"),
       text: row.content,
@@ -230,7 +256,7 @@ export function addMessage(
   content: string,
   images?: string[],
   docData?: string,
-  kbSources?: any[]
+  kbSources?: KbSource[]
 ) {
   const d = getDb();
   d.prepare(
@@ -253,7 +279,7 @@ export function truncateMessagesToCount(chatId: string, keepCount: number) {
   const d = getDb();
   const rows = d
     .prepare("SELECT id FROM messages WHERE chat_id = ? ORDER BY id ASC")
-    .all(chatId) as any[];
+    .all(chatId) as { id: number }[];
   if (keepCount >= rows.length) return;
   const fromId = rows[Math.max(0, keepCount)].id;
   d.prepare("DELETE FROM messages WHERE chat_id = ? AND id >= ?").run(
@@ -286,12 +312,12 @@ export function storeChunk(chunk: {
 
 export function getChunksByChat(chatId: string) {
   const d = getDb();
-  return d.prepare("SELECT * FROM rag_chunks WHERE chat_id = ? ORDER BY chunk_index ASC").all(chatId) as any[];
+  return d.prepare("SELECT * FROM rag_chunks WHERE chat_id = ? ORDER BY chunk_index ASC").all(chatId) as RagChunkRow[];
 }
 
 export function getChunksByProject(projectId: string) {
   const d = getDb();
-  return d.prepare("SELECT * FROM rag_chunks WHERE project_id = ? ORDER BY document_name, chunk_index ASC").all(projectId) as any[];
+  return d.prepare("SELECT * FROM rag_chunks WHERE project_id = ? ORDER BY document_name, chunk_index ASC").all(projectId) as RagChunkRow[];
 }
 
 export function deleteChunksByChat(chatId: string) {
@@ -321,7 +347,7 @@ export function getAllUsers() {
       FROM users u
       ORDER BY u.created_at DESC
     `)
-    .all() as any[];
+    .all() as UserWithCountsRow[];
 }
 
 export function updateUserRole(userId: string, role: string) {
@@ -347,34 +373,34 @@ export function getSystemStats(callerRole?: string) {
   const excludeSA = callerRole && callerRole !== "super_admin";
 
   const totalUsers = excludeSA
-    ? (d.prepare("SELECT COUNT(*) as c FROM users WHERE role != ?").get("super_admin") as any).c
-    : (d.prepare("SELECT COUNT(*) as c FROM users").get() as any).c;
+    ? (d.prepare("SELECT COUNT(*) as c FROM users WHERE role != ?").get("super_admin") as CountRow).c
+    : (d.prepare("SELECT COUNT(*) as c FROM users").get() as CountRow).c;
 
   const getIds = excludeSA
-    ? () => d.prepare("SELECT id FROM users WHERE role != ?").all("super_admin").map((r: any) => r.id)
+    ? () => (d.prepare("SELECT id FROM users WHERE role != ?").all("super_admin") as { id: string }[]).map((r) => r.id)
     : () => null;
 
   const excludedIds = getIds();
 
   const totalChats = excludeSA && excludedIds?.length
-    ? (d.prepare(`SELECT COUNT(*) as c FROM chats WHERE user_id IN (${excludedIds.map(() => "?").join(",")})`).get(...excludedIds) as any).c
-    : (d.prepare("SELECT COUNT(*) as c FROM chats").get() as any).c;
+    ? (d.prepare(`SELECT COUNT(*) as c FROM chats WHERE user_id IN (${excludedIds.map(() => "?").join(",")})`).get(...excludedIds) as CountRow).c
+    : (d.prepare("SELECT COUNT(*) as c FROM chats").get() as CountRow).c;
 
-  const totalMessages = (d.prepare("SELECT COUNT(*) as c FROM messages").get() as any).c;
+  const totalMessages = (d.prepare("SELECT COUNT(*) as c FROM messages").get() as CountRow).c;
 
   const totalProjects = excludeSA && excludedIds?.length
-    ? (d.prepare(`SELECT COUNT(*) as c FROM projects WHERE user_id IN (${excludedIds.map(() => "?").join(",")})`).get(...excludedIds) as any).c
-    : (d.prepare("SELECT COUNT(*) as c FROM projects").get() as any).c;
+    ? (d.prepare(`SELECT COUNT(*) as c FROM projects WHERE user_id IN (${excludedIds.map(() => "?").join(",")})`).get(...excludedIds) as CountRow).c
+    : (d.prepare("SELECT COUNT(*) as c FROM projects").get() as CountRow).c;
 
   const chatsToday = excludeSA && excludedIds?.length
-    ? (d.prepare(`SELECT COUNT(*) as c FROM chats WHERE date(created_at) = date('now') AND user_id IN (${excludedIds.map(() => "?").join(",")})`).get(...excludedIds) as any).c
-    : (d.prepare("SELECT COUNT(*) as c FROM chats WHERE date(created_at) = date('now')").get() as any).c;
+    ? (d.prepare(`SELECT COUNT(*) as c FROM chats WHERE date(created_at) = date('now') AND user_id IN (${excludedIds.map(() => "?").join(",")})`).get(...excludedIds) as CountRow).c
+    : (d.prepare("SELECT COUNT(*) as c FROM chats WHERE date(created_at) = date('now')").get() as CountRow).c;
 
-  const messagesToday = (d.prepare("SELECT COUNT(*) as c FROM messages WHERE date(created_at) = date('now')").get() as any).c;
+  const messagesToday = (d.prepare("SELECT COUNT(*) as c FROM messages WHERE date(created_at) = date('now')").get() as CountRow).c;
 
   const activeUsers = excludeSA && excludedIds?.length
-    ? (d.prepare(`SELECT COUNT(DISTINCT user_id) as c FROM chats WHERE date(updated_at) = date('now') AND user_id IN (${excludedIds.map(() => "?").join(",")})`).get(...excludedIds) as any).c
-    : (d.prepare("SELECT COUNT(DISTINCT user_id) as c FROM chats WHERE date(updated_at) = date('now')").get() as any).c;
+    ? (d.prepare(`SELECT COUNT(DISTINCT user_id) as c FROM chats WHERE date(updated_at) = date('now') AND user_id IN (${excludedIds.map(() => "?").join(",")})`).get(...excludedIds) as CountRow).c
+    : (d.prepare("SELECT COUNT(DISTINCT user_id) as c FROM chats WHERE date(updated_at) = date('now')").get() as CountRow).c;
 
   return {
     totalUsers,
@@ -391,30 +417,30 @@ export function getChatsByUserRaw(userId: string) {
   const d = getDb();
   return d
     .prepare("SELECT * FROM chats WHERE user_id = ? ORDER BY updated_at DESC LIMIT 10")
-    .all(userId) as any[];
+    .all(userId) as ChatRow[];
 }
 
 export function getProjectsByUserRaw(userId: string) {
   const d = getDb();
   return d
     .prepare("SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC LIMIT 10")
-    .all(userId) as any[];
+    .all(userId) as ProjectRow[];
 }
 
 /* ============ ADMIN: USER DETAIL ============ */
 
 export function getUserByIdFull(userId: string) {
   const d = getDb();
-  const user = d.prepare("SELECT * FROM users WHERE id = ?").get(userId) as any;
+  const user = d.prepare("SELECT * FROM users WHERE id = ?").get(userId) as UserRow;
   if (!user) return null;
 
   const stats = getUserStats(userId);
   const recentChats = d
     .prepare("SELECT id, title, created_at, updated_at FROM chats WHERE user_id = ? ORDER BY updated_at DESC LIMIT 20")
-    .all(userId) as any[];
+    .all(userId) as Pick<ChatRow, "id" | "title" | "created_at" | "updated_at">[];
   const recentProjects = d
     .prepare("SELECT id, name, created_at FROM projects WHERE user_id = ? ORDER BY created_at DESC LIMIT 20")
-    .all(userId) as any[];
+    .all(userId) as Pick<ProjectRow, "id" | "name" | "created_at">[];
 
   return {
     id: user.id,
@@ -468,13 +494,13 @@ export function getAllHearts() {
       LEFT JOIN users u ON h.user_id = u.id
       ORDER BY h.is_preset DESC, h.updated_at DESC
     `)
-    .all() as any[];
+    .all() as HeartWithOwnerRow[];
 }
 
 export function getHeartById(id: string) {
   const d = getDb();
   initHeartsTable();
-  return d.prepare("SELECT * FROM hearts WHERE id = ?").get(id) as any;
+  return d.prepare("SELECT * FROM hearts WHERE id = ?").get(id) as HeartRow;
 }
 
 export function createHeart(
@@ -497,7 +523,7 @@ export function createHeart(
   `).run(id, userId, name, role || "", tone || "", instructions || "", limitations || "", temperature ?? 0.7, JSON.stringify(tools || []), isPreset || 0);
 }
 
-export function updateHeart(id: string, data: Record<string, any>) {
+export function updateHeart(id: string, data: Record<string, unknown>) {
   const d = getDb();
   initHeartsTable();
   const fields = Object.keys(data).filter(k => k !== "id").map(k => `${k} = ?`).join(", ");
@@ -515,7 +541,7 @@ export function deleteHeart(id: string) {
 export function getHeartsByUser(userId: string) {
   const d = getDb();
   initHeartsTable();
-  return d.prepare("SELECT * FROM hearts WHERE user_id = ? ORDER BY updated_at DESC").all(userId) as any[];
+  return d.prepare("SELECT * FROM hearts WHERE user_id = ? ORDER BY updated_at DESC").all(userId) as HeartRow[];
 }
 
 /* ============ ADMIN: CONFIG ============ */
@@ -535,13 +561,13 @@ export function initConfigTable() {
 export function getAllConfig() {
   const d = getDb();
   initConfigTable();
-  return d.prepare("SELECT * FROM config ORDER BY key").all() as any[];
+  return d.prepare("SELECT * FROM config ORDER BY key").all() as ConfigRow[];
 }
 
 export function getConfig(key: string): string | null {
   const d = getDb();
   initConfigTable();
-  const row = d.prepare("SELECT value FROM config WHERE key = ?").get(key) as any;
+  const row = d.prepare("SELECT value FROM config WHERE key = ?").get(key) as { value: string } | undefined;
   return row?.value || null;
 }
 
@@ -611,11 +637,11 @@ export function getKnowledgeEntries(category?: string) {
   if (category) {
     return d
       .prepare("SELECT ke.*, CASE WHEN u.role = 'super_admin' THEN '—' ELSE u.name END AS created_by_name FROM knowledge_entries ke LEFT JOIN users u ON ke.created_by = u.id WHERE ke.category = ? ORDER BY ke.updated_at DESC")
-      .all(category) as any[];
+      .all(category) as KnowledgeEntryRow[];
   }
   return d
-    .prepare("SELECT ke.*, CASE WHEN u.role = 'super_admin' THEN '—' ELSE u.name END AS created_by_name FROM knowledge_entries ke LEFT JOIN users u ON ke.created_by = u.id ORDER BY ke.updated_at DESC")
-    .all() as any[];
+      .prepare("SELECT ke.*, CASE WHEN u.role = 'super_admin' THEN '—' ELSE u.name END AS created_by_name FROM knowledge_entries ke LEFT JOIN users u ON ke.created_by = u.id ORDER BY ke.updated_at DESC")
+      .all() as KnowledgeEntryRow[];
 }
 
 export function createKnowledgeEntry(id: string, title: string, content: string, category: string, createdBy: string) {
@@ -726,7 +752,7 @@ export function getKbCategories() {
       (SELECT COUNT(*) FROM kb_files f WHERE f.category_id = c.id AND f.status = 'active') AS active_count
     FROM kb_categories c
     ORDER BY CASE WHEN c.name = 'general' THEN 0 ELSE 1 END, c.label ASC
-  `).all() as any[];
+  `).all() as KbCategoryWithCounts[];
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
@@ -741,13 +767,13 @@ export function getKbCategories() {
 export function getKbCategoryById(id: string) {
   const d = getDb();
   initKbTables();
-  return d.prepare("SELECT * FROM kb_categories WHERE id = ?").get(id) as any;
+  return d.prepare("SELECT * FROM kb_categories WHERE id = ?").get(id) as KbCategory;
 }
 
 export function getKbCategoryBySlug(name: string) {
   const d = getDb();
   initKbTables();
-  return d.prepare("SELECT * FROM kb_categories WHERE name = ?").get(name) as any;
+  return d.prepare("SELECT * FROM kb_categories WHERE name = ?").get(name) as KbCategory;
 }
 
 export function createKbCategory(name: string, label: string) {
@@ -798,7 +824,7 @@ export function getKbFiles(filters?: { categoryId?: string; status?: string; sea
     LEFT JOIN kb_files cf ON f.conflict_with = cf.id
     WHERE 1=1
   `;
-  const params: any[] = [];
+  const params: unknown[] = [];
   if (filters?.categoryId) { sql += " AND f.category_id = ?"; params.push(filters.categoryId); }
   if (filters?.status) { sql += " AND f.status = ?"; params.push(filters.status); }
   if (filters?.search) {
@@ -807,7 +833,7 @@ export function getKbFiles(filters?: { categoryId?: string; status?: string; sea
     params.push(q, q);
   }
   sql += " ORDER BY f.created_at DESC";
-  return d.prepare(sql).all(...params) as any[];
+  return d.prepare(sql).all(...params) as KbFile[];
 }
 
 export function getKbFileById(id: string) {
@@ -822,7 +848,7 @@ export function getKbFileById(id: string) {
     LEFT JOIN users u ON f.uploaded_by = u.id
     LEFT JOIN kb_files cf ON f.conflict_with = cf.id
     WHERE f.id = ?
-  `).get(id) as any;
+  `).get(id) as KbFile;
 }
 
 export function insertKbFile(data: {
@@ -856,7 +882,7 @@ export function insertKbFile(data: {
   );
 }
 
-export function updateKbFile(id: string, data: Record<string, any>, includeUpdatedAt = true) {
+export function updateKbFile(id: string, data: Record<string, unknown>, includeUpdatedAt = true) {
   const d = getDb();
   initKbTables();
   const fields = Object.keys(data).filter((k) => !["id", "created_at", "updated_at"].includes(k));
@@ -879,7 +905,7 @@ export function deleteKbFileById(id: string) {
 export function findKbFileByName(name: string) {
   const d = getDb();
   initKbTables();
-  return d.prepare("SELECT * FROM kb_files WHERE filename = ? ORDER BY created_at DESC").all(name) as any[];
+  return d.prepare("SELECT * FROM kb_files WHERE filename = ? ORDER BY created_at DESC").all(name) as KbFile[];
 }
 
 export function getActiveKbFileIds(categoryIds?: string[]) {
@@ -888,9 +914,9 @@ export function getActiveKbFileIds(categoryIds?: string[]) {
   if (categoryIds && categoryIds.length > 0) {
     const placeholders = categoryIds.map(() => "?").join(",");
     return d.prepare(`SELECT id FROM kb_files WHERE status = 'active' AND category_id IN (${placeholders})`)
-      .all(...categoryIds) as any[];
+      .all(...categoryIds) as { id: string }[];
   }
-  return d.prepare("SELECT id FROM kb_files WHERE status = 'active'").all() as any[];
+  return d.prepare("SELECT id FROM kb_files WHERE status = 'active'").all() as { id: string }[];
 }
 
 /* ============ KB: CHUNKS ============ */
@@ -920,13 +946,13 @@ export function storeKbChunks(chunks: Array<{
 export function getKbChunksByFile(fileId: string) {
   const d = getDb();
   initKbTables();
-  return d.prepare("SELECT * FROM kb_chunks WHERE file_id = ? ORDER BY chunk_index ASC").all(fileId) as any[];
+  return d.prepare("SELECT * FROM kb_chunks WHERE file_id = ? ORDER BY chunk_index ASC").all(fileId) as KbChunk[];
 }
 
 export function countKbChunksByFile(fileId: string) {
   const d = getDb();
   initKbTables();
-  const row = d.prepare("SELECT COUNT(*) as c FROM kb_chunks WHERE file_id = ?").get(fileId) as any;
+  const row = d.prepare("SELECT COUNT(*) as c FROM kb_chunks WHERE file_id = ?").get(fileId) as CountRow;
   return row?.c || 0;
 }
 
@@ -952,7 +978,7 @@ export function getKbChunksByCategoryIds(categoryIds: string[]) {
     FROM kb_chunks kc
     JOIN kb_files f ON kc.file_id = f.id
     WHERE kc.category_id IN (${placeholders}) AND f.status = 'active'
-  `).all(...categoryIds) as any[];
+  `).all(...categoryIds) as Array<KbChunk & { filename: string }>;
 }
 
 /* ============ KB: MIGRATION (legacy knowledge_entries) ============ */
@@ -965,7 +991,12 @@ export function migrateKnowledgeEntriesToKb(): { migrated: number; failed: numbe
   const alreadyDone = getConfig("kb_entries_migrated");
   if (alreadyDone === "true") return { migrated: 0, failed: 0 };
 
-  const entries = d.prepare("SELECT * FROM knowledge_entries").all() as any[];
+  // En instalaciones frescas la tabla legacy puede no existir (solo la crean
+  // las funciones legacy de knowledge_entries). Asegurarla evita SQLITE_ERROR
+  // en el primer arranque.
+  initKnowledgeTable();
+
+  const entries = d.prepare("SELECT * FROM knowledge_entries").all() as KnowledgeEntryRow[];
   if (entries.length === 0) {
     setConfig("kb_entries_migrated", "true", "Entradas legacy migradas a kb_files");
     return { migrated: 0, failed: 0 };
@@ -977,7 +1008,7 @@ export function migrateKnowledgeEntriesToKb(): { migrated: number; failed: numbe
     try {
       // Resolver categoría por nombre (o default general)
       const cat = getKbCategoryBySlug(entry.category || "general");
-      const existing = d.prepare("SELECT id FROM kb_files WHERE filename = ?").get(entry.title) as any;
+      const existing = d.prepare("SELECT id FROM kb_files WHERE filename = ?").get(entry.title) as { id: string } | undefined;
       if (existing) {
         // Ya migrada: actualizar contenido
         d.prepare("UPDATE kb_files SET content = ?, updated_at = datetime('now') WHERE id = ?")
@@ -996,7 +1027,7 @@ export function migrateKnowledgeEntriesToKb(): { migrated: number; failed: numbe
         });
       }
       migrated++;
-    } catch (e) {
+    } catch {
       failed++;
     }
   }
@@ -1014,10 +1045,10 @@ export function getChatWithMessages(chatId: string) {
     FROM chats c
     LEFT JOIN users u ON c.user_id = u.id
     WHERE c.id = ?
-  `).get(chatId) as any;
+  `).get(chatId) as ChatWithOwnerRow;
   if (!chat) return null;
 
-  const messages = d.prepare("SELECT * FROM messages WHERE chat_id = ? ORDER BY id ASC").all(chatId) as any[];
+  const messages = d.prepare("SELECT * FROM messages WHERE chat_id = ? ORDER BY id ASC").all(chatId) as MessageRow[];
   return { ...chat, messages };
 }
 
@@ -1031,14 +1062,14 @@ export function getAllProjectsAdmin(search = "") {
     FROM projects p
     LEFT JOIN users u ON p.user_id = u.id
   `;
-  const params: any[] = [];
+  const params: unknown[] = [];
   if (search) {
     sql += " WHERE (p.name LIKE ? OR u.name LIKE ? OR u.email LIKE ?)";
     const q = `%${search}%`;
     params.push(q, q, q);
   }
   sql += " ORDER BY p.created_at DESC LIMIT 200";
-  return d.prepare(sql).all(...params) as any[];
+  return d.prepare(sql).all(...params) as ProjectAdminRow[];
 }
 
 /* ============ ADMIN: ALL CHATS ============ */
@@ -1053,14 +1084,14 @@ export function getAllChatsAdmin(search = "") {
     FROM chats c
     LEFT JOIN users u ON c.user_id = u.id
   `;
-  const params: any[] = [];
+  const params: unknown[] = [];
   if (search) {
     sql += " WHERE (c.title LIKE ? OR u.name LIKE ? OR u.email LIKE ?)";
     const q = `%${search}%`;
     params.push(q, q, q);
   }
   sql += " ORDER BY c.updated_at DESC LIMIT 500";
-  return d.prepare(sql).all(...params) as any[];
+  return d.prepare(sql).all(...params) as ChatAdminRow[];
 }
 
 /* ============ AUDIT LOG ============ */
@@ -1098,7 +1129,7 @@ export function getAuditLogs(limit = 100, offset = 0, action?: string, userId?: 
     LEFT JOIN users u ON a.user_id = u.id
     WHERE 1=1
   `;
-  const params: any[] = [];
+  const params: unknown[] = [];
   // No-super_admin no ven acciones de super_admin
   if (callerRole && callerRole !== "super_admin") {
     sql += " AND (u.role IS NULL OR u.role != ?)";
@@ -1108,28 +1139,28 @@ export function getAuditLogs(limit = 100, offset = 0, action?: string, userId?: 
   if (userId) { sql += " AND a.user_id = ?"; params.push(userId); }
   sql += " ORDER BY a.created_at DESC LIMIT ? OFFSET ?";
   params.push(limit, offset);
-  return d.prepare(sql).all(...params) as any[];
+  return d.prepare(sql).all(...params) as AuditLogRow[];
 }
 
 export function countAuditLogs(action?: string, userId?: string, callerRole?: string) {
   const d = getDb();
   initAuditTable();
   let sql = "SELECT COUNT(*) as c FROM audit_log a LEFT JOIN users u ON a.user_id = u.id WHERE 1=1";
-  const params: any[] = [];
+  const params: unknown[] = [];
   if (callerRole && callerRole !== "super_admin") {
     sql += " AND (u.role IS NULL OR u.role != ?)";
     params.push("super_admin");
   }
   if (action) { sql += " AND a.action = ?"; params.push(action); }
   if (userId) { sql += " AND a.user_id = ?"; params.push(userId); }
-  const row = d.prepare(sql).get(...params) as any;
+  const row = d.prepare(sql).get(...params) as CountRow;
   return row?.c || 0;
 }
 
 export function getAuditActions() {
   const d = getDb();
   initAuditTable();
-  return d.prepare("SELECT DISTINCT action FROM audit_log ORDER BY action").all() as any[];
+  return d.prepare("SELECT DISTINCT action FROM audit_log ORDER BY action").all() as { action: string }[];
 }
 
 /* ============ ANNOUNCEMENTS ============ */
@@ -1160,7 +1191,7 @@ export function getAnnouncements(activeOnly = false) {
   `;
   if (activeOnly) sql += " WHERE a.active = 1";
   sql += " ORDER BY a.created_at DESC";
-  return d.prepare(sql).all() as any[];
+  return d.prepare(sql).all() as AnnouncementRow[];
 }
 
 export function getActiveAnnouncements() {
@@ -1174,7 +1205,7 @@ export function createAnnouncement(id: string, title: string, content: string, t
     .run(id, title, content, type, createdBy);
 }
 
-export function updateAnnouncement(id: string, data: Record<string, any>) {
+export function updateAnnouncement(id: string, data: Record<string, unknown>) {
   const d = getDb();
   initAnnouncementsTable();
   const fields = Object.keys(data).filter(k => k !== "id").map(k => `${k} = ?`).join(", ");
@@ -1229,12 +1260,12 @@ export function getBackups(limit = 20) {
     FROM backups b
     LEFT JOIN users u ON b.created_by = u.id
     ORDER BY b.created_at DESC LIMIT ?
-  `).all(limit) as any[];
+  `).all(limit) as BackupRow[];
 }
 
 /* ============ LEGACY JSON MIGRATION ============ */
 export function hasData() {
   const d = getDb();
-  const row = d.prepare("SELECT COUNT(*) as count FROM chats").get() as any;
+  const row = d.prepare("SELECT COUNT(*) as count FROM chats").get() as CountRow;
   return row.count > 0;
 }

@@ -113,8 +113,8 @@ function escapeXml(str: string): string {
 }
 
 function buildParagraphXml(text: string, referenceXml: string): string {
-  const styleMatch = referenceXml.match(/<w:pStyle\s+w:val="([^"]+)"/);
-  const styleAttr = styleMatch ? ` w:pStyle="${styleMatch[1]}"` : "";
+  // NOTA(Fase 2): el estilo del párrafo de referencia no se conserva al
+  // reconstruir el XML (styleAttr calculado pero sin aplicar).
   const pPrMatch = referenceXml.match(/<w:pPr[ >][\s\S]*?<\/w:pPr>/);
   const pPr = pPrMatch ? pPrMatch[0] : "";
 

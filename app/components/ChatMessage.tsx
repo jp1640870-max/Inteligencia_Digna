@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import { Download, ExternalLink, FileSpreadsheet, FileText, FileType2, Paperclip, Pencil, RefreshCw, Copy, Check } from "lucide-react";
 import CodeBlock from "./CodeBlock";
-import type { Msg, EditResult, SearchResult } from "@/types";
+import type { Msg, EditResult } from "@/types";
 
 type Props = {
   message: Msg;
@@ -77,7 +78,7 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-    } catch (error) {
+    } catch {
       alert("No se pudo descargar el archivo");
     } finally {
       setDownloading(false);
@@ -219,7 +220,7 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
                     </div>
                   )}
                   {message.images?.map((img, idx) => (
-                    <img key={idx} src={img} className="mt-2 max-h-40 rounded-lg" />
+                    <Image key={idx} src={img} alt="Imagen adjunta al mensaje" width={320} height={160} className="mt-2 max-h-40 w-auto rounded-lg" />
                   ))}
                 </>
               )}

@@ -2,11 +2,11 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import Image from "next/image";
 import Link from "next/link";
 import {
   Users,
   MessageSquare,
-  FolderKanban,
   Brain,
   Activity,
   Settings,
@@ -70,7 +70,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
         {/* Logo */}
         <div className="p-4 border-b border-[#202938]">
           <div className="flex items-center gap-3">
-            <img src="/LogoSaludDigna.svg" className="w-10 h-10" alt="Logo" />
+            <Image src="/LogoSaludDigna.svg" className="w-10 h-10" alt="Logo" width={40} height={40} />
             <div>
               <h2 className="text-sm font-bold text-green-400">Inteligencia Digna</h2>
               <p className="text-[10px] text-gray-500">Panel de Administración</p>

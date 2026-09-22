@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Utilidades CLI en CommonJS (seed, reset-password, dev): no son
+    // código de la app y usan require() deliberadamente.
+    "scripts/**",
   ]),
 ]);
 

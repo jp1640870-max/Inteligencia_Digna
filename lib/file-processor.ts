@@ -3,7 +3,7 @@ import * as ExcelJS from "xlsx";
 import { readExcelStructure } from "@/lib/editors/excel-editor";
 import { readWordStructure } from "@/lib/editors/word-editor";
 import { readPdfStructure } from "@/lib/editors/pdf-editor";
-import type { EditFormat } from "@/types";
+import type { EditFormat, Pdf2JsonData } from "@/types";
 
 export type ExtractedFile = {
   name: string;
@@ -20,16 +20,20 @@ export async function extractPDF(buffer: Buffer): Promise<string> {
   const PDFParser = (await import("pdf2json")).default;
   return new Promise((resolve, reject) => {
     const parser = new PDFParser();
-    parser.on("pdfParser_dataReady", (data: any) => {
-      const text = data.Pages.map((page: any) =>
-        page.Texts.map((t: any) =>
-          decodeURIComponent(t.R.map((r: any) => r.T).join(""))
+    parser.on("pdfParser_dataReady", (data: Pdf2JsonData) => {
+      const text = (data.Pages || []).map((page) =>
+        (page.Texts || []).map((t) =>
+          decodeURIComponent((t.R || []).map((r) => r.T).join(""))
         ).join(" ")
       ).join("\n");
       resolve(text.trim() || "[No se pudo extraer texto del PDF]");
     });
-    parser.on("pdfParser_dataError", (err: any) => {
-      reject(new Error(`Error parsing PDF: ${err.parserError || err}`));
+    parser.on("pdfParser_dataError", (err: unknown) => {
+      const detail =
+        typeof err === "object" && err !== null && "parserError" in err
+          ? (err as { parserError: unknown }).parserError
+          : err;
+      reject(new Error(`Error parsing PDF: ${detail instanceof Error ? detail.message : String(detail)}`));
     });
     parser.parseBuffer(buffer);
   });
@@ -45,7 +49,7 @@ export function extractXLSX(buffer: Buffer): string {
   let text = "";
   workbook.SheetNames.forEach((name) => {
     const sheet = workbook.Sheets[name];
-    const json = ExcelJS.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+    const json = ExcelJS.utils.sheet_to_json(sheet, { header: 1 }) as unknown[][];
     text += `\n--- Hoja: ${name} ---\n`;
     json.forEach((row) => {
       text += row.join(" | ") + "\n";

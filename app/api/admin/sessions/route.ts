@@ -1,7 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { requireRole, filterVisibleUsers } from "@/lib/auth";
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   const { allowed, user } = await requireRole(["super_admin", "admin"]);
   if (!allowed || !user) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
 
@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   const allUsers = getAllUsers();
   const visibleUsers = filterVisibleUsers(allUsers, user);
 
-  const recentUsers = visibleUsers.filter((u: any) => {
+  const recentUsers = visibleUsers.filter((u) => {
     const created = new Date(u.created_at).getTime();
     return Date.now() - created < 24 * 60 * 60 * 1000;
   });

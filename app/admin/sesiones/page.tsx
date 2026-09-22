@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { RefreshCw, Users, Activity, Clock, User, Shield } from "lucide-react";
+import { RefreshCw, Users, Activity, Clock, Shield } from "lucide-react";
 import { useAuthStore } from "@/lib/stores/auth-store";
+import type { AdminSessionsData, UserWithCountsRow } from "@/types";
 
 export default function AdminSesiones() {
   const currentUser = useAuthStore((s) => s.user);
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<AdminSessionsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [targetEmail, setTargetEmail] = useState("");
   const [impersonating, setImpersonating] = useState(false);
@@ -21,7 +22,13 @@ export default function AdminSesiones() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { loadSessions(); }, [loadSessions]);
+  // Fetch inicial diferido a una macrotarea: evita setState síncrono dentro
+  // del efecto (react-hooks/set-state-in-effect) sin cambiar comportamiento.
+  // TODO(Fase 2): migrar a fetching dirigido por eventos/Suspense.
+  useEffect(() => {
+    const id = setTimeout(() => { void loadSessions(); }, 0);
+    return () => clearTimeout(id);
+  }, [loadSessions]);
 
   const handleImpersonate = async () => {
     if (!targetEmail.trim()) return;
@@ -31,8 +38,8 @@ export default function AdminSesiones() {
       // Buscar usuario por email primero
       const usersRes = await fetch("/api/admin/users");
       if (!usersRes.ok) { setImpersonateMsg("Error al buscar usuarios"); setImpersonating(false); return; }
-      const { users } = await usersRes.json();
-      const target = users.find((u: any) => u.email.toLowerCase() === targetEmail.toLowerCase());
+      const { users }: { users: UserWithCountsRow[] } = await usersRes.json();
+      const target = users.find((u) => u.email.toLowerCase() === targetEmail.toLowerCase());
       if (!target) { setImpersonateMsg("Usuario no encontrado"); setImpersonating(false); return; }
 
       const res = await fetch("/api/admin/impersonate", {
@@ -118,9 +125,9 @@ export default function AdminSesiones() {
       {/* Usuarios recientes */}
       <div className="rounded-xl bg-[#121824] border border-[#202938] p-5">
         <h3 className="text-sm font-medium text-white mb-3">Usuarios recientes (últimas 24h)</h3>
-        {data?.recentLogins?.length > 0 ? (
+        {data && data.recentLogins.length > 0 ? (
           <div className="space-y-1">
-            {data.recentLogins.map((u: any) => (
+            {data.recentLogins.map((u) => (
               <div key={u.id} className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[#1e293b] transition-colors">
                 <div className="w-7 h-7 rounded-full bg-green-600 flex items-center justify-center text-[10px] font-bold shrink-0">
                   {(u.name || u.email || "?")[0].toUpperCase()}

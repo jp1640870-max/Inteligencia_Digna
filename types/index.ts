@@ -208,3 +208,177 @@ export type KbConflictAction =
   | "reactivate"
   | "reindex"
   | "move";
+
+// ─── Filas de base de datos (contrato SQLite ↔ dominio) ───
+// Los casts viven solo en lib/db.ts y lib/projects.ts; el resto del código
+// recibe tipos reales por inferencia.
+// Convención F0: los NULL de SQLite se modelan con el tipo base
+// (el endurecimiento de nulabilidad es trabajo de Fase 2).
+
+export type CountRow = { c: number; count: number };
+
+export type UserRow = {
+  id: string;
+  email: string;
+  name: string | null;
+  password_hash: string | null;
+  google_id: string | null;
+  picture: string | null;
+  role: UserRole;
+  created_at: string;
+};
+
+export type UserWithCountsRow = UserRow & {
+  chat_count: number;
+  project_count: number;
+};
+
+export type ChatRow = {
+  id: string;
+  user_id: string;
+  title: string;
+  heart_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ChatWithOwnerRow = ChatRow & {
+  user_name: string | null;
+  user_email: string | null;
+  user_role: string | null;
+};
+
+export type ChatAdminRow = ChatWithOwnerRow & {
+  message_count: number;
+  last_message: string | null;
+};
+
+export type ProjectRow = Project & { user_id: string };
+
+export type ProjectAdminRow = ProjectRow & {
+  user_name: string | null;
+  user_email: string | null;
+  user_role: string | null;
+  chat_count: number;
+};
+
+export type MessageRow = {
+  id: number;
+  chat_id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  images: string | null;
+  files: string | null;
+  doc_data: string | null;
+  kb_sources: string | null;
+  created_at: string;
+};
+
+export type RagChunkRow = {
+  id: string;
+  user_id: string | null;
+  chat_id: string | null;
+  project_id: string | null;
+  document_name: string;
+  chunk_index: number;
+  content: string;
+  embedding: string;
+  created_at: string;
+};
+
+export type HeartRow = {
+  id: string;
+  user_id: string;
+  name: string;
+  role: string;
+  tone: string;
+  instructions: string;
+  limitations: string;
+  temperature: number;
+  knowledge_files: string;
+  tools: string;
+  agent_memory: string;
+  is_public: number;
+  is_preset: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HeartWithOwnerRow = HeartRow & {
+  user_name: string | null;
+  user_email: string | null;
+};
+
+export type ConfigRow = {
+  key: string;
+  value: string;
+  description: string;
+};
+
+export type KnowledgeEntryRow = {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+  created_by: string | null;
+  created_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type KbCategoryWithCounts = KbCategory & {
+  file_count: number;
+  active_count: number;
+};
+
+export type AuditLogRow = {
+  id: number;
+  user_id: string | null;
+  action: string;
+  details: string;
+  ip: string;
+  created_at: string;
+  user_name: string | null;
+  user_email: string | null;
+};
+
+export type AnnouncementRow = {
+  id: string;
+  title: string;
+  content: string;
+  type: string;
+  active: number;
+  created_by: string | null;
+  created_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BackupRow = {
+  id: string;
+  filename: string;
+  size_bytes: number;
+  status: string;
+  created_by: string | null;
+  created_by_name: string | null;
+  created_at: string;
+};
+
+export type AdminSessionsData = {
+  activeToday: number;
+  totalUsers: number;
+  recentLogins: UserWithCountsRow[];
+  timestamp: string;
+};
+
+// ─── pdf2json (sin tipos propios: contrato estructural mínimo) ───
+export type Pdf2JsonTextRun = { T: string };
+export type Pdf2JsonTextItem = {
+  R?: Pdf2JsonTextRun[];
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+};
+export type Pdf2JsonPage = { Texts?: Pdf2JsonTextItem[] };
+export type Pdf2JsonData = { Pages?: Pdf2JsonPage[] };

@@ -3,11 +3,17 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 
-const CodeBlock = ({ inline, className, children }: any) => {
+type CodeBlockProps = {
+  inline?: boolean;
+  className?: string;
+  children?: ReactNode;
+};
+
+const CodeBlock = ({ inline, className, children }: CodeBlockProps) => {
   const match = /language-(\w+)/.exec(className || "");
   const code = String(children).trim();
   const [copied, setCopied] = useState(false);

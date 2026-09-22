@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, use, useRef } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { ArrowLeft, MessageSquare, User, Clock, Heart, ChevronDown, ChevronUp, BookOpen } from "lucide-react";
 
@@ -144,7 +145,7 @@ export default function ChatDetailPage({ params }: { params: Promise<{ id: strin
               {msg.images && (
                 <div className="mt-2 flex gap-2">
                   {JSON.parse(msg.images).map((img: string, i: number) => (
-                    <img key={i} src={img} alt="" className="w-20 h-20 object-cover rounded-lg" />
+                    <Image key={i} src={img} alt="Imagen adjunta al mensaje" width={80} height={80} className="object-cover rounded-lg" />
                   ))}
                 </div>
               )}

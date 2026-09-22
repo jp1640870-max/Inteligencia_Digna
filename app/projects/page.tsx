@@ -5,6 +5,6 @@ import { useRouter } from "next/navigation";
 
 export default function ProjectsPage() {
   const router = useRouter();
-  useEffect(() => { router.replace("/"); }, []);
+  useEffect(() => { router.replace("/"); }, [router]);
   return null;
 }

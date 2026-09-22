@@ -1,9 +1,9 @@
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
-import type { PdfTextEdit } from "@/types";
+import type { PdfTextEdit, Pdf2JsonTextRun } from "@/types";
 
 type PDFParserInstance = {
   new (): {
-    on(event: string, cb: (data: any) => void): void;
+    on(event: string, cb: (data: unknown) => void): void;
     parseBuffer(buffer: Buffer): void;
   };
 };
@@ -29,11 +29,11 @@ export async function readPdfStructure(buffer: Buffer): Promise<PdfStructure> {
 
   const text = await new Promise<string>((resolve, reject) => {
     const parser = new PDFParser();
-    parser.on("pdfParser_dataReady", (data: any) => {
+    parser.on("pdfParser_dataReady", (data: unknown) => {
       resolve(JSON.stringify(data));
     });
-    parser.on("pdfParser_dataError", (err: any) => {
-      reject(new Error(`PDFParser error: ${err}`));
+    parser.on("pdfParser_dataError", (err: unknown) => {
+      reject(new Error(`PDFParser error: ${err instanceof Error ? err.message : String(err)}`));
     });
     parser.parseBuffer(buffer);
   });
@@ -45,7 +45,7 @@ export async function readPdfStructure(buffer: Buffer): Promise<PdfStructure> {
     const textItems: PdfStructure["pages"][0]["textItems"] = [];
 
     for (const item of page.Texts || []) {
-      const decoded = item.R.map((r: any) =>
+      const decoded = item.R.map((r: Pdf2JsonTextRun) =>
         decodeURIComponent(r.T)
       ).join("");
 
@@ -80,7 +80,7 @@ export async function applyPdfEdits(
   for (const inst of instructions) {
     if (inst.pageNumber < 1 || inst.pageNumber > pages.length) continue;
     const page = pages[inst.pageNumber - 1];
-    const { width, height } = page.getSize();
+    const { height } = page.getSize();
 
     // Use pdf2json to locate the old text position
     const structure = await readPdfStructure(buffer);

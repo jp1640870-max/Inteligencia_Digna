@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { RefreshCw, Download, BarChart3, Users, MessageSquare, Heart, Activity } from "lucide-react";
+import { RefreshCw, Download, BarChart3, Users, MessageSquare, Heart } from "lucide-react";
 
 type Report = {
   generatedAt: string;
@@ -32,7 +32,13 @@ export default function AdminReportes() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { loadReport(); }, [loadReport]);
+  // Fetch inicial diferido a una macrotarea: evita setState síncrono dentro
+  // del efecto (react-hooks/set-state-in-effect) sin cambiar comportamiento.
+  // TODO(Fase 2): migrar a fetching dirigido por eventos/Suspense.
+  useEffect(() => {
+    const id = setTimeout(() => { void loadReport(); }, 0);
+    return () => clearTimeout(id);
+  }, [loadReport]);
 
   const handleDownloadJSON = () => {
     if (!report) return;

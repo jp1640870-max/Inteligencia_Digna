@@ -27,8 +27,8 @@ export async function GET() {
       signal: AbortSignal.timeout(5000),
     });
     if (res.ok) {
-      const data = await res.json();
-      const models = (data.models || []).map((m: any) => m.name);
+      const data: { models?: Array<{ name: string }> } = await res.json();
+      const models = (data.models || []).map((m) => m.name);
       checks.ollama = {
         status: "ok",
         latency: Date.now() - start,

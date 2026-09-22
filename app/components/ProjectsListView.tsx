@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Folder, Plus, Trash2, MessageSquare, Search, ArrowLeft } from "lucide-react";
 import type { Project } from "@/types";
 
@@ -25,15 +25,19 @@ export default function ProjectsListView({ darkMode, onOpenProject, onBack, onPr
     hover: darkMode ? "hover:bg-[#1e293b]" : "hover:bg-gray-200",
   };
 
-  const loadProjects = async () => {
+  const loadProjects = useCallback(async () => {
     const params = search ? `?q=${encodeURIComponent(search)}` : "";
     const res = await fetch(`/api/projects${params}`);
     if (res.ok) setProjects(await res.json());
-  };
-
-  useEffect(() => {
-    loadProjects();
   }, [search]);
+
+  // Fetch inicial diferido a una macrotarea: evita setState síncrono dentro
+  // del efecto (react-hooks/set-state-in-effect) sin cambiar comportamiento.
+  // TODO(Fase 2): migrar a fetching dirigido por eventos/Suspense.
+  useEffect(() => {
+    const id = setTimeout(() => { void loadProjects(); }, 0);
+    return () => clearTimeout(id);
+  }, [loadProjects]);
 
   const createProject = async () => {
     if (!name.trim()) return;

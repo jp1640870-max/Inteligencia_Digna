@@ -1,20 +1,26 @@
 import type { OllamaMessage } from "./ollama";
 
-const TODAY = new Date().toLocaleDateString("es-MX", {
-  weekday: "long",
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-});
+// Se calcula por request (no a nivel de módulo) para no congelar la fecha
+// en procesos de larga duración.
+function getToday(): string {
+  return new Date().toLocaleDateString("es-MX", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
 
-const SYSTEM_PROMPT = `
-Hoy es ${TODAY}.
+function getSystemPrompt(): string {
+  return `
+Hoy es ${getToday()}.
 Responde en español de forma clara, directa y útil.
 Si das código, usa bloques markdown con el lenguaje correspondiente.
 NO uses HTML.
 No repitas la pregunta.
 Sé conciso pero completo.
 `;
+}
 
 const DOC_NOTE = `
 NOTA IMPORTANTE: Este sistema PUEDE generar y entregar archivos Excel (.xlsx), Word (.docx) y PDF (.pdf) reales. Si el usuario te pide uno (ej: "dame el excel", "quiero el archivo", "genera un word"), indícale brevemente que se está generando. NO digas frases como "no puedo enviar archivos", "como soy una IA", "soy un modelo de lenguaje", "no tengo la capacidad", ni ofrezcas código Python o CSV como alternativa. El sistema lo hará por ti.`;
@@ -41,18 +47,6 @@ TIENES ACCESO A UNA BASE DE CONOCIMIENTO EMPRESARIAL.
 - El contexto es más confiable que tu conocimiento general: cuando ambos entren en conflicto, usa el contexto.
 - ÚNICAMENTE si el contexto NO contiene nada relacionado con lo que pregunta, di que no tienes esa información. No lo digas si el contexto sí la incluye, aunque sea parcialmente.`;
 
-function containsTomorrowReference(text: string): boolean {
-  const lower = text.toLowerCase();
-  return (
-    lower.includes("mañana") ||
-    lower.includes("manana") ||
-    lower.includes("siguiente") ||
-    lower.includes("próximo") ||
-    lower.includes("proximo") ||
-    lower.includes("tomorrow")
-  );
-}
-
 type HistoryItem = {
   role: "user" | "ai";
   text?: string;
@@ -69,11 +63,11 @@ export function buildMessages(
   kbContext?: string,
 ): OllamaMessage[] {
   const systemPrompt = projectContext
-    ? `${SYSTEM_PROMPT}
+    ? `${getSystemPrompt()}
 
 CONTEXTO DEL PROYECTO:
 ${projectContext}${DOC_NOTE}${WEB_SEARCH_NOTE}${KB_NOTE}`
-    : `${SYSTEM_PROMPT}${DOC_NOTE}${WEB_SEARCH_NOTE}${KB_NOTE}`;
+    : `${getSystemPrompt()}${DOC_NOTE}${WEB_SEARCH_NOTE}${KB_NOTE}`;
 
   const messages: OllamaMessage[] = [
     { role: "system", content: systemPrompt },

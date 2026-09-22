@@ -363,8 +363,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return { messages: copy };
         });
       }
-    } catch (err: any) {
-      if (err?.name === "AbortError" && accumulated) {
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError" && accumulated) {
         try {
           await fetch("/api/chat/save-partial", {
             method: "POST",
@@ -547,8 +547,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return { messages: copy };
         });
       }
-    } catch (err: any) {
-      if (err?.name === "AbortError") {
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
         if (accumulated) {
           try {
             await fetch("/api/chat/save-partial", {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Trash2, RefreshCw, Search, Settings, Brain, Globe, User, Star } from "lucide-react";
+import { Plus, Trash2, RefreshCw, Search, Settings, Brain, User, Star } from "lucide-react";
 
 type Heart = {
   id: string;
@@ -52,7 +52,13 @@ export default function AdminHearts() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { loadHearts(); }, [loadHearts]);
+  // Fetch inicial diferido a una macrotarea: evita setState síncrono dentro
+  // del efecto (react-hooks/set-state-in-effect) sin cambiar comportamiento.
+  // TODO(Fase 2): migrar a fetching dirigido por eventos/Suspense.
+  useEffect(() => {
+    const id = setTimeout(() => { void loadHearts(); }, 0);
+    return () => clearTimeout(id);
+  }, [loadHearts]);
 
   const handleCreate = async () => {
     if (!form.name.trim()) return;

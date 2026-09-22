@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect, useCallback } from "react";
+import NextImage from "next/image";
 import {
   PanelLeft,
   PanelLeftClose,
@@ -24,6 +25,7 @@ import { useChatStore } from "@/lib/stores/chat-store";
 import { useProjectStore } from "@/lib/stores/project-store";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { useAuthStore, ADMIN_VISIBLE_ROLES } from "@/lib/stores/auth-store";
+import type { Chat, Msg } from "@/types";
 
 const SIDEBAR_DEFAULT_WIDTH = 280;
 const SIDEBAR_MIN_WIDTH = 180;
@@ -46,7 +48,6 @@ export default function Sidebar() {
   const projectSearch = useUIStore((s) => s.projectSearch);
   const loadProjectChats = useProjectStore((s) => s.loadProjectChats);
   const setExpandedProjectId = useProjectStore((s) => s.setExpandedProjectId);
-  const addChatToProject = useProjectStore((s) => s.addChatToProject);
   const removeChatFromProject = useProjectStore((s) => s.removeChatFromProject);
   const setCurrentProjectId = useProjectStore((s) => s.setCurrentProjectId);
 
@@ -187,12 +188,12 @@ export default function Sidebar() {
     setView({ type: "project", id: projectId });
   };
 
-  const handleOpenChat = (chat: { id: string; title: string; messages: any[] }) => {
-    openChat(chat as any);
+  const handleOpenChat = (chat: { id: string; title: string; messages: Msg[] }) => {
+    openChat(chat);
     setSidebarOpen(false);
   };
 
-  const handleOpenChatInProject = (chat: any, projectId: string) => {
+  const handleOpenChatInProject = (chat: Chat, projectId: string) => {
     setView({ type: "chat" });
     setCurrentProjectId(projectId);
     openChat(chat);
@@ -224,7 +225,7 @@ export default function Sidebar() {
     c.title.toLowerCase().includes(popoverSearch.toLowerCase())
   );
 
-  const handlePopoverChatClick = (chat: any) => {
+  const handlePopoverChatClick = (chat: Chat) => {
     handleOpenChat(chat);
     setSearchPopoverOpen(false);
     setPopoverSearch("");
@@ -246,7 +247,7 @@ export default function Sidebar() {
     >
       <div className="flex items-center justify-between pt-5 pb-4 px-3">
         <div className="flex-1 flex justify-center">
-          <img src="/LogoSaludDigna.svg" className="w-24 h-24" alt="Logo" />
+          <NextImage src="/LogoSaludDigna.svg" className="w-24 h-24" alt="Logo" width={96} height={96} />
         </div>
         <button onClick={toggleCollapse} className={`p-1.5 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition shrink-0`} title="Colapsar sidebar">
           <PanelLeftClose size={18} />
@@ -257,7 +258,8 @@ export default function Sidebar() {
         <button onClick={() => { newChat(); setSidebarOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2 text-sm ${colors.text} ${colors.hover} rounded-lg transition-colors`}>
           <MessageSquarePlus size={18} /> Nuevo chat
         </button>
-        <button className={`w-full flex items-center gap-3 px-3 py-2 text-sm ${colors.text} ${colors.hover} rounded-lg transition-colors`}>
+        <button aria-label="Crear imagen" className={`w-full flex items-center gap-3 px-3 py-2 text-sm ${colors.text} ${colors.hover} rounded-lg transition-colors`}>
+          {/* eslint-disable-next-line jsx-a11y/alt-text -- falso positivo: icono lucide <Image>, no <img> */}
           <Image size={18} /> Crear imagen
         </button>
         <button onClick={() => analyzeInputRef.current?.click()} className={`w-full flex items-center gap-3 px-3 py-2 text-sm ${colors.text} ${colors.hover} rounded-lg transition-colors`}>

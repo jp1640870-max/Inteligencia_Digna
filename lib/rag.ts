@@ -152,7 +152,7 @@ export function formatRagContext(
 
   return chunks
     .map(
-      (c, i) =>
+      (c) =>
         `[Documento: ${c.documentName} | Relevancia: ${(c.score * 100).toFixed(0)}%]\n${c.content}`,
     )
     .join("\n\n---\n\n");

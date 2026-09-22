@@ -21,15 +21,15 @@ export async function GET() {
     summary: stats,
     usersByRole: groupBy(users, "role"),
     heartsByType: {
-      presets: hearts.filter((h: any) => h.is_preset).length,
-      public: hearts.filter((h: any) => h.is_public).length,
+      presets: hearts.filter((h) => h.is_preset).length,
+      public: hearts.filter((h) => h.is_public).length,
       total: hearts.length,
     },
     topUsers: users
-      .sort((a: any, b: any) => (b.chat_count || 0) - (a.chat_count || 0))
+      .sort((a, b) => (b.chat_count || 0) - (a.chat_count || 0))
       .slice(0, 10)
-      .map((u: any) => ({ name: u.name || u.email, email: u.email, role: u.role, chats: u.chat_count })),
-    topChats: chats.slice(0, 10).map((c: any) => ({
+      .map((u) => ({ name: u.name || u.email, email: u.email, role: u.role, chats: u.chat_count })),
+    topChats: chats.slice(0, 10).map((c) => ({
       title: c.title,
       user: c.user_name || c.user_email,
       messages: c.message_count,
@@ -40,10 +40,11 @@ export async function GET() {
   return NextResponse.json(report);
 }
 
-function groupBy(array: any[], key: string) {
+function groupBy<T extends object>(array: T[], key: Extract<keyof T, string>) {
   const map: Record<string, number> = {};
   array.forEach((item) => {
-    const k = item[key] || "unknown";
+    const value = item[key];
+    const k = value ? String(value) : "unknown";
     map[k] = (map[k] || 0) + 1;
   });
   return map;

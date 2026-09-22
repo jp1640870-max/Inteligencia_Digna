@@ -35,7 +35,13 @@ export default function AdminChats() {
     setLoading(false);
   }, [search]);
 
-  useEffect(() => { loadChats(); }, [loadChats]);
+  // Fetch inicial diferido a una macrotarea: evita setState síncrono dentro
+  // del efecto (react-hooks/set-state-in-effect) sin cambiar comportamiento.
+  // TODO(Fase 2): migrar a fetching dirigido por eventos/Suspense.
+  useEffect(() => {
+    const id = setTimeout(() => { void loadChats(); }, 0);
+    return () => clearTimeout(id);
+  }, [loadChats]);
 
   return (
     <div className="space-y-6">

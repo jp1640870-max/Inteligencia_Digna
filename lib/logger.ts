@@ -9,9 +9,7 @@
  *
  * Los logs salen en formato JSON → aptos para ingestión en Datadog, Grafana, etc.
  */
-
 import pino from "pino";
-import { env } from "@/lib/env";
 
 // Nivel por defecto: info en prod, debug en dev
 const LOG_LEVEL = process.env.LOG_LEVEL || (process.env.NODE_ENV === "production" ? "info" : "debug");

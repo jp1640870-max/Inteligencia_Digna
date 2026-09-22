@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
+import Image from "next/image";
 import { PanelLeft, Search } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import ChatMessage from "./components/ChatMessage";
@@ -20,7 +21,6 @@ export default function Home() {
   const messages = useChatStore((s) => s.messages);
   const loading = useChatStore((s) => s.loading);
   const searching = useChatStore((s) => s.searching);
-  const chatId = useChatStore((s) => s.chatId);
   const input = useChatStore((s) => s.input);
   const images = useChatStore((s) => s.images);
   const files = useChatStore((s) => s.files);
@@ -77,14 +77,14 @@ export default function Home() {
     if (projectId) {
       useProjectStore.getState().setCurrentProjectId(projectId);
     }
-  }, []);
+  }, [loadChats, loadProjects, loadUser]);
 
   // ─── Close user menu on outside click ───
   useEffect(() => {
     const close = () => setShowUserMenu(false);
     if (showUserMenu) document.addEventListener("click", close);
     return () => document.removeEventListener("click", close);
-  }, [showUserMenu]);
+  }, [showUserMenu, setShowUserMenu]);
 
   // ─── Auto-scroll ───
   const handleScroll = useCallback(() => {
@@ -92,7 +92,7 @@ export default function Home() {
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
     setAutoScroll(atBottom);
-  }, []);
+  }, [setAutoScroll]);
 
   useEffect(() => {
     if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -100,7 +100,9 @@ export default function Home() {
 
   // ─── Refs for sending ───
   const currentProjectIdRef = useRef(currentProjectId);
-  currentProjectIdRef.current = currentProjectId;
+  useEffect(() => {
+    currentProjectIdRef.current = currentProjectId;
+  });
 
   // ─── Colors ───
   const colors = {
@@ -172,7 +174,6 @@ export default function Home() {
       {view.type === "project" && (
         <ProjectDetailView
           projectId={view.id}
-          darkMode={darkMode}
           onBack={() => setView({ type: "chat" })}
           onOpenChat={(chat, projectId) => {
             setView({ type: "chat" });
@@ -216,7 +217,7 @@ export default function Home() {
                   className="w-9 h-9 rounded-full overflow-hidden border-2 border-green-500 hover:opacity-80 transition"
                 >
                   {user.picture ? (
-                    <img src={user.picture} alt="" className="w-full h-full object-cover" />
+                    <Image src={user.picture} alt="Foto de perfil" width={36} height={36} className="object-cover" />
                   ) : (
                     <div className="w-full h-full bg-green-600 flex items-center justify-center text-sm font-bold text-white">
                       {(user.name || user.email)[0].toUpperCase()}

@@ -54,8 +54,6 @@ async function generateExcel(structure: DocGenStructure): Promise<Buffer> {
   for (const sheetData of sheets) {
     const sheet = workbook.addWorksheet(sheetData.name || "Sheet1");
 
-    let rowOffset = 1;
-
     if (sheetData.headers && sheetData.headers.length > 0) {
       const headerRow = sheet.addRow(sheetData.headers);
       headerRow.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
@@ -66,7 +64,6 @@ async function generateExcel(structure: DocGenStructure): Promise<Buffer> {
       };
       headerRow.alignment = { horizontal: "center", vertical: "middle" };
       headerRow.height = 22;
-      rowOffset = 2;
     }
 
     for (const rowData of sheetData.rows) {

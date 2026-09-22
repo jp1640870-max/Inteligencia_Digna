@@ -43,8 +43,12 @@ export default function AdminSistema() {
     setLoading(false);
   }, []);
 
+  // Fetch inicial diferido a una macrotarea: evita setState síncrono dentro
+  // del efecto (react-hooks/set-state-in-effect) sin cambiar comportamiento.
+  // TODO(Fase 2): migrar a fetching dirigido por eventos/Suspense.
   useEffect(() => {
-    loadHealth();
+    const id = setTimeout(() => { void loadHealth(); }, 0);
+    return () => clearTimeout(id);
   }, [loadHealth]);
 
   // Auto-refresh cada 15s

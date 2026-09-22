@@ -20,6 +20,12 @@ const networkIPs = Object.values(networkInterfaces())
 const nextConfig: NextConfig = {
   allowedDevOrigins: [...new Set(["localhost", ...networkIPs, "*.lvh.me", "*.ngrok-free.dev"])],
   devIndicators: false,
+  images: {
+    remotePatterns: [
+      // Avatares de Google OAuth (user.picture)
+      { protocol: "https", hostname: "**.googleusercontent.com" },
+    ],
+  },
 };
 
 export default nextConfig;

@@ -208,6 +208,24 @@ export function isKbFileActive(fileId: string): boolean {
 }
 
 /**
+ * Calcula el primer nombre disponible "base (2).ext", "base (3).ext", ...
+ * Función pura (testeable): `exists` indica si un candidato ya está en uso.
+ */
+export function nextAvailableName(
+  base: string,
+  ext: string,
+  exists: (candidate: string) => boolean
+): string {
+  let n = 2;
+  let candidate = `${base} (2)${ext}`;
+  while (exists(candidate)) {
+    n++;
+    candidate = `${base} (${n})${ext}`;
+  }
+  return candidate;
+}
+
+/**
  * Resolución "mantener ambos": el archivo nuevo pasa a activo con nombre
  * "original (2).ext" y se reindexa bajo su nuevo nombre (en realidad solo se
  * actualiza metadata — el RAG no depende del nombre).
@@ -221,13 +239,11 @@ export function resolveKeepBoth(fileId: string): { filename: string } | null {
   const base = dot > 0 ? file.filename.slice(0, dot) : file.filename;
   const ext = dot > 0 ? file.filename.slice(dot) : "";
 
-  let candidate = `${base} (2)${ext}`;
-  let n = 2;
-  const existing = findKbFileByName(candidate);
-  while (existing.length > 0) {
-    n++;
-    candidate = `${base} (${n})${ext}`;
-  }
+  const candidate = nextAvailableName(
+    base,
+    ext,
+    (name) => findKbFileByName(name).length > 0
+  );
 
   updateKbFile(fileId, {
     filename: candidate,

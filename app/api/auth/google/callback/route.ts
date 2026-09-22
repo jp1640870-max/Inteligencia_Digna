@@ -77,7 +77,16 @@ export async function GET(req: Request) {
           googleUser.id,
           googleUser.picture
         );
-        user = { id, email: googleUser.email, name: googleUser.name };
+        user = {
+          id,
+          email: googleUser.email,
+          name: googleUser.name || null,
+          password_hash: null,
+          google_id: googleUser.id,
+          picture: googleUser.picture || null,
+          role: "user",
+          created_at: new Date().toISOString(),
+        };
       }
     } else {
       updateUserPicture(user.id, googleUser.picture || null);

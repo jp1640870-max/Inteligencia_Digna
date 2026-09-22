@@ -34,7 +34,13 @@ export default function AdminProyectos() {
     setLoading(false);
   }, [search]);
 
-  useEffect(() => { loadProjects(); }, [loadProjects]);
+  // Fetch inicial diferido a una macrotarea: evita setState síncrono dentro
+  // del efecto (react-hooks/set-state-in-effect) sin cambiar comportamiento.
+  // TODO(Fase 2): migrar a fetching dirigido por eventos/Suspense.
+  useEffect(() => {
+    const id = setTimeout(() => { void loadProjects(); }, 0);
+    return () => clearTimeout(id);
+  }, [loadProjects]);
 
   return (
     <div className="space-y-6">

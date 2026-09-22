@@ -62,8 +62,12 @@ export default function AdminUsuarios() {
     setLoading(false);
   }, []);
 
+  // Fetch inicial diferido a una macrotarea: evita setState síncrono dentro
+  // del efecto (react-hooks/set-state-in-effect) sin cambiar comportamiento.
+  // TODO(Fase 2): migrar a fetching dirigido por eventos/Suspense.
   useEffect(() => {
-    loadUsers();
+    const id = setTimeout(() => { void loadUsers(); }, 0);
+    return () => clearTimeout(id);
   }, [loadUsers]);
 
   const handleRoleChange = async (userId: string, newRole: string) => {

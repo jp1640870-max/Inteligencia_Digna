@@ -1,7 +1,7 @@
-import type { EditFormat, EditInstruction, EditResult } from "@/types";
+import type { EditFormat, EditResult, ParagraphEdit } from "@/types";
 import { readExcelStructure, applyExcelEdits } from "@/lib/editors/excel-editor";
+import type { ExcelEditInstruction } from "@/lib/editors/excel-editor";
 import { readWordStructure, applyWordEdits } from "@/lib/editors/word-editor";
-import { readPdfStructure, applyPdfEdits } from "@/lib/editors/pdf-editor";
 import { ollamaChat } from "@/lib/ollama";
 import type { OllamaMessage } from "@/lib/ollama";
 import { env } from "@/lib/env";
@@ -53,20 +53,29 @@ export async function editDocument(
       const structure = await readExcelStructure(buffer);
       structureJson = JSON.stringify(structure, null, 2);
       const parsed = await getEditInstructions(format, structureJson, instruction, "xlsx");
-      bufferOut = await applyExcelEdits(buffer, parsed.changes as any[]);
+      bufferOut = await applyExcelEdits(buffer, parsed.changes as ExcelEditInstruction[]);
       appliedChanges = parsed.changes.length;
     } else if (format === "docx") {
       const structure = await readWordStructure(buffer);
       structureJson = JSON.stringify(structure, null, 2);
       const parsed = await getEditInstructions(format, structureJson, instruction, "docx");
-      bufferOut = await applyWordEdits(buffer, parsed.changes as any[]);
+      bufferOut = await applyWordEdits(buffer, parsed.changes as ParagraphEdit[]);
       appliedChanges = parsed.changes.length;
     } else if (format === "pdf") {
-      const structure = await readPdfStructure(buffer);
-      structureJson = JSON.stringify(structure, null, 2);
-      const parsed = await getEditInstructions(format, structureJson, instruction, "pdf");
-      bufferOut = await applyPdfEdits(buffer, parsed.changes as any[]);
-      appliedChanges = parsed.changes.length;
+      // El reemplazo de texto en PDF solo tapaba el original con un
+      // rectángulo blanco (seguía siendo legible al seleccionar el texto).
+      // Se devuelve un error honesto hasta implementar redacción real.
+      return {
+        result: {
+          success: false,
+          format,
+          filename,
+          originalName: filename,
+          changesCount: 0,
+          error:
+            "El reemplazo de texto en PDF no está disponible: el texto original seguiría siendo legible al seleccionar el documento. Genera un documento nuevo en su lugar.",
+        },
+      };
     } else {
       return {
         result: {

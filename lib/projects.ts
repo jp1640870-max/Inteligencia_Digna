@@ -1,16 +1,21 @@
-import Database from "better-sqlite3";
-import path from "path";
+import type Database from "better-sqlite3";
+import { getSharedDb } from "./db-connection";
+import type { ChatRow, ProjectRow } from "@/types";
 
-const DB_PATH = path.join(process.cwd(), "data", "app.db");
+let projectTablesInit = false;
 
-let db: Database.Database;
+function getDb(): Database.Database {
+  const db = getSharedDb();
+  if (!projectTablesInit) {
+    // Marcar ANTES (misma razón que en lib/db.ts: protege de reentrada).
+    projectTablesInit = true;
+    initProjectTables(db);
+  }
+  return db;
+}
 
-function getDb() {
-  if (!db) {
-    db = new Database(DB_PATH);
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    db.exec(`
+function initProjectTables(db: Database.Database) {
+  db.exec(`
       CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
@@ -32,10 +37,8 @@ function getDb() {
       CREATE INDEX IF NOT EXISTS idx_project_chats_chat ON project_chats(chat_id);
     `);
 
-    try { db.exec("ALTER TABLE project_chats ADD COLUMN chat_title TEXT DEFAULT ''"); } catch {}
-    try { db.exec("UPDATE project_chats SET chat_title = (SELECT title FROM chats WHERE id = chat_id) WHERE chat_title = ''"); } catch {}
-  }
-  return db;
+  try { db.exec("ALTER TABLE project_chats ADD COLUMN chat_title TEXT DEFAULT ''"); } catch {}
+  try { db.exec("UPDATE project_chats SET chat_title = (SELECT title FROM chats WHERE id = chat_id) WHERE chat_title = ''"); } catch {}
 }
 
 export function getProjectsByUser(userId: string, searchQuery?: string) {
@@ -57,7 +60,7 @@ export function getProjectsByUser(userId: string, searchQuery?: string) {
 }
 
 export function getProjectById(id: string) {
-  return getDb().prepare("SELECT * FROM projects WHERE id = ?").get(id) as any;
+  return getDb().prepare("SELECT * FROM projects WHERE id = ?").get(id) as ProjectRow;
 }
 
 export function createProject(userId: string, name: string, instructions: string) {
@@ -71,7 +74,7 @@ export function createProject(userId: string, name: string, instructions: string
 
 export function updateProject(id: string, userId: string, data: { name?: string; instructions?: string }) {
   const sets: string[] = [];
-  const params: any[] = [];
+  const params: unknown[] = [];
   if (data.name !== undefined) { sets.push("name = ?"); params.push(data.name); }
   if (data.instructions !== undefined) { sets.push("instructions = ?"); params.push(data.instructions); }
   if (sets.length === 0) return;
@@ -90,7 +93,7 @@ export function addChatToProject(projectId: string, chatId: string) {
   const d = getDb();
   const exists = d.prepare("SELECT * FROM project_chats WHERE project_id = ? AND chat_id = ?").get(projectId, chatId);
   if (exists) return;
-  const chat = d.prepare("SELECT title FROM chats WHERE id = ?").get(chatId) as any;
+  const chat = d.prepare("SELECT title FROM chats WHERE id = ?").get(chatId) as { title: string } | undefined;
   d.prepare("INSERT INTO project_chats (project_id, chat_id, chat_title) VALUES (?, ?, ?)").run(projectId, chatId, chat?.title || "");
 }
 
@@ -106,15 +109,15 @@ export function getChatsByProject(projectId: string) {
   const d = getDb();
   const row = d.prepare(`
     SELECT p.name as project_name FROM projects p WHERE p.id = ?
-  `).get(projectId) as any;
+  `).get(projectId) as { project_name: string } | undefined;
   const projectName = row?.project_name || "";
   const rows = d.prepare(`
     SELECT c.* FROM chats c
     JOIN project_chats pc ON c.id = pc.chat_id
     WHERE pc.project_id = ?
     ORDER BY pc.added_at DESC
-  `).all(projectId) as any[];
-  return rows.map((row: any) => ({
+  `).all(projectId) as ChatRow[];
+  return rows.map((row) => ({
     id: row.id,
     title: row.title,
     user_id: row.user_id,
@@ -139,8 +142,8 @@ export function getChatsSinProyecto(userId: string) {
     SELECT c.* FROM chats c
     WHERE c.user_id = ? AND c.id NOT IN (SELECT chat_id FROM project_chats)
     ORDER BY c.updated_at DESC
-  `).all(userId) as any[];
-  return rows.map((row: any) => ({
+  `).all(userId) as ChatRow[];
+  return rows.map((row) => ({
     id: row.id,
     title: row.title,
     messages: [],

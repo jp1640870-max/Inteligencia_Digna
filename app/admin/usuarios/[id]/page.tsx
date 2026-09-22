@@ -3,7 +3,7 @@
 import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, MessageSquare, FolderKanban, Calendar, Mail, Trash2, Key, Eye, EyeOff, User, Shield } from "lucide-react";
+import { ArrowLeft, MessageSquare, FolderKanban, Calendar, Mail, Trash2, Key, Eye, EyeOff } from "lucide-react";
 import { useAuthStore } from "@/lib/stores/auth-store";
 
 type UserDetail = {

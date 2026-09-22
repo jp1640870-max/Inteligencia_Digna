@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { RefreshCw, Search, Save, RotateCcw } from "lucide-react";
+import { RefreshCw, Search, Save } from "lucide-react";
 import { useAuthStore } from "@/lib/stores/auth-store";
 
 type ConfigItem = {
@@ -46,7 +46,13 @@ export default function AdminConfig() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { loadConfig(); }, [loadConfig]);
+  // Fetch inicial diferido a una macrotarea: evita setState síncrono dentro
+  // del efecto (react-hooks/set-state-in-effect) sin cambiar comportamiento.
+  // TODO(Fase 2): migrar a fetching dirigido por eventos/Suspense.
+  useEffect(() => {
+    const id = setTimeout(() => { void loadConfig(); }, 0);
+    return () => clearTimeout(id);
+  }, [loadConfig]);
 
   const handleSave = async (key: string) => {
     setSaving(key);

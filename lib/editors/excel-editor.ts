@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { Readable } from "stream";
 import type { CellEdit, RowInsertEdit, ColInsertEdit, RowDeleteEdit, ColDeleteEdit } from "@/types";
 
 export type ExcelStructure = {
@@ -10,9 +11,30 @@ export type ExcelStructure = {
   }[];
 };
 
+/** Convierte letras de columna ("A", "Z", "AA", "AZ"...) a índice 1-based. */
+export function colLettersToIndex(letters: string): number {
+  let index = 0;
+  for (const ch of letters.toUpperCase()) {
+    index = index * 26 + (ch.charCodeAt(0) - 64);
+  }
+  return index;
+}
+
+/** Convierte un índice 1-based a letras de columna ("A", "Z", "AA"...). */
+export function colIndexToLetters(index: number): string {
+  let letters = "";
+  let n = index;
+  while (n > 0) {
+    const remainder = (n - 1) % 26;
+    letters = String.fromCharCode(65 + remainder) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters;
+}
+
 export async function readExcelStructure(buffer: Buffer): Promise<ExcelStructure> {
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(buffer as any);
+  await workbook.xlsx.read(Readable.from([buffer]));
 
   const structure: ExcelStructure = { sheets: [] };
 
@@ -62,10 +84,10 @@ export async function readExcelStructure(buffer: Buffer): Promise<ExcelStructure
 
 export async function applyExcelEdits(
   buffer: Buffer,
-  instructions: EditInstruction[]
+  instructions: ExcelEditInstruction[]
 ): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(buffer as any);
+  await workbook.xlsx.read(Readable.from([buffer]));
 
   for (const instruction of instructions) {
     const sheetName = instruction.sheet || workbook.worksheets[0]?.name;
@@ -92,9 +114,7 @@ export async function applyExcelEdits(
 
       case "insertCol": {
         const edit = instruction as ColInsertEdit & { type: "insertCol" };
-        const colLetter = edit.afterCol.toUpperCase();
-        const colIndex = colLetter.charCodeAt(0) - 64;
-        const colName = String.fromCharCode(64 + colIndex + 1);
+        const colIndex = colLettersToIndex(edit.afterCol);
         sheet.spliceColumns(colIndex + 1, 0, [edit.header, ...edit.values]);
         break;
       }
@@ -107,7 +127,7 @@ export async function applyExcelEdits(
 
       case "deleteCol": {
         const edit = instruction as ColDeleteEdit & { type: "deleteCol" };
-        const colIndex = edit.col.toUpperCase().charCodeAt(0) - 64;
+        const colIndex = colLettersToIndex(edit.col);
         sheet.spliceColumns(colIndex, 1);
         break;
       }
@@ -118,4 +138,4 @@ export async function applyExcelEdits(
   return Buffer.from(bufferOut);
 }
 
-type EditInstruction = { type: string; sheet?: string } & Record<string, unknown>;
+export type ExcelEditInstruction = { type: string; sheet?: string } & Record<string, unknown>;

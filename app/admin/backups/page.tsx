@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { RefreshCw, Download, HardDrive, Calendar, Database, Shield } from "lucide-react";
+import { RefreshCw, HardDrive, Database } from "lucide-react";
 import { useAuthStore } from "@/lib/stores/auth-store";
 
 type Backup = {
@@ -32,7 +32,13 @@ export default function AdminBackups() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { loadBackups(); }, [loadBackups]);
+  // Fetch inicial diferido a una macrotarea: evita setState síncrono dentro
+  // del efecto (react-hooks/set-state-in-effect) sin cambiar comportamiento.
+  // TODO(Fase 2): migrar a fetching dirigido por eventos/Suspense.
+  useEffect(() => {
+    const id = setTimeout(() => { void loadBackups(); }, 0);
+    return () => clearTimeout(id);
+  }, [loadBackups]);
 
   const handleCreateBackup = async () => {
     if (!canCreate) return;

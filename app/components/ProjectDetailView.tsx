@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Folder, Plus, Trash2, MessageSquare, X, ArrowLeft, Save } from "lucide-react";
 import type { Chat, Project } from "@/types";
 
@@ -10,13 +10,12 @@ type ProyectoConChats = Project & {
 
 type Props = {
   projectId: string;
-  darkMode: boolean;
   onBack: () => void;
   onOpenChat: (chat: Chat, projectId: string) => void;
   onProjectChanged: () => void;
 };
 
-export default function ProjectDetailView({ projectId, darkMode, onBack, onOpenChat, onProjectChanged }: Props) {
+export default function ProjectDetailView({ projectId, onBack, onOpenChat, onProjectChanged }: Props) {
   const [project, setProject] = useState<ProyectoConChats | null>(null);
   const [loading, setLoading] = useState(true);
   const [editingName, setEditingName] = useState(false);
@@ -30,11 +29,7 @@ export default function ProjectDetailView({ projectId, darkMode, onBack, onOpenC
   const [newChatTitle, setNewChatTitle] = useState("");
   const [deleteChatTarget, setDeleteChatTarget] = useState<Chat | null>(null);
 
-  useEffect(() => {
-    loadProject();
-  }, [projectId]);
-
-  const loadProject = async () => {
+  const loadProject = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch(`/api/projects/${projectId}`);
@@ -46,7 +41,15 @@ export default function ProjectDetailView({ projectId, darkMode, onBack, onOpenC
       }
     } catch {}
     setLoading(false);
-  };
+  }, [projectId]);
+
+  // Fetch inicial diferido a una macrotarea: evita setState síncrono dentro
+  // del efecto (react-hooks/set-state-in-effect) sin cambiar comportamiento.
+  // TODO(Fase 2): migrar a fetching dirigido por eventos/Suspense.
+  useEffect(() => {
+    const id = setTimeout(() => { void loadProject(); }, 0);
+    return () => clearTimeout(id);
+  }, [loadProject]);
 
   const handleRename = async () => {
     if (!editName.trim() || !project) return;
@@ -140,11 +143,6 @@ export default function ProjectDetailView({ projectId, darkMode, onBack, onOpenC
       onProjectChanged();
       onOpenChat({ id: chat.id, title: chat.title, messages: [] } as Chat, project.id);
     }
-  };
-
-  const c = {
-    border: darkMode ? "border-[#202938]" : "border-gray-300",
-    textMuted: darkMode ? "text-gray-400" : "text-gray-500",
   };
 
   if (loading) {
@@ -290,7 +288,7 @@ export default function ProjectDetailView({ projectId, darkMode, onBack, onOpenC
           <div className="bg-[#121824] border border-[#202938] rounded-2xl p-6 w-96" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-semibold mb-2 text-white">Eliminar proyecto</h3>
             <p className="text-sm text-gray-400 mb-4">
-              ¿Estás seguro de eliminar <strong>"{project.name}"</strong>? Los chats asociados volverán a estar disponibles en la lista general.
+              ¿Estás seguro de eliminar <strong>&quot;{project.name}&quot;</strong>? Los chats asociados volverán a estar disponibles en la lista general.
             </p>
             <div className="space-y-2">
               <button
@@ -314,7 +312,7 @@ export default function ProjectDetailView({ projectId, darkMode, onBack, onOpenC
       {deleteChatTarget && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setDeleteChatTarget(null)}>
           <div className="bg-[#121824] border border-[#202938] rounded-2xl p-6 w-96" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold mb-2 text-white">"{deleteChatTarget.title}"</h3>
+            <h3 className="text-lg font-semibold mb-2 text-white">&quot;{deleteChatTarget.title}&quot;</h3>
             <p className="text-sm text-gray-400 mb-4">
               ¿Qué deseas hacer con este chat?
             </p>
@@ -373,7 +371,7 @@ export default function ProjectDetailView({ projectId, darkMode, onBack, onOpenC
       {showNewChat && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowNewChat(false)}>
           <div className="bg-[#121824] border border-[#202938] rounded-2xl p-6 w-96" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold mb-4 text-white">Nuevo chat en "{project.name}"</h3>
+            <h3 className="text-lg font-semibold mb-4 text-white">Nuevo chat en &quot;{project.name}&quot;</h3>
             <input
               type="text"
               placeholder="Título del chat (opcional)"

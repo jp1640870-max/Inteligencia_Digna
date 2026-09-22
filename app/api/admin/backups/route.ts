@@ -12,7 +12,7 @@ export async function GET() {
   return NextResponse.json({ backups });
 }
 
-export async function POST(req: Request) {
+export async function POST() {
   const { allowed, user } = await requireRole(["super_admin", "admin"]);
   if (!allowed || !user) {
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
@@ -23,8 +23,9 @@ export async function POST(req: Request) {
     const filename = await runBackup(backupId, user.id);
     logAudit(user.id, "backup", `Backup creado: ${filename}`);
     return NextResponse.json({ success: true, id: backupId, filename });
-  } catch (e: any) {
-    logAudit(user.id, "backup", `Backup FALLIDO: ${e.message}`);
-    return NextResponse.json({ error: e.message }, { status: 500 });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    logAudit(user.id, "backup", `Backup FALLIDO: ${message}`);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

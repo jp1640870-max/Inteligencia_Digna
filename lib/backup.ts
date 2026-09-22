@@ -1,23 +1,21 @@
 import fs from "fs";
 import path from "path";
 import { createBackup, updateBackupStatus } from "@/lib/db";
+import { getSharedDb } from "@/lib/db-connection";
 
 export function runBackup(backupId: string, createdBy: string): Promise<string> {
   return new Promise((resolve, reject) => {
     try {
-      const Database = require("better-sqlite3");
-      const dbPathLocal = path.join(process.cwd(), "data", "app.db");
       const backupDir = path.join(process.cwd(), "data", "backups");
+      const dbPathLocal = path.join(process.cwd(), "data", "app.db");
       if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
 
       const dateStr = new Date().toISOString().replace(/[:.]/g, "-");
       const filename = `backup-${dateStr}.db`;
       const destPath = path.join(backupDir, filename);
 
-      // WAL checkpoint primero
-      const db = new Database(dbPathLocal);
-      db.pragma("wal_checkpoint(TRUNCATE)");
-      db.close();
+      // WAL checkpoint primero, sobre la conexión compartida
+      getSharedDb().pragma("wal_checkpoint(TRUNCATE)");
 
       // Copiar archivo
       fs.copyFileSync(dbPathLocal, destPath);

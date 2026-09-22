@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
@@ -55,7 +56,7 @@ export default function LoginPage() {
     <main className="h-screen flex items-center justify-center bg-[#030812] text-white">
       <div className="w-full max-w-sm bg-[#0d131d] p-8 rounded-2xl border border-[#202938]">
         <div className="text-center mb-8">
-          <img src="/logo.png" className="w-16 h-16 mx-auto" />
+          <Image src="/logo.png" className="w-16 h-16 mx-auto" alt="Inteligencia Digna" width={64} height={64} />
           <h1 className="text-2xl font-bold text-green-400 mt-4">
             Inteligencia Digna
           </h1>

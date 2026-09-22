@@ -4,7 +4,6 @@ import { useState } from "react";
 import { Folder } from "lucide-react";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { useProjectStore } from "@/lib/stores/project-store";
-import { useChatStore } from "@/lib/stores/chat-store";
 
 export default function AddToProjectModal() {
   const showAddToProjectChatId = useUIStore((s) => s.showAddToProjectChatId);
@@ -12,18 +11,12 @@ export default function AddToProjectModal() {
   const projects = useProjectStore((s) => s.projects);
   const addChatToProject = useProjectStore((s) => s.addChatToProject);
   const createProjectAndAddChat = useProjectStore((s) => s.createProjectAndAddChat);
-  const projectChats = useProjectStore((s) => s.projectChats);
-  const chats = useChatStore((s) => s.chats);
 
   const [newProjectName, setNewProjectName] = useState("");
 
   if (!showAddToProjectChatId) return null;
 
   const chatId = showAddToProjectChatId;
-  const projectChatIds = new Set(
-    (projectChats[chatId] || []).map((c) => c.id)
-  );
-  const available = chats.filter((c) => !projectChatIds.has(c.id));
 
   const handleCreateAndAdd = async () => {
     if (!newProjectName.trim()) return;

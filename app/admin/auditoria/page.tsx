@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { RefreshCw, Search, Filter, Calendar } from "lucide-react";
+import { RefreshCw, Search } from "lucide-react";
 
 type AuditEntry = {
   id: number;
@@ -45,16 +45,22 @@ export default function AdminAuditoria() {
       if (filterAction) params.set("action", filterAction);
       const res = await fetch(`/api/admin/audit?${params}`);
       if (res.ok) {
-        const data = await res.json();
-        setLogs(data.logs);
-        setTotal(data.total);
-        if (data.actions) setActions(data.actions.map((a: any) => a.action));
+        const data: { logs?: AuditEntry[]; total?: number; actions?: Array<{ action: string }> } = await res.json();
+        setLogs(data.logs ?? []);
+        setTotal(data.total ?? 0);
+        if (data.actions) setActions(data.actions.map((a) => a.action));
       }
     } catch {}
     setLoading(false);
   }, [page, filterAction]);
 
-  useEffect(() => { loadLogs(); }, [loadLogs]);
+  // Fetch inicial diferido a una macrotarea: evita setState síncrono dentro
+  // del efecto (react-hooks/set-state-in-effect) sin cambiar comportamiento.
+  // TODO(Fase 2): migrar a fetching dirigido por eventos/Suspense.
+  useEffect(() => {
+    const id = setTimeout(() => { void loadLogs(); }, 0);
+    return () => clearTimeout(id);
+  }, [loadLogs]);
 
   const filtered = search
     ? logs.filter((l) =>

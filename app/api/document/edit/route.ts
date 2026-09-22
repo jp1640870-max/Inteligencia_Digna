@@ -14,7 +14,6 @@ export async function POST(req: Request) {
     const form = await req.formData();
     const file = form.get("file") as File | null;
     const instruction = (form.get("instruction") as string) || "";
-    const chatId = form.get("chatId") as string | null;
 
     if (!file) {
       return NextResponse.json({ error: "No se recibió ningún archivo" }, { status: 400 });
