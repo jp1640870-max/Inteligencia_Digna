@@ -6,7 +6,7 @@
 
 const REQUIRED_VARS = [
   "JWT_SECRET",
-  "OLLAMA_URL",
+  "SGLANG_URL",
   "TEXT_MODEL",
 ] as const;
 
@@ -15,6 +15,10 @@ const OPTIONAL_VARS = [
   "GOOGLE_CLIENT_SECRET",
   "NEXTAUTH_URL",
   "SEARXNG_URL",
+  "SGLANG_HEARTS_URL",
+  "HEARTS_MODEL",
+  "SGLANG_EMBEDDINGS_URL",
+  "EMBEDDING_MODEL",
 ] as const;
 
 type EnvVars = Record<string, string>;

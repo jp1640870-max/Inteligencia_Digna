@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 import { networkInterfaces } from "os";
 
 // ─── Validación rápida de entorno en startup ───
-const REQUIRED = ["JWT_SECRET", "OLLAMA_URL", "TEXT_MODEL"] as const;
+const REQUIRED = ["JWT_SECRET", "SGLANG_URL", "TEXT_MODEL"] as const;
 const missing = REQUIRED.filter((key) => !process.env[key]);
 
 if (missing.length > 0 && process.env.NEXT_PHASE !== "phase-production-build") {

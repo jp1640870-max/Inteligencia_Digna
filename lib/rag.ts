@@ -1,16 +1,10 @@
 import { storeChunk, getChunksByChat, deleteChunksByDocument } from "@/lib/db";
-import { env } from "@/lib/env";
+import { sglangEmbedding } from "@/lib/sglang";
 
-const OLLAMA_URL = env.OLLAMA_URL;
-const EMBEDDING_MODEL = "bge-m3:latest";
 const CHUNK_SIZE = 500;
 const CHUNK_OVERLAP = 50;
 const TOP_K = 3;
 const SIMILARITY_THRESHOLD = 0.5;
-
-type EmbeddingResponse = {
-  embedding: number[];
-};
 
 export function chunkDocument(text: string, maxSize = CHUNK_SIZE, overlap = CHUNK_OVERLAP): string[] {
   if (!text || text.length === 0) return [];
@@ -40,28 +34,7 @@ export function chunkDocument(text: string, maxSize = CHUNK_SIZE, overlap = CHUN
 }
 
 export async function generateEmbedding(text: string): Promise<number[]> {
-  try {
-    const res = await fetch(`${OLLAMA_URL}/api/embeddings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: EMBEDDING_MODEL,
-        prompt: text,
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
-
-    if (!res.ok) {
-      console.log(`🧠 Embedding error: ${res.status}`);
-      return [];
-    }
-
-    const data: EmbeddingResponse = await res.json();
-    return data.embedding || [];
-  } catch (e) {
-    console.log(`🧠 Embedding error: ${e instanceof Error ? e.message : String(e)}`);
-    return [];
-  }
+  return sglangEmbedding(text);
 }
 
 export function cosineSimilarity(a: number[], b: number[]): number {

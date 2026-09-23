@@ -2,11 +2,10 @@ import type { EditFormat, EditResult, ParagraphEdit } from "@/types";
 import { readExcelStructure, applyExcelEdits } from "@/lib/editors/excel-editor";
 import type { ExcelEditInstruction } from "@/lib/editors/excel-editor";
 import { readWordStructure, applyWordEdits } from "@/lib/editors/word-editor";
-import { ollamaChat } from "@/lib/ollama";
-import type { OllamaMessage } from "@/lib/ollama";
-import { env } from "@/lib/env";
+import { sglangChat, getHeartsModel } from "@/lib/sglang";
+import type { SGLangMessage } from "@/lib/sglang";
 
-const MODEL = env.TEXT_MODEL;
+const MODEL = getHeartsModel();
 
 function getExtension(filename: string): string {
   return filename.split(".").pop()?.toLowerCase() || "";
@@ -117,12 +116,12 @@ async function getEditInstructions(
   const systemPrompt = buildSystemPrompt(format, schemaType);
   const userPrompt = buildUserPrompt(format, structureJson, instruction);
 
-  const messages: OllamaMessage[] = [
+  const messages: SGLangMessage[] = [
     { role: "system", content: systemPrompt },
     { role: "user", content: userPrompt },
   ];
 
-  const response = await ollamaChat(MODEL, messages);
+  const response = await sglangChat(MODEL, messages);
   const cleaned = extractJson(response);
   const parsed = JSON.parse(cleaned);
 

@@ -2,7 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { getChatById, getMessagesByChat, truncateMessagesToCount, addMessage } from "@/lib/db";
-import { ollamaChatStream } from "@/lib/ollama";
+import { sglangChatStream } from "@/lib/sglang";
 import { buildMessages } from "@/lib/prompt-builder";
 import { getUserIdFromRequest } from "@/lib/auth";
 import { retrieveKb, getKbScopeIdsForUser, formatKbContext, toKbSources } from "@/lib/kb";
@@ -53,7 +53,7 @@ export async function POST(req: Request) {
       }
     } catch {}
 
-    const ollamaMessages = buildMessages(remainingMessages, undefined, undefined, undefined, undefined, undefined, kbContext || undefined);
+    const chatMessages = buildMessages(remainingMessages, undefined, undefined, undefined, undefined, undefined, kbContext || undefined);
 
     const encoder = new TextEncoder();
     const { readable, writable } = new TransformStream();
@@ -61,9 +61,9 @@ export async function POST(req: Request) {
 
     let fullReply = "";
 
-    const streamOllama = async () => {
+    const streamSglang = async () => {
       try {
-        const generator = ollamaChatStream(model, ollamaMessages);
+        const generator = sglangChatStream(model, chatMessages);
         for await (const chunk of generator) {
           fullReply += chunk;
           await writer.write(encoder.encode(chunk));
@@ -78,7 +78,7 @@ export async function POST(req: Request) {
         } else {
           try {
             fullReply = "";
-            const retryGen = ollamaChatStream(model, ollamaMessages);
+            const retryGen = sglangChatStream(model, chatMessages);
             for await (const chunk of retryGen) {
               fullReply += chunk;
               await writer.write(encoder.encode(chunk));
@@ -101,7 +101,7 @@ export async function POST(req: Request) {
       }
     };
 
-    streamOllama();
+    streamSglang();
 
     return new Response(readable, {
       headers: { "Content-Type": "text/plain; charset=utf-8" },

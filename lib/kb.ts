@@ -1,7 +1,7 @@
 /**
  * Kernel de la Knowledge Base compartida.
  *
- * Reutiliza el pipeline RAG existente (chunking, embeddings vía Ollama,
+ * Reutiliza el pipeline RAG existente (chunking, embeddings vía SGLang,
  * similitud coseno) pero opera sobre archivos de KB (`kb_files`/`kb_chunks`)
  * en lugar de documentos de chat/proyecto (`rag_chunks`).
  */
@@ -30,7 +30,7 @@ const SIMILARITY_THRESHOLD = 0.5;
 const TOP_K = 5;
 /** Tope de chunks por archivo: salvaguarda contra documentos monstruosos. */
 const MAX_CHUNKS_PER_FILE = 2000;
-/** Concurrencia de embeddings (evita saturar Ollama al indexar archivos grandes). */
+/** Concurrencia de embeddings (evita saturar SGLang al indexar archivos grandes). */
 const EMBEDDING_CONCURRENCY = 4;
 
 type IndexResult = {

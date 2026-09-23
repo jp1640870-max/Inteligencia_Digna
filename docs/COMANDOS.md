@@ -78,12 +78,12 @@ de la inicialización: si la cadena `getDb → initTables → init*` se rompe, e
 
 ## Escalera de confianza
 
-| Check | Qué detecta |
-|---|---|
-| `lint` | estilo + bugs obvios |
-| `tsc --noEmit` | tipos / errores de escritura a nivel de compilación |
-| `test` | comportamiento correcto de las funciones |
-| `build` | compilación completa de producción |
+| Check          | Qué detecta                                          |
+|----------------|------------------------------------------------------|
+| `lint`         | estilo + bugs obvios                                 |
+| `tsc --noEmit` | tipos / errores de escritura a nivel de compilación  |
+| `test` | comportamiento correcto de las funciones                     |
+| `build` | compilación completa de producción                          |
 | `dev` en vivo | lo único que toca la base de datos y las rutas reales |
 
 Orden recomendado antes de dar algo por terminado:
@@ -94,6 +94,38 @@ npx tsc --noEmit
 npm test
 npm run build
 ```
+
+## Motores de IA (SGLang, protocolo OpenAI-compatible)
+
+La app usa **cliente único SGLang** (`lib/sglang.ts`). Ya no existe `lib/ollama.ts`
+ni la variable `OLLAMA_URL`. Los 3 engines viven en `10.0.201.10`:
+
+| Motor               | Modelo (`served-model-name`) | Variable URL                       | Valor |
+|---------------------|------------------------------|------------------------------------|-------|
+| Chat "fast"         | `qwen3.6-35b-a3b` (MoE)      | `SGLANG_URL` (required)            | `http://10.0.201.10:8005/v1` |
+| Hearts "deep-think" | `qwen3.8-27b` (dense)        | `SGLANG_HEARTS_URL` (opcional)     | `http://10.0.201.10:8006/v1` |
+| Embeddings RAG      | `bge-m3`                     | `SGLANG_EMBEDDINGS_URL` (opcional) | `http://10.0.201.10:8007/v1` |
+
+Variables de modelo en `.env.local` (ver `lib/env.ts`):
+
+| Variable | Required | Default si falta | Uso |
+|---|---|---|---|
+| `SGLANG_URL` | sí | — | chat + fallback de todo |
+| `TEXT_MODEL` | sí | — | modelo del chat (`qwen3.6-35b-a3b`) |
+| `HEARTS_MODEL` | no | `TEXT_MODEL` | hearts y edición de documentos (`qwen3.8-27b`) |
+| `EMBEDDING_MODEL` | no | `bge-m3` | RAG (`generateEmbedding`) |
+
+Notas de la migración Ollama → SGLang:
+- El stream cambió de **NDJSON por líneas** (`/api/chat`) a **SSE `data:`**
+  (`/v1/chat/completions` con `stream: true`, corte en `[DONE]`).
+- `num_predict` (legado) se traduce a `max_tokens` dentro de `lib/sglang.ts`.
+- Las imágenes se envían como `content parts` OpenAI (`image_url`); solo funcionan
+  si el engine sirve un modelo con visión.
+- El enrutamiento por modelo es automático: si el modelo pedido es `HEARTS_MODEL`
+  y existe `SGLANG_HEARTS_URL`, se usa el engine de hearts; si no, el de chat.
+- El health check (`/api/admin/health`) consulta `GET /v1/models` en vez de `/api/tags`.
+- Smoke en vivo (opcional, requiere DGX alcanzable):
+  `SMOKE_LIVE=1 SGLANG_URL=http://10.0.201.10:8005 SGLANG_EMBEDDINGS_URL=http://10.0.201.10:8007 npm test`
 
 ## Notas
 

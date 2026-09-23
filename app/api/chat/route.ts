@@ -10,7 +10,7 @@ import {
   updateChatTitle,
   truncateMessagesToCount,
 } from "@/lib/db";
-import { ollamaChat, ollamaChatStream, type OllamaMessage } from "@/lib/ollama";
+import { sglangChat, sglangChatStream, type SGLangMessage } from "@/lib/sglang";
 import { buildMessages } from "@/lib/prompt-builder";
 import { getUserIdFromRequest } from "@/lib/auth";
 import { getProjectById, syncProjectChatTitle } from "@/lib/projects";
@@ -120,7 +120,7 @@ REGLAS:
 - Para Word/PDF: incluye todo el contenido solicitado.
 - El filename debe terminar en .${format}.`;
 
-  const jsonMessages: OllamaMessage[] = [
+  const jsonMessages: SGLangMessage[] = [
     { role: "system", content: "Eres un generador de documentos. Devuelve ÚNICAMENTE JSON válido, sin texto adicional, sin markdown, sin explicaciones." },
     { role: "user", content: jsonPrompt },
   ];
@@ -133,8 +133,8 @@ REGLAS:
   console.log(`📄 Generando ${formatLabel} (llamadas paralelas)...`);
 
   const [jsonResponse, textResponse] = await Promise.all([
-    ollamaChat(model, jsonMessages),
-    ollamaChat(model, normalMessages),
+    sglangChat(model, jsonMessages),
+    sglangChat(model, normalMessages),
   ]);
 
   const cleaned = extractJson(jsonResponse);
@@ -175,7 +175,7 @@ REGLAS:
 
 async function doStream(
   model: string,
-  messages: OllamaMessage[],
+  messages: SGLangMessage[],
   writer: WritableStreamDefaultWriter<Uint8Array>,
   encoder: TextEncoder,
   chatId: string,
@@ -187,8 +187,8 @@ async function doStream(
   let cont = 0;
 
   try {
-    console.log("🤖 Ollama streaming: modelo=", model, "| mensajes:", messages.length);
-    const generator = ollamaChatStream(model, messages);
+    console.log("🤖 SGLang streaming: modelo=", model, "| mensajes:", messages.length);
+    const generator = sglangChatStream(model, messages);
     for await (const chunk of generator) {
       if (cont === 0) console.log(`🤖 Primer chunk en ${Date.now() - startTime}ms: "${chunk.slice(0, 40)}..."`);
       cont++;
@@ -210,7 +210,7 @@ async function doStream(
       let retried = false;
       try {
         fullReply = "";
-        const retryGen = ollamaChatStream(model, messages);
+        const retryGen = sglangChatStream(model, messages);
         let cont2 = 0;
         for await (const chunk of retryGen) {
           if (cont2 === 0) retried = true;
@@ -421,7 +421,7 @@ ${project.instructions}`;
       }
       try {
         console.log("🌐 Decision call (num_predict=20)...");
-        const decision = await ollamaChat(model, decisionMessages, { num_predict: 20 });
+        const decision = await sglangChat(model, decisionMessages, { max_tokens: 20 });
         console.log(`🌐 Decisión: "${decision.slice(0, 100)}"`);
         const searchMatch = decision.length > 3 ? decision.match(/^\[SEARCH:\s*(.+?)\s*\]/i) : null;
         if (searchMatch) {
@@ -435,7 +435,7 @@ ${project.instructions}`;
     }
 
     // Phase 2: Build final messages with search results (if any)
-    const ollamaMessages = buildMessages(
+    const chatMessages = buildMessages(
       history,
       message,
       filesContent || undefined,
@@ -445,8 +445,8 @@ ${project.instructions}`;
       kbContext || undefined,
     );
 
-    if (images.length > 0 && ollamaMessages.length > 0) {
-      const lastMsg = ollamaMessages[ollamaMessages.length - 1];
+    if (images.length > 0 && chatMessages.length > 0) {
+      const lastMsg = chatMessages[chatMessages.length - 1];
       lastMsg.images = images;
     }
 
@@ -454,7 +454,7 @@ ${project.instructions}`;
     const { readable, writable } = new TransformStream();
     const writer = writable.getWriter();
 
-    doStream(model, ollamaMessages, writer, encoder, chatId, () => {}, kbSources);
+    doStream(model, chatMessages, writer, encoder, chatId, () => {}, kbSources);
 
     // Wrap readable in an outer stream that appends sources at the end
     const bodyStream = new ReadableStream({

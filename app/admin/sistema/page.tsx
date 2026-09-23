@@ -17,14 +17,14 @@ type HealthResponse = {
 
 const CHECK_ICONS: Record<string, React.ReactNode> = {
   database: <Database size={18} />,
-  ollama: <Cpu size={18} />,
+  sglang: <Cpu size={18} />,
   memory: <HardDrive size={18} />,
   node: <Activity size={18} />,
 };
 
 const CHECK_LABELS: Record<string, string> = {
   database: "Base de Datos",
-  ollama: "Ollama (LLM)",
+  sglang: "SGLang (LLM)",
   memory: "Memoria del Servidor",
   node: "Node.js",
 };
@@ -183,8 +183,8 @@ export default function AdminSistema() {
             <p className="text-gray-300">16.2.9</p>
           </div>
           <div>
-            <p className="text-gray-500">Modelo LLM</p>
-            <p className="text-gray-300">Gemma 4 26B</p>
+            <p className="text-gray-500">Modelos LLM</p>
+            <p className="text-gray-300">Qwen3.6 35B-A3B (chat) / Qwen3.8 27B (hearts)</p>
           </div>
           <div>
             <p className="text-gray-500">Hardware</p>

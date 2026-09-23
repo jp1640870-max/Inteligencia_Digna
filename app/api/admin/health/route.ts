@@ -19,26 +19,27 @@ export async function GET() {
     checks.database = { status: "error", detail: String(e) };
   }
 
-  // 2. Ollama
+  // 2. SGLang (motores OpenAI-compatibles: chat, hearts, embeddings)
   try {
     const { env } = await import("@/lib/env");
     const start = Date.now();
-    const res = await fetch(`${env.OLLAMA_URL}/api/tags`, {
+    const base = String(env.SGLANG_URL).replace(/\/+$/, "").replace(/\/v1$/, "");
+    const res = await fetch(`${base}/v1/models`, {
       signal: AbortSignal.timeout(5000),
     });
     if (res.ok) {
-      const data: { models?: Array<{ name: string }> } = await res.json();
-      const models = (data.models || []).map((m) => m.name);
-      checks.ollama = {
+      const data: { data?: Array<{ id?: string }> } = await res.json();
+      const models = (data.data || []).map((m) => m.id || "").filter(Boolean);
+      checks.sglang = {
         status: "ok",
         latency: Date.now() - start,
         detail: models.join(", "),
       };
     } else {
-      checks.ollama = { status: "error", detail: `HTTP ${res.status}` };
+      checks.sglang = { status: "error", detail: `HTTP ${res.status}` };
     }
   } catch (e) {
-    checks.ollama = { status: "error", detail: String(e) };
+    checks.sglang = { status: "error", detail: String(e) };
   }
 
   // 3. System memory (solo server-side粗略)

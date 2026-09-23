@@ -14,7 +14,7 @@ type ConfigItem = {
 const CATEGORIES: Record<string, { label: string; keys: string[] }> = {
   general: { label: "Generales", keys: ["allow_registration", "allow_guest_access", "default_user_role", "maintenance_mode"] },
   limits: { label: "Límites", keys: ["max_chats_per_user", "max_file_size_mb", "max_knowledge_files_per_heart", "rate_limit_per_minute"] },
-  ollama: { label: "Ollama / Modelo", keys: ["ollama_context_length", "ollama_num_predict", "ollama_temperature"] },
+  sglang: { label: "SGLang / Modelo", keys: ["ollama_context_length", "ollama_num_predict", "ollama_temperature"] },
   features: { label: "Features", keys: ["heart_memory_enabled", "chat_summary_enabled"] },
 };
 

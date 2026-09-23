@@ -1,0 +1,106 @@
+IMPLEMENTACIÓN: MIGRACIÓN DEL CLIENTE A SGLANG (CLIENTE ÚNICO)
+==============================================================
+Fecha: 2026-09-23
+Decisión: cliente único SGLang (protocolo OpenAI-compatible). Sin adapter dual,
+sin fallback a Ollama en la app. Ollama en la DGX se conserva solo para los
+otros servicios que ya lo usan, no para esta app.
+
+QUÉ SE HIZO Y POR QUÉ
+---------------------
+1. La app hablaba protocolo Ollama (/api/chat con NDJSON por líneas y
+   /api/embeddings con campo "prompt"). SGLang habla protocolo OpenAI
+   (/v1/chat/completions con SSE "data:" y /v1/embeddings con campo "input").
+   Son incompatibles: no bastaba con cambiar la URL, hubo que reescribir
+   la capa de cliente.
+
+2. Se creó lib/sglang.ts como ÚNICO cliente de inferencia, con:
+   - sglangChat(model, messages, options): POST /v1/chat/completions
+     (stream:false), lee choices[0].message.content. Traduce la opción
+     legada num_predict a max_tokens para no romper callers existentes.
+   - sglangChatStream(model, messages): POST con stream:true, parsea SSE
+     línea por línea (solo líneas "data:"), emite choices[0].delta.content,
+     corta en [DONE] o en finish_reason, y tolera JSON partido entre dos
+     lecturas de red (buffer). Mantiene los mismos mensajes de error
+     honestos y el timeout de 60s que tenía el cliente Ollama.
+   - sglangEmbedding(text): POST /v1/embeddings, lee data[0].embedding,
+     devuelve [] si falla (mismo contrato que antes).
+   - Enrutamiento automático por modelo: si el modelo pedido es HEARTS_MODEL
+     y existe SGLANG_HEARTS_URL, usa el engine de hearts; si no, el de chat.
+   - normalizeBase: acepta URLs con o sin sufijo "/v1" sin duplicar el path.
+   - Vision: los images[] se convierten a content parts OpenAI (image_url
+     con data URL). Solo funcionan si el engine sirve un modelo con visión.
+
+3. Reparto de modelos (contrato con la DGX, ver tabla en docs/COMANDOS.md):
+   - Chat "fast" ......... qwen3.6-35b-a3b (MoE) .... puerto 8005 (SGLANG_URL)
+   - Hearts "deep-think" . qwen3.8-27b (dense) ..... puerto 8006 (SGLANG_HEARTS_URL)
+   - Embeddings RAG ..... bge-m3 ................. puerto 8007 (SGLANG_EMBEDDINGS_URL)
+
+4. La edición de documentos (lib/document-editor.ts) usa el modelo de hearts
+   (deep-think) vía getHeartsModel(); el chat y la generación de documentos
+   usan TEXT_MODEL (chat fast).
+
+5. El health check (/api/admin/health) ahora consulta GET /v1/models del
+   engine de chat en vez de /api/tags de Ollama, y la llave del check se
+   renombró de "ollama" a "sglang" (con su etiqueta en el dashboard).
+
+6. Las llaves de config en base de datos (ollama_context_length,
+   ollama_num_predict, ollama_temperature en lib/db.ts) NO se tocaron:
+   nadie las lee en código (verificado por búsqueda) y lib/db.ts está
+   congelado. Solo cambió la etiqueta visible en el admin
+   ("Ollama / Modelo" -> "SGLang / Modelo").
+
+ARCHIVOS CREADOS
+----------------
+- lib/sglang.ts ......................... cliente único SGLang (chat, stream SSE, embeddings, routing por modelo)
+- tests/sglang.test.ts .................. 10 tests unitarios con fetch mockeado (sin servidor real)
+- docs/IMPLEMENTACION-SGLANG.txt ........ este archivo
+
+ARCHIVOS MODIFICADOS
+--------------------
+- lib/env.ts ............................ REQUIRED: JWT_SECRET, SGLANG_URL, TEXT_MODEL (sale OLLAMA_URL);
+                                          OPTIONAL nuevas: SGLANG_HEARTS_URL, HEARTS_MODEL,
+                                          SGLANG_EMBEDDINGS_URL, EMBEDDING_MODEL
+- next.config.ts ........................ REQUIRED de arranque: OLLAMA_URL -> SGLANG_URL
+- lib/rag.ts ............................ generateEmbedding delega a sglangEmbedding (contrato intacto: Promise<number[]>)
+- lib/prompt-builder.ts ................. tipo OllamaMessage -> SGLangMessage (solo tipos, sin cambio de conducta)
+- lib/document-editor.ts ................ ollamaChat -> sglangChat; MODEL = getHeartsModel() (deep-think)
+- lib/kb.ts ............................. solo comentarios (Ollama -> SGLang), sin cambio de conducta
+- app/api/chat/route.ts ................. ollamaChat*/OllamaMessage -> sglangChat*/SGLangMessage;
+                                          decision call {num_predict:20} -> {max_tokens:20};
+                                          variable ollamaMessages -> chatMessages; logs "Ollama" -> "SGLang"
+- app/api/chat/regenerate/route.ts ...... mismo cambio de cliente; streamOllama -> streamSglang
+- app/api/admin/health/route.ts ......... check "ollama" (/api/tags) -> check "sglang" (GET /v1/models)
+- app/admin/sistema/page.tsx ............ llaves/etiquetas ollama -> sglang; "Modelo LLM: Gemma 4 26B"
+                                          -> "Modelos LLM: Qwen3.6 35B-A3B (chat) / Qwen3.8 27B (hearts)"
+- app/admin/configuracion/page.tsx ...... etiqueta "Ollama / Modelo" -> "SGLang / Modelo"
+                                          (las llaves de DB no cambian)
+- tests/.env.test ....................... OLLAMA_URL -> SGLANG_URL (valor ficticio igual)
+- tests/kb-smoke-live.test.ts ........... smoke en vivo reescrito a SGLang (/v1/embeddings con
+                                          campo "input" + test nuevo de /v1/chat/completions);
+                                          solo corre con SMOKE_LIVE=1 (nuevo ejemplo en el header)
+- .env.local ............................ bloque "Ollama / modelos" -> bloque "SGLang / modelos"
+                                          (SGLANG_URL/HEARTS/EMBEDDINGS + TEXT_MODEL=qwen3.6-35b-a3b,
+                                          HEARTS_MODEL=qwen3.8-27b, EMBEDDING_MODEL=bge-m3; secretos intactos)
+- docs/COMANDOS.md ...................... nueva sección "Motores de IA (SGLang...)": tabla de
+                                          engines/puertos, tabla de variables y notas de la migración
+
+ARCHIVOS ELIMINADOS
+-------------------
+- lib/ollama.ts ......................... cliente Ollama (reemplazado por lib/sglang.ts)
+
+VERIFICACIÓN (todo verde el 2026-09-23)
+---------------------------------------
+- npx tsc --noEmit ............ limpio (exit 0)
+- npm run lint ................ 0 problemas en todo el proyecto (exit 0)
+- npm test .................... 33/33 en verde (23 previos + 10 nuevos de tests/sglang.test.ts)
+- npm run build ............... compila OK (todas las rutas listadas, sin errores)
+- npm run smoke:db ............ SMOKE-DB-OK (DB fresca en /tmp)
+
+PENDIENTE (lado servidor DGX, otro agente)
+------------------------------------------
+- Instalar SGLang y levantar los 3 engines con los served-model-name exactos:
+  qwen3.6-35b-a3b (:8005), qwen3.8-27b (:8006), bge-m3 (:8007).
+- Validación en vivo contra la DGX (SMOKE_LIVE=1 ...) cuando los engines existan.
+- Instrucciones listas para pegar al agente de la DGX: pedidas por el usuario
+  en el chat (bloque "Rol / Contrato / Fases 0-5"); no se guardaron en el repo
+  (solo se entregaron en el chat).

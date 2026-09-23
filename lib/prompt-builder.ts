@@ -1,4 +1,4 @@
-import type { OllamaMessage } from "./ollama";
+import type { SGLangMessage } from "./sglang";
 
 // Se calcula por request (no a nivel de módulo) para no congelar la fecha
 // en procesos de larga duración.
@@ -61,7 +61,7 @@ export function buildMessages(
   searchResults?: string,
   ragContext?: string,
   kbContext?: string,
-): OllamaMessage[] {
+): SGLangMessage[] {
   const systemPrompt = projectContext
     ? `${getSystemPrompt()}
 
@@ -69,12 +69,12 @@ CONTEXTO DEL PROYECTO:
 ${projectContext}${DOC_NOTE}${WEB_SEARCH_NOTE}${KB_NOTE}`
     : `${getSystemPrompt()}${DOC_NOTE}${WEB_SEARCH_NOTE}${KB_NOTE}`;
 
-  const messages: OllamaMessage[] = [
+  const messages: SGLangMessage[] = [
     { role: "system", content: systemPrompt },
   ];
 
   for (const msg of history) {
-    const entry: OllamaMessage = {
+    const entry: SGLangMessage = {
       role: msg.role === "ai" ? "assistant" : "user",
       content: msg.text || "",
     };
