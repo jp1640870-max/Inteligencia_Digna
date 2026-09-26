@@ -13,7 +13,7 @@ export async function GET(
 
   const { id } = await context.params;
 
-  const project = getProjectById(id);
+  const project = await getProjectById(id);
   if (!project) {
     return NextResponse.json({ error: "Proyecto no existe" }, { status: 404 });
   }
@@ -21,7 +21,7 @@ export async function GET(
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   }
 
-  const chats = getChatsByProject(id);
+  const chats = await getChatsByProject(id);
   return NextResponse.json({ ...project, chats });
 }
 
@@ -35,7 +35,7 @@ export async function PATCH(
   }
 
   const { id } = await context.params;
-  const project = getProjectById(id);
+  const project = await getProjectById(id);
   if (!project) {
     return NextResponse.json({ error: "Proyecto no existe" }, { status: 404 });
   }
@@ -44,8 +44,8 @@ export async function PATCH(
   }
 
   const body = await req.json();
-  updateProject(id, userId, body);
-  const updated = getProjectById(id);
+  await updateProject(id, userId, body);
+  const updated = await getProjectById(id);
   return NextResponse.json(updated);
 }
 
@@ -60,7 +60,7 @@ export async function DELETE(
 
   const { id } = await context.params;
 
-  const project = getProjectById(id);
+  const project = await getProjectById(id);
   if (!project) {
     return NextResponse.json({ error: "Proyecto no existe" }, { status: 404 });
   }
@@ -68,7 +68,7 @@ export async function DELETE(
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   }
 
-  const deleted = deleteProject(id, userId);
+  const deleted = await deleteProject(id, userId);
 
   if (!deleted) {
     return NextResponse.json({ error: "No se pudo eliminar" }, { status: 400 });

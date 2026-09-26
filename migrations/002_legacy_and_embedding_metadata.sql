@@ -1,0 +1,6 @@
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS legacy_id BIGINT;
+CREATE UNIQUE INDEX IF NOT EXISTS messages_legacy_id_uidx ON messages (legacy_id) WHERE legacy_id IS NOT NULL;
+ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT 'bge-m3';
+ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS embedding_dimensions INTEGER NOT NULL DEFAULT 1024;
+ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT 'bge-m3';
+ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS embedding_dimensions INTEGER NOT NULL DEFAULT 1024;

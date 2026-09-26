@@ -1,0 +1,128 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-inteligencia_digna}
+      POSTGRES_USER: ${POSTGRES_USER:-inteligencia_digna}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD en .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  minio:
+    image: minio/minio:latest
+    profiles: ["local-storage"]
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?define MINIO_ROOT_USER en .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?define MINIO_ROOT_PASSWORD en .env}
+    ports:
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL_INTERNAL:?define DATABASE_URL_INTERNAL en .env}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT_INTERNAL:-http://minio:9000}
+      MINIO_HOST: minio
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+    command: ["sh", "-c", "npm run db:migrate && npm run db:seed"]
+    restart: "no"
+
+  storage-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["local-storage"]
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT_INTERNAL:-http://minio:9000}
+      MINIO_HOST: minio
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+    command: ["npm", "run", "storage:init"]
+    restart: "no"
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    profiles: ["db-tools"]
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:?define PGADMIN_EMAIL en .env}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?define PGADMIN_PASSWORD en .env}
+      PGADMIN_SETUP_EMAIL: ${PGADMIN_EMAIL:?define PGADMIN_EMAIL en .env}
+      PGADMIN_SETUP_PASSWORD: ${PGADMIN_PASSWORD:?define PGADMIN_PASSWORD en .env}
+      PGADMIN_SERVER_MODE: "1"
+      PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "True"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./deploy/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    ports:
+      - "127.0.0.1:${PGADMIN_PORT:-5050}:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL_INTERNAL:?define DATABASE_URL_INTERNAL en .env}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT_INTERNAL:-http://minio:9000}
+      MINIO_HOST: minio
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3000}:3000"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    command: ["npm", "run", "start", "--", "--hostname", "0.0.0.0", "--port", "3000"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  postgres_data:
+  minio_data:
+  pgadmin_data:

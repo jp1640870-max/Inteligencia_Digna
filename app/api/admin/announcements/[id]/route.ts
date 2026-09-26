@@ -11,7 +11,7 @@ export async function PATCH(
   const { id } = await params;
   const data = await req.json();
   delete data.id;
-  updateAnnouncement(id, data);
+  await updateAnnouncement(id, data);
   return NextResponse.json({ success: true });
 }
 
@@ -22,6 +22,6 @@ export async function DELETE(
   const { allowed } = await requireRole(["super_admin", "admin"]);
   if (!allowed) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   const { id } = await params;
-  deleteAnnouncement(id);
+  await deleteAnnouncement(id);
   return NextResponse.json({ success: true });
 }

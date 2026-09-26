@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUserByEmail, logAudit } from "@/lib/db";
-import { verifyPassword, signToken } from "@/lib/auth";
+import { verifyPassword, signToken, isUserRole } from "@/lib/auth";
 
 export async function POST(req: Request) {
   try {
@@ -13,7 +13,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const user = getUserByEmail(email);
+    const user = await getUserByEmail(email);
     if (!user || !user.password_hash) {
       return NextResponse.json(
         { error: "Credenciales inválidas" },
@@ -29,9 +29,12 @@ export async function POST(req: Request) {
     }
 
     const role = user.role || "user";
+    if (!isUserRole(role)) {
+      return NextResponse.json({ error: "Credenciales inválidas" }, { status: 401 });
+    }
     const token = signToken({ userId: user.id, email: user.email, role });
 
-    logAudit(user.id, "login", `Login exitoso: ${user.email}`, req.headers.get("x-forwarded-for") || "");
+    await logAudit(user.id, "login", `Login exitoso: ${user.email}`, req.headers.get("x-forwarded-for") || "");
 
     const response = NextResponse.json({
       token,

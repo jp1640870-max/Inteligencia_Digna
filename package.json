@@ -2,6 +2,9 @@
   "name": "mi-ia",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "dev": "node scripts/dev.js",
     "dev:next": "next dev --experimental-https",
@@ -9,10 +12,19 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test --env-file=tests/.env.test \"tests/*.test.ts\"",
-    "smoke:db": "tsx --env-file=tests/.env.test scripts/smoke-db.mjs"
+    "test": "NODE_ENV=test OLLAMA_URL=${OLLAMA_URL:-http://127.0.0.1:1} tsx --test --env-file=tests/.env.test \"tests/*.test.ts\"",
+    "smoke:db": "tsx scripts/db-smoke.ts",
+    "db:migrate": "tsx scripts/db-migrate.ts",
+    "db:seed": "tsx scripts/db-seed.ts",
+    "db:import": "tsx scripts/db-import-sqlite.ts",
+    "db:reindex": "tsx scripts/db-reindex-embeddings.ts",
+    "db:create-admin": "tsx scripts/seed.ts",
+    "storage:init": "tsx scripts/storage-init.ts",
+    "db:query": "tsx scripts/db-query.ts",
+    "db:reset-password": "node --env-file=.env.local scripts/reset-password.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1140.0",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.11.1",
     "docx": "^9.7.1",
@@ -24,6 +36,7 @@
     "next": "16.2.9",
     "pdf-lib": "^1.17.1",
     "pdf2json": "^4.0.3",
+    "pg": "^8.23.0",
     "pino": "^10.3.1",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -40,6 +53,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^26.6.2",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/react-syntax-highlighter": "^15.5.13",

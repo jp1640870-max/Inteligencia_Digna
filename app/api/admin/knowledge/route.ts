@@ -12,7 +12,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const category = searchParams.get("category") || undefined;
 
-  const entries = getKnowledgeEntries(category);
+  const entries = await getKnowledgeEntries(category);
   return NextResponse.json({ entries });
 }
 
@@ -29,7 +29,7 @@ export async function POST(req: Request) {
   }
 
   const id = uuidv4();
-  createKnowledgeEntry(id, title, content, category || "general", user.id);
+  await createKnowledgeEntry(id, title, content, category || "general", user.id);
 
   return NextResponse.json({ success: true, id });
 }

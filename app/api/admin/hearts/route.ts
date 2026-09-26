@@ -9,7 +9,7 @@ export async function GET() {
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   }
 
-  const hearts = getAllHearts();
+  const hearts = await getAllHearts();
   return NextResponse.json({ hearts });
 }
 
@@ -26,8 +26,8 @@ export async function POST(req: Request) {
   }
 
   const id = uuidv4();
-  createHeart(id, user.id, name, role, tone, instructions, limitations, temperature, tools, isPreset ? 1 : 0);
+  await createHeart(id, user.id, name, role, tone, instructions, limitations, temperature, tools, isPreset ? 1 : 0);
 
-  logAudit(user.id, "create_heart", `Heart creado: ${name}${isPreset ? " (preset)" : ""}`);
+  await logAudit(user.id, "create_heart", `Heart creado: ${name}${isPreset ? " (preset)" : ""}`);
   return NextResponse.json({ success: true, id });
 }

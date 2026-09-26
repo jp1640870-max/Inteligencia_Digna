@@ -12,9 +12,11 @@ export async function GET(req: NextRequest) {
   const action = searchParams.get("action") || undefined;
   const userId = searchParams.get("userId") || undefined;
 
-  const logs = getAuditLogs(limit, offset, action, userId, user.role);
-  const total = countAuditLogs(action, userId, user.role);
-  const actions = getAuditActions();
+  const [logs, total, actions] = await Promise.all([
+    getAuditLogs(limit, offset, action, userId, user.role),
+    countAuditLogs(action, userId, user.role),
+    getAuditActions(),
+  ]);
 
   return NextResponse.json({ logs, total, actions });
 }

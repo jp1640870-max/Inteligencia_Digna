@@ -88,8 +88,8 @@ export default function AdminBackups() {
         <div className="flex items-center gap-3 mb-4">
           <Database size={20} className="text-green-400" />
           <div>
-            <h3 className="text-sm font-medium text-white">Base de Datos SQLite</h3>
-            <p className="text-[11px] text-gray-500">Backup completo del archivo app.db</p>
+            <h3 className="text-sm font-medium text-white">Base de Datos PostgreSQL</h3>
+            <p className="text-[11px] text-gray-500">Backup lógico generado con pg_dump</p>
           </div>
         </div>
 
@@ -140,9 +140,9 @@ export default function AdminBackups() {
         <h3 className="text-sm font-medium text-white mb-2">💡 Información</h3>
         <ul className="text-xs text-gray-500 space-y-1 list-disc pl-4">
           <li>Los backups se almacenan en <code className="text-green-400">data/backups/</code></li>
-          <li>Se realiza un WAL checkpoint antes de copiar la DB</li>
-          <li>Para restaurar: detén la app, copia el backup a <code className="text-green-400">data/app.db</code>, reinicia</li>
-          <li>Los backups no incluyen archivos subidos (solo la DB)</li>
+          <li>Los backups se generan con <code className="text-green-400">pg_dump</code> en formato custom</li>
+          <li>Para restaurar, usa <code className="text-green-400">pg_restore</code> sobre una base PostgreSQL vacía</li>
+          <li>Los archivos de MinIO tienen backups separados</li>
         </ul>
       </div>
     </div>

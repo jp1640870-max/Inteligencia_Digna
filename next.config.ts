@@ -1,14 +1,18 @@
 import type { NextConfig } from "next";
 import { networkInterfaces } from "os";
 
-// ─── Validación rápida de entorno en startup ───
-const REQUIRED = ["JWT_SECRET", "SGLANG_URL", "TEXT_MODEL"] as const;
+const REQUIRED = [
+  "JWT_SECRET",
+  "DATABASE_URL",
+  "OLLAMA_URL",
+  "OLLAMA_CHAT_MODEL",
+  "OLLAMA_AGENT_MODEL",
+  "OLLAMA_EMBEDDING_MODEL",
+] as const;
 const missing = REQUIRED.filter((key) => !process.env[key]);
 
-if (missing.length > 0 && process.env.NEXT_PHASE !== "phase-production-build") {
-  console.error(`\n❌ Variables de entorno faltantes: ${missing.join(", ")}`);
-  console.error("   Revisa tu archivo .env.local\n");
-  process.exit(1);
+if (missing.length > 0 && process.env.NODE_ENV !== "production") {
+  console.warn(`Variables de entorno pendientes para runtime: ${missing.join(", ")}`);
 }
 
 const networkIPs = Object.values(networkInterfaces())
@@ -21,10 +25,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: [...new Set(["localhost", ...networkIPs, "*.lvh.me", "*.ngrok-free.dev"])],
   devIndicators: false,
   images: {
-    remotePatterns: [
-      // Avatares de Google OAuth (user.picture)
-      { protocol: "https", hostname: "**.googleusercontent.com" },
-    ],
+    remotePatterns: [{ protocol: "https", hostname: "**.googleusercontent.com" }],
   },
 };
 

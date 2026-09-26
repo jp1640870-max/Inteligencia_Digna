@@ -1,5 +1,5 @@
-import type Database from "better-sqlite3";
-import { getSharedDb } from "./db-connection";
+import { query, withTransaction } from "./db-connection";
+import type { PoolClient } from "pg";
 import type {
   AnnouncementRow,
   AuditLogRow,
@@ -8,7 +8,6 @@ import type {
   ChatRow,
   ChatWithOwnerRow,
   ConfigRow,
-  CountRow,
   HeartRow,
   HeartWithOwnerRow,
   KbCategory,
@@ -26,274 +25,515 @@ import type {
   UserWithCountsRow,
 } from "@/types";
 
-let kbInitBusy = false;
-let tablesInit = false;
+type DbRow = Record<string, unknown>;
 
-function getDb(): Database.Database {
-  const db = getSharedDb();
-  if (!tablesInit) {
-    // Marcar ANTES de inicializar: initTables() reentra a getDb() vía
-    // initHeartsTable()/seedDefaultConfig()/initKbTables(). Si el flag se
-    // marcara después, la reentrada causaría recursión infinita
-    // (getDb → initTables → initHeartsTable → getDb → …).
-    tablesInit = true;
-    initTables(db);
+type EmbeddingInput = number[] | string;
+
+const HEART_UPDATE_FIELDS = [
+  "name",
+  "role",
+  "tone",
+  "instructions",
+  "limitations",
+  "temperature",
+  "knowledge_files",
+  "tools",
+  "agent_memory",
+  "is_public",
+  "is_preset",
+] as const;
+
+const KB_FILE_UPDATE_FIELDS = [
+  "filename",
+  "format",
+  "size_bytes",
+  "category_id",
+  "status",
+  "conflict_with",
+  "content",
+  "checksum",
+  "uploaded_by",
+] as const;
+
+const ANNOUNCEMENT_UPDATE_FIELDS = ["title", "content", "type", "active"] as const;
+
+const USER_ROLES = [
+  "super_admin",
+  "admin",
+  "editor",
+  "viewer",
+  "power_user",
+  "user",
+  "restricted",
+] as const;
+
+function numberValue(value: unknown, fallback = 0): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : fallback;
+  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
   }
-  return db;
+  return fallback;
 }
 
-function initTables(db: Database.Database) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      email TEXT UNIQUE NOT NULL,
-      name TEXT,
-      password_hash TEXT,
-      google_id TEXT UNIQUE,
-      picture TEXT,
-      role TEXT DEFAULT 'user',
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS chats (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-      role TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
-      content TEXT NOT NULL DEFAULT '',
-      images TEXT,
-      files TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_chats_user ON chats(user_id);
-    CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id);
-  `);
-
-  try { db.exec("ALTER TABLE users ADD COLUMN picture TEXT"); } catch {}
-  try { db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'"); } catch {}
-  try { db.exec("ALTER TABLE messages ADD COLUMN doc_data TEXT"); } catch {}
-  try { db.exec("ALTER TABLE chats ADD COLUMN heart_id TEXT REFERENCES hearts(id)"); } catch {}
-  try { db.exec("ALTER TABLE messages ADD COLUMN kb_sources TEXT"); } catch {}
-
-  // Inicializar tablas de admin
-  initHeartsTable();
-  seedDefaultConfig();
-
-  // Inicializar tablas de Knowledge Base
-  initKbTables();
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS rag_chunks (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      chat_id TEXT,
-      project_id TEXT,
-      document_name TEXT NOT NULL,
-      chunk_index INTEGER NOT NULL,
-      content TEXT NOT NULL,
-      embedding TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-  try { db.exec("CREATE INDEX IF NOT EXISTS idx_rag_chunks_chat ON rag_chunks(chat_id)"); } catch {}
-  try { db.exec("CREATE INDEX IF NOT EXISTS idx_rag_chunks_user ON rag_chunks(user_id)"); } catch {}
-  try { db.exec("CREATE INDEX IF NOT EXISTS idx_rag_chunks_project ON rag_chunks(project_id)"); } catch {}
+function textValue(value: unknown, fallback = ""): string {
+  if (value === null || value === undefined) return fallback;
+  if (value instanceof Date) return value.toISOString();
+  return String(value);
 }
 
-/* ============ USERS ============ */
+function nullableTextValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return value.toISOString();
+  return String(value);
+}
 
-export function createUser(
+function booleanValue(value: unknown): boolean {
+  return value === true || value === 1 || value === "1" || value === "true";
+}
+
+function booleanNumber(value: unknown): number {
+  return booleanValue(value) ? 1 : 0;
+}
+
+function jsonText(value: unknown, fallback: string | null = null): string | null {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "string") return value;
+  const serialized = JSON.stringify(value);
+  return serialized === undefined ? fallback : serialized;
+}
+
+function parseJson(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function serializeEmbedding(value: EmbeddingInput): string {
+  let values: unknown[];
+  if (Array.isArray(value)) {
+    values = value;
+  } else {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) throw new Error("El embedding debe ser un array");
+    values = parsed;
+  }
+
+  if (values.length === 0 || values.some((item) => typeof item !== "number" || !Number.isFinite(item))) {
+    throw new Error("El embedding debe contener números finitos");
+  }
+
+  return `[${values.join(",")}]`;
+}
+
+function embeddingText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return `[${value.join(",")}]`;
+  return "";
+}
+
+function normalizeUser(row: DbRow): UserRow {
+  return {
+    ...row,
+    id: textValue(row.id),
+    email: textValue(row.email),
+    name: nullableTextValue(row.name),
+    password_hash: nullableTextValue(row.password_hash),
+    google_id: nullableTextValue(row.google_id),
+    picture: nullableTextValue(row.picture),
+    role: textValue(row.role, "user") as UserRow["role"],
+    created_at: textValue(row.created_at),
+  } as UserRow;
+}
+
+function normalizeChat(row: DbRow): ChatRow {
+  return {
+    ...row,
+    id: textValue(row.id),
+    user_id: textValue(row.user_id),
+    title: textValue(row.title),
+    heart_id: nullableTextValue(row.heart_id),
+    created_at: textValue(row.created_at),
+    updated_at: textValue(row.updated_at),
+  } as ChatRow;
+}
+
+function normalizeMessageRow(row: DbRow): MessageRow {
+  return {
+    ...row,
+    id: numberValue(row.id),
+    chat_id: textValue(row.chat_id),
+    role: textValue(row.role) as MessageRow["role"],
+    content: textValue(row.content),
+    images: jsonText(row.images),
+    files: jsonText(row.files),
+    doc_data: jsonText(row.doc_data),
+    kb_sources: jsonText(row.kb_sources),
+    created_at: textValue(row.created_at),
+  } as MessageRow;
+}
+
+function messageFromRow(row: DbRow): Msg {
+  const normalized = normalizeMessageRow(row);
+  const parsedImages = parseJson(normalized.images);
+  const role: Msg["role"] = normalized.role === "assistant" ? "ai" : "user";
+  const message: Msg = {
+    id: normalized.id,
+    role,
+    text: normalized.content,
+    images: Array.isArray(parsedImages) && parsedImages.length > 0 ? (parsedImages as string[]) : undefined,
+  };
+
+  if (normalized.doc_data) {
+    try {
+      const doc = parseJson(normalized.doc_data) as Record<string, unknown>;
+      const format = textValue(doc.format);
+      const data = textValue(doc.data);
+      const contentTypeMap: Record<string, string> = {
+        xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        pdf: "application/pdf",
+      };
+      message.editResult = {
+        success: true,
+        format: (format || "pdf") as "xlsx" | "docx" | "pdf",
+        filename: textValue(doc.filename),
+        originalName: textValue(doc.filename),
+        changesCount: numberValue(doc.changesCount),
+        dataUri: `data:${contentTypeMap[format] || "application/octet-stream"};base64,${data}`,
+      };
+    } catch {}
+  }
+
+  return message;
+}
+
+function normalizeHeart(row: DbRow): HeartRow {
+  return {
+    ...row,
+    id: textValue(row.id),
+    user_id: textValue(row.user_id),
+    name: textValue(row.name),
+    role: textValue(row.role),
+    tone: textValue(row.tone),
+    instructions: textValue(row.instructions),
+    limitations: textValue(row.limitations),
+    temperature: numberValue(row.temperature, 0.7),
+    knowledge_files: jsonText(row.knowledge_files, "[]") || "[]",
+    tools: jsonText(row.tools, "[]") || "[]",
+    agent_memory: textValue(row.agent_memory),
+    is_public: booleanNumber(row.is_public),
+    is_preset: booleanNumber(row.is_preset),
+    created_at: textValue(row.created_at),
+    updated_at: textValue(row.updated_at),
+  } as HeartRow;
+}
+
+function normalizeCategory(row: DbRow): KbCategory {
+  return {
+    ...row,
+    id: textValue(row.id),
+    name: textValue(row.name),
+    label: textValue(row.label),
+    created_at: textValue(row.created_at),
+    updated_at: textValue(row.updated_at),
+  } as KbCategory;
+}
+
+function normalizeKbFile(row: DbRow): KbFile {
+  return {
+    ...row,
+    id: textValue(row.id),
+    filename: textValue(row.filename),
+    format: textValue(row.format),
+    size_bytes: numberValue(row.size_bytes),
+    category_id: nullableTextValue(row.category_id),
+    status: textValue(row.status, "processing") as KbFile["status"],
+    conflict_with: nullableTextValue(row.conflict_with),
+    content: textValue(row.content),
+    checksum: nullableTextValue(row.checksum),
+    uploaded_by: nullableTextValue(row.uploaded_by),
+    created_at: textValue(row.created_at),
+    updated_at: textValue(row.updated_at),
+    chunk_count: row.chunk_count === undefined ? undefined : numberValue(row.chunk_count),
+  } as KbFile;
+}
+
+function normalizeKbChunk(row: DbRow): KbChunk {
+  return {
+    ...row,
+    id: textValue(row.id),
+    file_id: textValue(row.file_id),
+    category_id: nullableTextValue(row.category_id),
+    chunk_index: numberValue(row.chunk_index),
+    content: textValue(row.content),
+    embedding: embeddingText(row.embedding),
+    created_at: textValue(row.created_at),
+  } as KbChunk;
+}
+
+function normalizeRagChunk(row: DbRow): RagChunkRow {
+  return {
+    ...row,
+    id: textValue(row.id),
+    user_id: nullableTextValue(row.user_id),
+    chat_id: nullableTextValue(row.chat_id),
+    project_id: nullableTextValue(row.project_id),
+    document_name: textValue(row.document_name),
+    chunk_index: numberValue(row.chunk_index),
+    content: textValue(row.content),
+    embedding: embeddingText(row.embedding),
+    created_at: textValue(row.created_at),
+  } as RagChunkRow;
+}
+
+function normalizeProject(row: DbRow): ProjectRow {
+  return {
+    ...row,
+    id: textValue(row.id),
+    user_id: textValue(row.user_id),
+    name: textValue(row.name),
+    instructions: textValue(row.instructions),
+    created_at: textValue(row.created_at),
+    chat_count: row.chat_count === undefined ? undefined : numberValue(row.chat_count),
+  } as ProjectRow;
+}
+
+function normalizeAnnouncement(row: DbRow): AnnouncementRow {
+  return {
+    ...row,
+    id: textValue(row.id),
+    title: textValue(row.title),
+    content: textValue(row.content),
+    type: textValue(row.type, "info"),
+    active: booleanNumber(row.active),
+    created_by: nullableTextValue(row.created_by),
+    created_by_name: nullableTextValue(row.created_by_name),
+    created_at: textValue(row.created_at),
+    updated_at: textValue(row.updated_at),
+  } as AnnouncementRow;
+}
+
+function normalizeAuditLog(row: DbRow): AuditLogRow {
+  return {
+    ...row,
+    id: numberValue(row.id),
+    user_id: nullableTextValue(row.user_id),
+    action: textValue(row.action),
+    details: textValue(row.details),
+    ip: textValue(row.ip),
+    created_at: textValue(row.created_at),
+    user_name: nullableTextValue(row.user_name),
+    user_email: nullableTextValue(row.user_email),
+  } as AuditLogRow;
+}
+
+function normalizeBackup(row: DbRow): BackupRow {
+  return {
+    ...row,
+    id: textValue(row.id),
+    filename: textValue(row.filename),
+    size_bytes: numberValue(row.size_bytes),
+    status: textValue(row.status, "pending"),
+    created_by: nullableTextValue(row.created_by),
+    created_by_name: nullableTextValue(row.created_by_name),
+    created_at: textValue(row.created_at),
+  } as BackupRow;
+}
+
+function countFromRow(row: unknown, key = "c"): number {
+  if (!row || typeof row !== "object") return 0;
+  return numberValue((row as DbRow)[key] ?? (row as DbRow).count);
+}
+
+function slugify(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function serializeJsonField(value: unknown, fallback: string): string {
+  if (value === undefined) return fallback;
+  if (value === null) return fallback;
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
+}
+
+function serializeHeartValue(field: (typeof HEART_UPDATE_FIELDS)[number], value: unknown): unknown {
+  if (field === "knowledge_files" || field === "tools") return serializeJsonField(value, "[]");
+  if (field === "is_public" || field === "is_preset") return booleanValue(value);
+  if (field === "temperature") return numberValue(value, 0.7);
+  if (value === undefined) return null;
+  return value;
+}
+
+function serializeKbValue(field: (typeof KB_FILE_UPDATE_FIELDS)[number], value: unknown): unknown {
+  if (field === "size_bytes") return numberValue(value);
+  if (value === undefined) return null;
+  return value;
+}
+
+export async function createUser(
   id: string,
   email: string,
   name: string | null,
   passwordHash?: string,
   googleId?: string,
   picture?: string,
-  role?: string
-) {
-  const d = getDb();
-  const stmt = d.prepare(`
-    INSERT INTO users (id, email, name, password_hash, google_id, picture, role)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  stmt.run(id, email, name, passwordHash || null, googleId || null, picture || null, role || "user");
+  role?: string,
+): Promise<void> {
+  await query(
+    `INSERT INTO users (id, email, name, password_hash, google_id, picture, role)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id, email, name, passwordHash || null, googleId || null, picture || null, role || "user"],
+  );
 }
 
-export function getUserByEmail(email: string) {
-  const d = getDb();
-  return d.prepare("SELECT * FROM users WHERE email = ?").get(email) as UserRow;
+export async function getUserByEmail(email: string): Promise<UserRow | null> {
+  const result = await query(
+    "SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1",
+    [email],
+  );
+  const row = result.rows[0] as DbRow | undefined;
+  return row ? normalizeUser(row) : null;
 }
 
-export function getUserByGoogleId(googleId: string) {
-  const d = getDb();
-  return d.prepare("SELECT * FROM users WHERE google_id = ?").get(googleId) as UserRow;
+export async function getUserByGoogleId(googleId: string): Promise<UserRow | null> {
+  const result = await query("SELECT * FROM users WHERE google_id = $1 LIMIT 1", [googleId]);
+  const row = result.rows[0] as DbRow | undefined;
+  return row ? normalizeUser(row) : null;
 }
 
-export function getUserById(id: string) {
-  const d = getDb();
-  return d.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow;
+export async function getUserById(id: string): Promise<UserRow | null> {
+  const result = await query("SELECT * FROM users WHERE id = $1 LIMIT 1", [id]);
+  const row = result.rows[0] as DbRow | undefined;
+  return row ? normalizeUser(row) : null;
 }
 
-export function getUserStats(userId: string) {
-  const d = getDb();
-  const projectCount = (d.prepare("SELECT COUNT(*) as count FROM projects WHERE user_id = ?").get(userId) as CountRow)?.count || 0;
-  const chatCount = (d.prepare("SELECT COUNT(*) as count FROM chats WHERE user_id = ?").get(userId) as CountRow)?.count || 0;
-  return { projectCount, chatCount };
+export async function getUserStats(userId: string): Promise<{ projectCount: number; chatCount: number }> {
+  const result = await query(
+    `SELECT
+       (SELECT COUNT(*)::int FROM projects WHERE user_id = $1) AS project_count,
+       (SELECT COUNT(*)::int FROM chats WHERE user_id = $1) AS chat_count`,
+    [userId],
+  );
+  const row = result.rows[0] as DbRow | undefined;
+  return {
+    projectCount: numberValue(row?.project_count),
+    chatCount: numberValue(row?.chat_count),
+  };
 }
 
-export function updateUserPicture(userId: string, picture: string | null) {
-  const d = getDb();
-  d.prepare("UPDATE users SET picture = ? WHERE id = ?").run(picture, userId);
+export async function updateUserPicture(userId: string, picture: string | null): Promise<void> {
+  await query("UPDATE users SET picture = $1 WHERE id = $2", [picture, userId]);
 }
 
-export function updateUserGoogleId(userId: string, googleId: string, picture: string | null) {
-  const d = getDb();
-  d.prepare("UPDATE users SET google_id = ?, picture = ? WHERE id = ?").run(googleId, picture, userId);
+export async function updateUserGoogleId(
+  userId: string,
+  googleId: string,
+  picture: string | null,
+): Promise<void> {
+  await query(
+    "UPDATE users SET google_id = $1, picture = $2 WHERE id = $3",
+    [googleId, picture, userId],
+  );
 }
 
-/* ============ CHATS ============ */
-
-export function getChatsByUser(userId: string) {
-  const d = getDb();
-  const rows = d
-    .prepare("SELECT * FROM chats WHERE user_id = ? ORDER BY updated_at DESC")
-    .all(userId) as ChatRow[];
-
-  return rows.map((row) => ({
-    id: row.id,
-    title: row.title,
-    messages: getMessagesByChat(row.id),
-  }));
+export async function getChatsByUser(userId: string): Promise<Array<{ id: string; title: string; messages: Msg[] }>> {
+  const result = await query(
+    "SELECT * FROM chats WHERE user_id = $1 ORDER BY updated_at DESC",
+    [userId],
+  );
+  const rows = result.rows as DbRow[];
+  return Promise.all(
+    rows.map(async (rawRow) => {
+      const row = normalizeChat(rawRow);
+      return { id: row.id, title: row.title, messages: await getMessagesByChat(row.id) };
+    }),
+  );
 }
 
-export function getChatById(chatId: string) {
-  const d = getDb();
-  const chat = d.prepare("SELECT * FROM chats WHERE id = ?").get(chatId) as ChatRow;
-  if (!chat) return null;
+export async function getChatById(
+  chatId: string,
+): Promise<{ id: string; user_id: string; title: string; messages: Msg[] } | null> {
+  const result = await query("SELECT * FROM chats WHERE id = $1 LIMIT 1", [chatId]);
+  const rawRow = result.rows[0] as DbRow | undefined;
+  if (!rawRow) return null;
+  const chat = normalizeChat(rawRow);
   return {
     id: chat.id,
     user_id: chat.user_id,
     title: chat.title,
-    messages: getMessagesByChat(chat.id),
+    messages: await getMessagesByChat(chat.id),
   };
 }
 
-export function createChat(id: string, userId: string, title: string) {
-  const d = getDb();
-  d.prepare("INSERT INTO chats (id, user_id, title) VALUES (?, ?, ?)").run(
-    id,
-    userId,
-    title
+export async function createChat(id: string, userId: string, title: string): Promise<void> {
+  await query("INSERT INTO chats (id, user_id, title) VALUES ($1, $2, $3)", [id, userId, title]);
+}
+
+export async function updateChatTitle(id: string, userId: string, title: string): Promise<boolean> {
+  const result = await query(
+    "UPDATE chats SET title = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3",
+    [title, id, userId],
   );
+  return (result.rowCount ?? 0) > 0;
 }
 
-export function updateChatTitle(id: string, userId: string, title: string) {
-  const d = getDb();
-  const result = d.prepare(
-    "UPDATE chats SET title = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?"
-  ).run(title, id, userId);
-
-  return result.changes > 0;
+export async function deleteChat(id: string): Promise<void> {
+  await query("DELETE FROM chats WHERE id = $1", [id]);
 }
 
-export function deleteChat(id: string) {
-  const d = getDb();
-  d.prepare("DELETE FROM chats WHERE id = ?").run(id);
+export async function getMessagesByChat(chatId: string): Promise<Msg[]> {
+  const result = await query(
+    "SELECT * FROM messages WHERE chat_id = $1 ORDER BY id ASC",
+    [chatId],
+  );
+  return (result.rows as DbRow[]).map(messageFromRow);
 }
 
-/* ============ MESSAGES ============ */
-
-const CONTENT_TYPE_MAP: Record<string, string> = {
-  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  pdf: "application/pdf",
-};
-
-export function getMessagesByChat(chatId: string) {
-  const d = getDb();
-  const rows = d
-    .prepare("SELECT * FROM messages WHERE chat_id = ? ORDER BY id ASC")
-    .all(chatId) as MessageRow[];
-
-  return rows.map((row) => {
-    const msg: Msg = {
-      id: row.id,
-      role: row.role === "assistant" ? "ai" : (row.role as "user" | "ai"),
-      text: row.content,
-      images: row.images ? JSON.parse(row.images) : undefined,
-    };
-
-    if (row.doc_data) {
-      try {
-        const doc = JSON.parse(row.doc_data);
-        const mime = CONTENT_TYPE_MAP[doc.format] || "application/octet-stream";
-        msg.editResult = {
-          success: true,
-          format: doc.format,
-          filename: doc.filename,
-          originalName: doc.filename,
-          changesCount: doc.changesCount || 0,
-          dataUri: `data:${mime};base64,${doc.data}`,
-        };
-      } catch {}
-    }
-
-    return msg;
-  });
-}
-
-export function addMessage(
+export async function addMessage(
   chatId: string,
   role: string,
   content: string,
   images?: string[],
   docData?: string,
-  kbSources?: KbSource[]
-) {
-  const d = getDb();
-  d.prepare(
-    "INSERT INTO messages (chat_id, role, content, images, doc_data, kb_sources) VALUES (?, ?, ?, ?, ?, ?)"
-  ).run(
-    chatId,
-    role,
-    content,
-    images ? JSON.stringify(images) : null,
-    docData || null,
-    kbSources && kbSources.length > 0 ? JSON.stringify(kbSources) : null
-  );
-
-  d.prepare("UPDATE chats SET updated_at = datetime('now') WHERE id = ?").run(
-    chatId
-  );
+  kbSources?: KbSource[],
+): Promise<void> {
+  await withTransaction(async (client: PoolClient) => {
+    await client.query(
+      `INSERT INTO messages (chat_id, role, content, images, doc_data, kb_sources)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)`,
+      [
+        chatId,
+        role,
+        content,
+        JSON.stringify(images || []),
+        docData || null,
+        kbSources && kbSources.length > 0 ? JSON.stringify(kbSources) : null,
+      ],
+    );
+    await client.query("UPDATE chats SET updated_at = NOW() WHERE id = $1", [chatId]);
+  });
 }
 
-export function truncateMessagesToCount(chatId: string, keepCount: number) {
-  const d = getDb();
-  const rows = d
-    .prepare("SELECT id FROM messages WHERE chat_id = ? ORDER BY id ASC")
-    .all(chatId) as { id: number }[];
-  if (keepCount >= rows.length) return;
-  const fromId = rows[Math.max(0, keepCount)].id;
-  d.prepare("DELETE FROM messages WHERE chat_id = ? AND id >= ?").run(
-    chatId,
-    fromId
-  );
-  d.prepare("UPDATE chats SET updated_at = datetime('now') WHERE id = ?").run(
-    chatId
-  );
+export async function truncateMessagesToCount(chatId: string, keepCount: number): Promise<void> {
+  await withTransaction(async (client: PoolClient) => {
+    const result = await client.query(
+      "SELECT id FROM messages WHERE chat_id = $1 ORDER BY id ASC",
+      [chatId],
+    );
+    const rows = result.rows as DbRow[];
+    if (keepCount >= rows.length) return;
+    const fromId = numberValue(rows[Math.max(0, keepCount)]?.id);
+    await client.query("DELETE FROM messages WHERE chat_id = $1 AND id >= $2", [chatId, fromId]);
+    await client.query("UPDATE chats SET updated_at = NOW() WHERE id = $1", [chatId]);
+  });
 }
 
-/* ============ RAG CHUNKS ============ */
-
-export function storeChunk(chunk: {
+export async function storeChunk(chunk: {
   id: string;
   user_id: string;
   chat_id: string | null;
@@ -301,146 +541,202 @@ export function storeChunk(chunk: {
   document_name: string;
   chunk_index: number;
   content: string;
-  embedding: string;
-}) {
-  const d = getDb();
-  d.prepare(`
-    INSERT INTO rag_chunks (id, user_id, chat_id, project_id, document_name, chunk_index, content, embedding)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(chunk.id, chunk.user_id, chunk.chat_id, chunk.project_id, chunk.document_name, chunk.chunk_index, chunk.content, chunk.embedding);
+  embedding: EmbeddingInput;
+}): Promise<void> {
+  await query(
+    `INSERT INTO rag_chunks
+       (id, user_id, chat_id, project_id, document_name, chunk_index, content, embedding)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector)`,
+    [
+      chunk.id,
+      chunk.user_id,
+      chunk.chat_id,
+      chunk.project_id,
+      chunk.document_name,
+      chunk.chunk_index,
+      chunk.content,
+      serializeEmbedding(chunk.embedding),
+    ],
+  );
 }
 
-export function getChunksByChat(chatId: string) {
-  const d = getDb();
-  return d.prepare("SELECT * FROM rag_chunks WHERE chat_id = ? ORDER BY chunk_index ASC").all(chatId) as RagChunkRow[];
+export async function getChunksByChat(chatId: string): Promise<RagChunkRow[]> {
+  const result = await query(
+    "SELECT id, user_id, chat_id, project_id, document_name, chunk_index, content, embedding::text AS embedding, created_at FROM rag_chunks WHERE chat_id = $1 ORDER BY chunk_index ASC",
+    [chatId],
+  );
+  return (result.rows as DbRow[]).map(normalizeRagChunk);
 }
 
-export function getChunksByProject(projectId: string) {
-  const d = getDb();
-  return d.prepare("SELECT * FROM rag_chunks WHERE project_id = ? ORDER BY document_name, chunk_index ASC").all(projectId) as RagChunkRow[];
+export async function getChunksByProject(projectId: string): Promise<RagChunkRow[]> {
+  const result = await query(
+    "SELECT id, user_id, chat_id, project_id, document_name, chunk_index, content, embedding::text AS embedding, created_at FROM rag_chunks WHERE project_id = $1 ORDER BY document_name, chunk_index ASC",
+    [projectId],
+  );
+  return (result.rows as DbRow[]).map(normalizeRagChunk);
 }
 
-export function deleteChunksByChat(chatId: string) {
-  const d = getDb();
-  d.prepare("DELETE FROM rag_chunks WHERE chat_id = ?").run(chatId);
+export async function hasChunksForChat(chatId: string): Promise<boolean> {
+  const result = await query("SELECT EXISTS (SELECT 1 FROM rag_chunks WHERE chat_id = $1) AS present", [chatId]);
+  return result.rows[0]?.present === true;
 }
 
-export function deleteChunksByDocument(chatId: string, documentName: string) {
-  const d = getDb();
-  d.prepare("DELETE FROM rag_chunks WHERE chat_id = ? AND document_name = ?").run(chatId, documentName);
+export async function searchChunksByChat(
+  chatId: string,
+  embedding: EmbeddingInput,
+  threshold = 0.5,
+  limit = 3,
+): Promise<Array<{ content: string; score: number; documentName: string }>> {
+  const result = await query(
+    `SELECT content, document_name, 1 - (embedding <=> $2::vector) AS score
+     FROM rag_chunks
+     WHERE chat_id = $1 AND 1 - (embedding <=> $2::vector) > $3
+     ORDER BY embedding <=> $2::vector
+     LIMIT $4`,
+    [chatId, serializeEmbedding(embedding), threshold, limit],
+  );
+  return (result.rows as DbRow[]).map((row) => ({
+    content: textValue(row.content),
+    score: numberValue(row.score),
+    documentName: textValue(row.document_name),
+  }));
 }
 
-export function deleteChunksByProject(projectId: string) {
-  const d = getDb();
-  d.prepare("DELETE FROM rag_chunks WHERE project_id = ?").run(projectId);
+export async function deleteChunksByChat(chatId: string): Promise<void> {
+  await query("DELETE FROM rag_chunks WHERE chat_id = $1", [chatId]);
 }
 
-/* ============ ADMIN ============ */
-
-export function getAllUsers() {
-  const d = getDb();
-  return d
-    .prepare(`
-      SELECT u.*,
-        (SELECT COUNT(*) FROM chats WHERE user_id = u.id) AS chat_count,
-        (SELECT COUNT(*) FROM projects WHERE user_id = u.id) AS project_count
-      FROM users u
-      ORDER BY u.created_at DESC
-    `)
-    .all() as UserWithCountsRow[];
+export async function deleteChunksByDocument(chatId: string, documentName: string): Promise<void> {
+  await query("DELETE FROM rag_chunks WHERE chat_id = $1 AND document_name = $2", [chatId, documentName]);
 }
 
-export function updateUserRole(userId: string, role: string) {
-  const d = getDb();
-  const validRoles = ["user", "super_admin", "admin", "editor", "viewer"];
-  if (!validRoles.includes(role)) return false;
-  const r = d.prepare("UPDATE users SET role = ? WHERE id = ?").run(role, userId);
-  return r.changes > 0;
+export async function deleteChunksByProject(projectId: string): Promise<void> {
+  await query("DELETE FROM rag_chunks WHERE project_id = $1", [projectId]);
 }
 
-export function updateUserPassword(userId: string, passwordHash: string) {
-  const d = getDb();
-  d.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(passwordHash, userId);
+export async function getAllUsers(): Promise<UserWithCountsRow[]> {
+  const result = await query(
+    `SELECT u.id, u.email, u.name, u.google_id, u.picture, u.role, u.created_at,
+       (SELECT COUNT(*)::int FROM chats WHERE user_id = u.id) AS chat_count,
+       (SELECT COUNT(*)::int FROM projects WHERE user_id = u.id) AS project_count
+     FROM users u
+     ORDER BY u.created_at DESC`,
+  );
+  return (result.rows as DbRow[]).map((row) => ({
+    id: textValue(row.id),
+    email: textValue(row.email),
+    name: nullableTextValue(row.name),
+    google_id: nullableTextValue(row.google_id),
+    picture: nullableTextValue(row.picture),
+    role: textValue(row.role, "user") as UserRow["role"],
+    created_at: textValue(row.created_at),
+    chat_count: numberValue(row.chat_count),
+    project_count: numberValue(row.project_count),
+  })) as UserWithCountsRow[];
 }
 
-export function deleteUserById(userId: string) {
-  const d = getDb();
-  d.prepare("DELETE FROM users WHERE id = ?").run(userId);
+export async function updateUserRole(userId: string, role: string): Promise<boolean> {
+  if (!USER_ROLES.includes(role as (typeof USER_ROLES)[number])) return false;
+  const result = await query("UPDATE users SET role = $1 WHERE id = $2", [role, userId]);
+  return (result.rowCount ?? 0) > 0;
 }
 
-export function getSystemStats(callerRole?: string) {
-  const d = getDb();
-  const excludeSA = callerRole && callerRole !== "super_admin";
+export async function updateUserPassword(userId: string, passwordHash: string): Promise<void> {
+  await query("UPDATE users SET password_hash = $1 WHERE id = $2", [passwordHash, userId]);
+}
 
-  const totalUsers = excludeSA
-    ? (d.prepare("SELECT COUNT(*) as c FROM users WHERE role != ?").get("super_admin") as CountRow).c
-    : (d.prepare("SELECT COUNT(*) as c FROM users").get() as CountRow).c;
+export async function deleteUserById(userId: string): Promise<void> {
+  await query("DELETE FROM users WHERE id = $1", [userId]);
+}
 
-  const getIds = excludeSA
-    ? () => (d.prepare("SELECT id FROM users WHERE role != ?").all("super_admin") as { id: string }[]).map((r) => r.id)
-    : () => null;
+export async function getSystemStats(callerRole?: string): Promise<{
+  totalUsers: number;
+  totalChats: number;
+  totalMessages: number;
+  totalProjects: number;
+  chatsToday: number;
+  messagesToday: number;
+  activeUsers: number;
+}> {
+  const excludeSuperAdmin = Boolean(callerRole && callerRole !== "super_admin");
+  const userFilter = excludeSuperAdmin ? "c.user_id IN (SELECT id FROM users WHERE role <> 'super_admin')" : "";
+  const projectFilter = excludeSuperAdmin ? "p.user_id IN (SELECT id FROM users WHERE role <> 'super_admin')" : "";
+  const messageFilter = excludeSuperAdmin ? userFilter : "";
 
-  const excludedIds = getIds();
-
-  const totalChats = excludeSA && excludedIds?.length
-    ? (d.prepare(`SELECT COUNT(*) as c FROM chats WHERE user_id IN (${excludedIds.map(() => "?").join(",")})`).get(...excludedIds) as CountRow).c
-    : (d.prepare("SELECT COUNT(*) as c FROM chats").get() as CountRow).c;
-
-  const totalMessages = (d.prepare("SELECT COUNT(*) as c FROM messages").get() as CountRow).c;
-
-  const totalProjects = excludeSA && excludedIds?.length
-    ? (d.prepare(`SELECT COUNT(*) as c FROM projects WHERE user_id IN (${excludedIds.map(() => "?").join(",")})`).get(...excludedIds) as CountRow).c
-    : (d.prepare("SELECT COUNT(*) as c FROM projects").get() as CountRow).c;
-
-  const chatsToday = excludeSA && excludedIds?.length
-    ? (d.prepare(`SELECT COUNT(*) as c FROM chats WHERE date(created_at) = date('now') AND user_id IN (${excludedIds.map(() => "?").join(",")})`).get(...excludedIds) as CountRow).c
-    : (d.prepare("SELECT COUNT(*) as c FROM chats WHERE date(created_at) = date('now')").get() as CountRow).c;
-
-  const messagesToday = (d.prepare("SELECT COUNT(*) as c FROM messages WHERE date(created_at) = date('now')").get() as CountRow).c;
-
-  const activeUsers = excludeSA && excludedIds?.length
-    ? (d.prepare(`SELECT COUNT(DISTINCT user_id) as c FROM chats WHERE date(updated_at) = date('now') AND user_id IN (${excludedIds.map(() => "?").join(",")})`).get(...excludedIds) as CountRow).c
-    : (d.prepare("SELECT COUNT(DISTINCT user_id) as c FROM chats WHERE date(updated_at) = date('now')").get() as CountRow).c;
-
-  return {
-    totalUsers,
-    totalChats,
-    totalMessages,
-    totalProjects,
-    chatsToday,
-    messagesToday,
-    activeUsers,
+  const scalar = async (sql: string): Promise<number> => {
+    const result = await query(sql);
+    return countFromRow(result.rows[0]);
   };
+
+  const [totalUsers, totalChats, totalMessages, totalProjects, chatsToday, messagesToday, activeUsers] =
+    await Promise.all([
+      scalar(
+        `SELECT COUNT(*)::int AS c FROM users u${excludeSuperAdmin ? " WHERE u.role <> 'super_admin'" : ""}`,
+      ),
+      scalar(`SELECT COUNT(*)::int AS c FROM chats c${excludeSuperAdmin ? ` WHERE ${userFilter}` : ""}`),
+      scalar(
+        `SELECT COUNT(*)::int AS c FROM messages m JOIN chats c ON c.id = m.chat_id${excludeSuperAdmin ? ` WHERE ${messageFilter}` : ""}`,
+      ),
+      scalar(
+        `SELECT COUNT(*)::int AS c FROM projects p${excludeSuperAdmin ? ` WHERE ${projectFilter}` : ""}`,
+      ),
+      scalar(
+        `SELECT COUNT(*)::int AS c FROM chats c${excludeSuperAdmin ? ` WHERE ${userFilter} AND` : " WHERE"} c.created_at >= CURRENT_DATE AND c.created_at < CURRENT_DATE + INTERVAL '1 day'`,
+      ),
+      scalar(
+        `SELECT COUNT(*)::int AS c FROM messages m JOIN chats c ON c.id = m.chat_id${excludeSuperAdmin ? ` WHERE ${messageFilter} AND` : " WHERE"} m.created_at >= CURRENT_DATE AND m.created_at < CURRENT_DATE + INTERVAL '1 day'`,
+      ),
+      scalar(
+        `SELECT COUNT(DISTINCT c.user_id)::int AS c FROM chats c${excludeSuperAdmin ? ` WHERE ${userFilter} AND` : " WHERE"} c.updated_at >= CURRENT_DATE AND c.updated_at < CURRENT_DATE + INTERVAL '1 day'`,
+      ),
+    ]);
+
+  return { totalUsers, totalChats, totalMessages, totalProjects, chatsToday, messagesToday, activeUsers };
 }
 
-export function getChatsByUserRaw(userId: string) {
-  const d = getDb();
-  return d
-    .prepare("SELECT * FROM chats WHERE user_id = ? ORDER BY updated_at DESC LIMIT 10")
-    .all(userId) as ChatRow[];
+export async function getChatsByUserRaw(userId: string): Promise<ChatRow[]> {
+  const result = await query(
+    "SELECT * FROM chats WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 10",
+    [userId],
+  );
+  return (result.rows as DbRow[]).map(normalizeChat);
 }
 
-export function getProjectsByUserRaw(userId: string) {
-  const d = getDb();
-  return d
-    .prepare("SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC LIMIT 10")
-    .all(userId) as ProjectRow[];
+export async function getProjectsByUserRaw(userId: string): Promise<ProjectRow[]> {
+  const result = await query(
+    "SELECT * FROM projects WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10",
+    [userId],
+  );
+  return (result.rows as DbRow[]).map(normalizeProject);
 }
 
-/* ============ ADMIN: USER DETAIL ============ */
-
-export function getUserByIdFull(userId: string) {
-  const d = getDb();
-  const user = d.prepare("SELECT * FROM users WHERE id = ?").get(userId) as UserRow;
+export async function getUserByIdFull(userId: string): Promise<{
+  id: string;
+  email: string;
+  name: string | null;
+  role: string;
+  picture: string | null;
+  google_id: string | null;
+  created_at: string;
+  projectCount: number;
+  chatCount: number;
+  recentChats: Array<Pick<ChatRow, "id" | "title" | "created_at" | "updated_at">>;
+  recentProjects: Array<Pick<ProjectRow, "id" | "name" | "created_at">>;
+} | null> {
+  const user = await getUserById(userId);
   if (!user) return null;
 
-  const stats = getUserStats(userId);
-  const recentChats = d
-    .prepare("SELECT id, title, created_at, updated_at FROM chats WHERE user_id = ? ORDER BY updated_at DESC LIMIT 20")
-    .all(userId) as Pick<ChatRow, "id" | "title" | "created_at" | "updated_at">[];
-  const recentProjects = d
-    .prepare("SELECT id, name, created_at FROM projects WHERE user_id = ? ORDER BY created_at DESC LIMIT 20")
-    .all(userId) as Pick<ProjectRow, "id" | "name" | "created_at">[];
+  const [stats, chatsResult, projectsResult] = await Promise.all([
+    getUserStats(userId),
+    query(
+      "SELECT id, title, created_at, updated_at FROM chats WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 20",
+      [userId],
+    ),
+    query(
+      "SELECT id, name, created_at FROM projects WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20",
+      [userId],
+    ),
+  ]);
 
   return {
     id: user.id,
@@ -451,59 +747,43 @@ export function getUserByIdFull(userId: string) {
     google_id: user.google_id,
     created_at: user.created_at,
     ...stats,
-    recentChats,
-    recentProjects,
+    recentChats: (chatsResult.rows as DbRow[]).map((row) => ({
+      id: textValue(row.id),
+      title: textValue(row.title),
+      created_at: textValue(row.created_at),
+      updated_at: textValue(row.updated_at),
+    })),
+    recentProjects: (projectsResult.rows as DbRow[]).map((row) => ({
+      id: textValue(row.id),
+      name: textValue(row.name),
+      created_at: textValue(row.created_at),
+    })),
   };
 }
 
-/* ============ ADMIN: HEARTS ============ */
+export async function initHeartsTable(): Promise<void> { return; }
 
-export function initHeartsTable() {
-  const d = getDb();
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS hearts (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      role TEXT DEFAULT '',
-      tone TEXT DEFAULT '',
-      instructions TEXT DEFAULT '',
-      limitations TEXT DEFAULT '',
-      temperature REAL DEFAULT 0.7,
-      knowledge_files TEXT DEFAULT '[]',
-      tools TEXT DEFAULT '[]',
-      agent_memory TEXT DEFAULT '',
-      is_public INTEGER DEFAULT 0,
-      is_preset INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-  try { d.exec("CREATE INDEX IF NOT EXISTS idx_hearts_user ON hearts(user_id)"); } catch {}
-  try { d.exec("CREATE INDEX IF NOT EXISTS idx_hearts_public ON hearts(is_public)"); } catch {}
-  try { d.exec("ALTER TABLE chats ADD COLUMN heart_id TEXT REFERENCES hearts(id)"); } catch {}
+export async function getAllHearts(): Promise<HeartWithOwnerRow[]> {
+  const result = await query(
+    `SELECT h.*, u.name AS user_name, u.email AS user_email
+     FROM hearts h
+     LEFT JOIN users u ON h.user_id = u.id
+     ORDER BY h.is_preset DESC, h.updated_at DESC`,
+  );
+  return (result.rows as DbRow[]).map((row) => ({
+    ...normalizeHeart(row),
+    user_name: nullableTextValue(row.user_name),
+    user_email: nullableTextValue(row.user_email),
+  })) as HeartWithOwnerRow[];
 }
 
-export function getAllHearts() {
-  const d = getDb();
-  initHeartsTable();
-  return d
-    .prepare(`
-      SELECT h.*, u.name AS user_name, u.email AS user_email
-      FROM hearts h
-      LEFT JOIN users u ON h.user_id = u.id
-      ORDER BY h.is_preset DESC, h.updated_at DESC
-    `)
-    .all() as HeartWithOwnerRow[];
+export async function getHeartById(id: string): Promise<HeartRow | null> {
+  const result = await query("SELECT * FROM hearts WHERE id = $1 LIMIT 1", [id]);
+  const row = result.rows[0] as DbRow | undefined;
+  return row ? normalizeHeart(row) : null;
 }
 
-export function getHeartById(id: string) {
-  const d = getDb();
-  initHeartsTable();
-  return d.prepare("SELECT * FROM hearts WHERE id = ?").get(id) as HeartRow;
-}
-
-export function createHeart(
+export async function createHeart(
   id: string,
   userId: string,
   name: string,
@@ -513,345 +793,274 @@ export function createHeart(
   limitations?: string,
   temperature?: number,
   tools?: string[],
-  isPreset?: number
-) {
-  const d = getDb();
-  initHeartsTable();
-  d.prepare(`
-    INSERT INTO hearts (id, user_id, name, role, tone, instructions, limitations, temperature, tools, is_preset)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, userId, name, role || "", tone || "", instructions || "", limitations || "", temperature ?? 0.7, JSON.stringify(tools || []), isPreset || 0);
+  isPreset?: number,
+): Promise<void> {
+  await query(
+    `INSERT INTO hearts
+       (id, user_id, name, role, tone, instructions, limitations, temperature, tools, is_preset)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::boolean)`,
+    [
+      id,
+      userId,
+      name,
+      role || "",
+      tone || "",
+      instructions || "",
+      limitations || "",
+      temperature ?? 0.7,
+      JSON.stringify(tools || []),
+      booleanValue(isPreset),
+    ],
+  );
 }
 
-export function updateHeart(id: string, data: Record<string, unknown>) {
-  const d = getDb();
-  initHeartsTable();
-  const fields = Object.keys(data).filter(k => k !== "id").map(k => `${k} = ?`).join(", ");
-  const values = Object.keys(data).filter(k => k !== "id").map(k => data[k]);
-  if (!fields) return;
-  d.prepare(`UPDATE hearts SET ${fields}, updated_at = datetime('now') WHERE id = ?`).run(...values, id);
+export async function updateHeart(id: string, data: Record<string, unknown>): Promise<void> {
+  const fields = HEART_UPDATE_FIELDS.filter((field) => Object.prototype.hasOwnProperty.call(data, field));
+  if (fields.length === 0) return;
+  const assignments = fields.map((field, index) => `${field} = $${index + 1}`);
+  const values = fields.map((field) => serializeHeartValue(field, data[field]));
+  values.push(id);
+  await query(
+    `UPDATE hearts SET ${assignments.join(", ")}, updated_at = NOW() WHERE id = $${values.length}`,
+    values,
+  );
 }
 
-export function deleteHeart(id: string) {
-  const d = getDb();
-  initHeartsTable();
-  d.prepare("DELETE FROM hearts WHERE id = ?").run(id);
+export async function deleteHeart(id: string): Promise<void> {
+  await query("DELETE FROM hearts WHERE id = $1", [id]);
 }
 
-export function getHeartsByUser(userId: string) {
-  const d = getDb();
-  initHeartsTable();
-  return d.prepare("SELECT * FROM hearts WHERE user_id = ? ORDER BY updated_at DESC").all(userId) as HeartRow[];
+export async function getHeartsByUser(userId: string): Promise<HeartRow[]> {
+  const result = await query(
+    "SELECT * FROM hearts WHERE user_id = $1 ORDER BY updated_at DESC",
+    [userId],
+  );
+  return (result.rows as DbRow[]).map(normalizeHeart);
 }
 
-/* ============ ADMIN: CONFIG ============ */
+export async function initConfigTable(): Promise<void> { return; }
 
-export function initConfigTable() {
-  const d = getDb();
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS config (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL,
-      description TEXT DEFAULT '',
-      updated_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-}
-
-export function getAllConfig() {
-  const d = getDb();
-  initConfigTable();
-  return d.prepare("SELECT * FROM config ORDER BY key").all() as ConfigRow[];
-}
-
-export function getConfig(key: string): string | null {
-  const d = getDb();
-  initConfigTable();
-  const row = d.prepare("SELECT value FROM config WHERE key = ?").get(key) as { value: string } | undefined;
-  return row?.value || null;
-}
-
-export function setConfig(key: string, value: string, description?: string) {
-  const d = getDb();
-  initConfigTable();
-  d.prepare(`
-    INSERT INTO config (key, value, description, updated_at)
-    VALUES (?, ?, ?, datetime('now'))
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value, description = COALESCE(excluded.description, config.description), updated_at = datetime('now')
-  `).run(key, value, description || "");
-}
-
-export function deleteConfig(key: string) {
-  const d = getDb();
-  initConfigTable();
-  d.prepare("DELETE FROM config WHERE key = ?").run(key);
-}
-
-export function seedDefaultConfig() {
-  const defaults: Record<string, { value: string; description: string }> = {
-    "max_chats_per_user": { value: "999", description: "Máximo de chats por usuario" },
-    "max_file_size_mb": { value: "20", description: "Tamaño máximo de archivos (MB)" },
-    "max_knowledge_files_per_heart": { value: "3", description: "Archivos de conocimiento por Heart" },
-    "allow_registration": { value: "true", description: "Permitir nuevos registros" },
-    "allow_guest_access": { value: "false", description: "Permitir acceso sin login" },
-    "default_user_role": { value: "user", description: "Rol por defecto al registrarse" },
-    "maintenance_mode": { value: "false", description: "Modo mantenimiento" },
-    "ollama_context_length": { value: "65536", description: "Contexto del modelo (tokens)" },
-    "ollama_num_predict": { value: "4096", description: "Tokens máximos de respuesta" },
-    "ollama_temperature": { value: "0.3", description: "Temperatura por defecto del modelo" },
-    "rate_limit_per_minute": { value: "30", description: "Rate limit por minuto" },
-    "heart_memory_enabled": { value: "true", description: "Memoria persistente para Hearts" },
-    "chat_summary_enabled": { value: "true", description: "Resúmenes automáticos de chat" },
-  };
-
-  const d = getDb();
-  initConfigTable();
-  for (const [key, cfg] of Object.entries(defaults)) {
-    d.prepare(`
-      INSERT INTO config (key, value, description) VALUES (?, ?, ?)
-      ON CONFLICT(key) DO NOTHING
-    `).run(key, cfg.value, cfg.description);
-  }
-}
-
-/* ============ KNOWLEDGE BASE ============ */
-
-export function initKnowledgeTable() {
-  const d = getDb();
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS knowledge_entries (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      content TEXT NOT NULL,
-      category TEXT DEFAULT 'general',
-      created_by TEXT REFERENCES users(id),
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-}
-
-export function getKnowledgeEntries(category?: string) {
-  const d = getDb();
-  initKnowledgeTable();
-  if (category) {
-    return d
-      .prepare("SELECT ke.*, CASE WHEN u.role = 'super_admin' THEN '—' ELSE u.name END AS created_by_name FROM knowledge_entries ke LEFT JOIN users u ON ke.created_by = u.id WHERE ke.category = ? ORDER BY ke.updated_at DESC")
-      .all(category) as KnowledgeEntryRow[];
-  }
-  return d
-      .prepare("SELECT ke.*, CASE WHEN u.role = 'super_admin' THEN '—' ELSE u.name END AS created_by_name FROM knowledge_entries ke LEFT JOIN users u ON ke.created_by = u.id ORDER BY ke.updated_at DESC")
-      .all() as KnowledgeEntryRow[];
-}
-
-export function createKnowledgeEntry(id: string, title: string, content: string, category: string, createdBy: string) {
-  const d = getDb();
-  initKnowledgeTable();
-  d.prepare(
-    "INSERT INTO knowledge_entries (id, title, content, category, created_by) VALUES (?, ?, ?, ?, ?)"
-  ).run(id, title, content, category, createdBy);
-}
-
-export function deleteKnowledgeEntry(id: string) {
-  const d = getDb();
-  initKnowledgeTable();
-  d.prepare("DELETE FROM knowledge_entries WHERE id = ?").run(id);
-}
-
-export function updateKnowledgeEntry(id: string, title: string, content: string, category: string) {
-  const d = getDb();
-  initKnowledgeTable();
-  d.prepare(
-    "UPDATE knowledge_entries SET title = ?, content = ?, category = ?, updated_at = datetime('now') WHERE id = ?"
-  ).run(title, content, category, id);
-}
-
-/* ============ KB: TABLES & CATEGORIES ============ */
-
-const KB_SEED_CATEGORIES: Array<{ name: string; label: string }> = [
-  { name: "general", label: "General" },
-  { name: "legal", label: "Legal" },
-  { name: "medico", label: "Médico" },
-  { name: "procesos", label: "Procesos" },
-  { name: "faq", label: "FAQ" },
-  { name: "seguridad", label: "Seguridad" },
-];
-
-export function initKbTables() {
-  // Guard anti-reentrada: initKbTables → migrate → (getKbCategoryBySlug) →
-  // initKbTables es un ciclo válido en 1º acceso pero la llamada interna debe
-  // retornar de inmediato; sin esto, stack overflow en el primer request KB.
-  if (kbInitBusy) return;
-  kbInitBusy = true;
-  try {
-  const d = getDb();
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS kb_categories (
-      id         TEXT PRIMARY KEY,
-      name       TEXT UNIQUE NOT NULL,
-      label      TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS kb_files (
-      id            TEXT PRIMARY KEY,
-      filename      TEXT NOT NULL,
-      format        TEXT NOT NULL,
-      size_bytes    INTEGER DEFAULT 0,
-      category_id   TEXT REFERENCES kb_categories(id),
-      status        TEXT DEFAULT 'processing',
-      conflict_with TEXT REFERENCES kb_files(id),
-      content       TEXT NOT NULL DEFAULT '',
-      checksum      TEXT,
-      uploaded_by   TEXT REFERENCES users(id),
-      created_at    TEXT DEFAULT (datetime('now')),
-      updated_at    TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS kb_chunks (
-      id           TEXT PRIMARY KEY,
-      file_id      TEXT NOT NULL REFERENCES kb_files(id) ON DELETE CASCADE,
-      category_id  TEXT,
-      chunk_index  INTEGER NOT NULL,
-      content      TEXT NOT NULL,
-      embedding    TEXT NOT NULL,
-      created_at   TEXT DEFAULT (datetime('now'))
-    );
-  `);
-  try { d.exec("CREATE INDEX IF NOT EXISTS idx_kb_categories_name ON kb_categories(name)"); } catch {}
-  try { d.exec("CREATE INDEX IF NOT EXISTS idx_kb_files_category ON kb_files(category_id)"); } catch {}
-  try { d.exec("CREATE INDEX IF NOT EXISTS idx_kb_files_status   ON kb_files(status)"); } catch {}
-  try { d.exec("CREATE INDEX IF NOT EXISTS idx_kb_files_name     ON kb_files(filename)"); } catch {}
-  try { d.exec("CREATE INDEX IF NOT EXISTS idx_kb_chunks_file     ON kb_chunks(file_id)"); } catch {}
-  try { d.exec("CREATE INDEX IF NOT EXISTS idx_kb_chunks_category ON kb_chunks(category_id)"); } catch {}
-
-  seedDefaultKbCategories();
-  migrateKnowledgeEntriesToKb();
-  } finally {
-    kbInitBusy = false;
-  }
-}
-
-function seedDefaultKbCategories() {
-  const d = getDb();
-  for (const cat of KB_SEED_CATEGORIES) {
-    d.prepare(`
-      INSERT INTO kb_categories (id, name, label) VALUES (?, ?, ?)
-      ON CONFLICT(name) DO NOTHING
-    `).run(crypto.randomUUID(), cat.name, cat.label);
-  }
-}
-
-export function getKbCategories() {
-  const d = getDb();
-  initKbTables();
-  const rows = d.prepare(`
-    SELECT c.*,
-      (SELECT COUNT(*) FROM kb_files f WHERE f.category_id = c.id) AS file_count,
-      (SELECT COUNT(*) FROM kb_files f WHERE f.category_id = c.id AND f.status = 'active') AS active_count
-    FROM kb_categories c
-    ORDER BY CASE WHEN c.name = 'general' THEN 0 ELSE 1 END, c.label ASC
-  `).all() as KbCategoryWithCounts[];
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    label: r.label,
-    created_at: r.created_at,
-    updated_at: r.updated_at,
-    file_count: r.file_count,
-    active_count: r.active_count,
+export async function getAllConfig(): Promise<Array<ConfigRow & { updated_at: string }>> {
+  const result = await query("SELECT key, value, description, updated_at FROM config ORDER BY key");
+  return (result.rows as DbRow[]).map((row) => ({
+    key: textValue(row.key),
+    value: textValue(row.value),
+    description: textValue(row.description),
+    updated_at: textValue(row.updated_at),
   }));
 }
 
-export function getKbCategoryById(id: string) {
-  const d = getDb();
-  initKbTables();
-  return d.prepare("SELECT * FROM kb_categories WHERE id = ?").get(id) as KbCategory;
+export async function getConfig(key: string): Promise<string | null> {
+  const result = await query("SELECT value FROM config WHERE key = $1 LIMIT 1", [key]);
+  const row = result.rows[0] as DbRow | undefined;
+  return row && row.value ? textValue(row.value) : null;
 }
 
-export function getKbCategoryBySlug(name: string) {
-  const d = getDb();
-  initKbTables();
-  return d.prepare("SELECT * FROM kb_categories WHERE name = ?").get(name) as KbCategory;
+export async function setConfig(key: string, value: string, description?: string): Promise<void> {
+  await query(
+    `INSERT INTO config (key, value, description, updated_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description, updated_at = NOW()`,
+    [key, value, description || ""],
+  );
 }
 
-export function createKbCategory(name: string, label: string) {
-  const d = getDb();
-  initKbTables();
-  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+export async function deleteConfig(key: string): Promise<void> {
+  await query("DELETE FROM config WHERE key = $1", [key]);
+}
+
+export async function seedDefaultConfig(): Promise<void> {
+  const defaults: Record<string, { value: string; description: string }> = {
+    max_chats_per_user: { value: "999", description: "Máximo de chats por usuario" },
+    max_file_size_mb: { value: "20", description: "Tamaño máximo de archivos (MB)" },
+    max_knowledge_files_per_heart: { value: "3", description: "Archivos de conocimiento por Heart" },
+    allow_registration: { value: "true", description: "Permitir nuevos registros" },
+    allow_guest_access: { value: "false", description: "Permitir acceso sin login" },
+    default_user_role: { value: "user", description: "Rol por defecto al registrarse" },
+    maintenance_mode: { value: "false", description: "Modo mantenimiento" },
+    ollama_context_length: { value: "32768", description: "Contexto del modelo (tokens)" },
+    ollama_num_predict: { value: "4096", description: "Tokens máximos de respuesta" },
+    ollama_temperature: { value: "0.3", description: "Temperatura por defecto del modelo" },
+    rate_limit_per_minute: { value: "30", description: "Rate limit por minuto" },
+    heart_memory_enabled: { value: "true", description: "Memoria persistente para Hearts" },
+    chat_summary_enabled: { value: "true", description: "Resúmenes automáticos de chat" },
+  };
+
+  await withTransaction(async (client: PoolClient) => {
+    for (const [key, config] of Object.entries(defaults)) {
+      await client.query(
+        `INSERT INTO config (key, value, description)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (key) DO NOTHING`,
+        [key, config.value, config.description],
+      );
+    }
+  });
+}
+
+export async function initKnowledgeTable(): Promise<void> { return; }
+
+export async function getKnowledgeEntries(category?: string): Promise<KnowledgeEntryRow[]> {
+  const baseQuery = `
+    SELECT ke.*, CASE WHEN u.role = 'super_admin' THEN '—' ELSE u.name END AS created_by_name
+    FROM knowledge_entries ke
+    LEFT JOIN users u ON ke.created_by = u.id`;
+  const result = category
+    ? await query(`${baseQuery} WHERE ke.category = $1 ORDER BY ke.updated_at DESC`, [category])
+    : await query(`${baseQuery} ORDER BY ke.updated_at DESC`);
+  return (result.rows as DbRow[]).map((row) => ({
+    ...row,
+    id: textValue(row.id),
+    title: textValue(row.title),
+    content: textValue(row.content),
+    category: textValue(row.category, "general"),
+    created_by: nullableTextValue(row.created_by),
+    created_by_name: nullableTextValue(row.created_by_name),
+    created_at: textValue(row.created_at),
+    updated_at: textValue(row.updated_at),
+  })) as KnowledgeEntryRow[];
+}
+
+export async function createKnowledgeEntry(
+  id: string,
+  title: string,
+  content: string,
+  category: string,
+  createdBy: string,
+): Promise<void> {
+  await query(
+    "INSERT INTO knowledge_entries (id, title, content, category, created_by) VALUES ($1, $2, $3, $4, $5)",
+    [id, title, content, category, createdBy],
+  );
+}
+
+export async function deleteKnowledgeEntry(id: string): Promise<void> {
+  await query("DELETE FROM knowledge_entries WHERE id = $1", [id]);
+}
+
+export async function updateKnowledgeEntry(
+  id: string,
+  title: string,
+  content: string,
+  category: string,
+): Promise<void> {
+  await query(
+    "UPDATE knowledge_entries SET title = $1, content = $2, category = $3, updated_at = NOW() WHERE id = $4",
+    [title, content, category, id],
+  );
+}
+
+export async function initKbTables(): Promise<void> { return; }
+
+export async function getKbCategories(): Promise<KbCategoryWithCounts[]> {
+  const result = await query(
+    `SELECT c.*,
+       (SELECT COUNT(*)::int FROM kb_files f WHERE f.category_id = c.id) AS file_count,
+       (SELECT COUNT(*)::int FROM kb_files f WHERE f.category_id = c.id AND f.status = 'active') AS active_count
+     FROM kb_categories c
+     ORDER BY CASE WHEN c.name = 'general' THEN 0 ELSE 1 END, c.label ASC`,
+  );
+  return (result.rows as DbRow[]).map((row) => ({
+    ...normalizeCategory(row),
+    file_count: numberValue(row.file_count),
+    active_count: numberValue(row.active_count),
+  })) as KbCategoryWithCounts[];
+}
+
+export async function getKbCategoryById(id: string): Promise<KbCategory | null> {
+  const result = await query("SELECT * FROM kb_categories WHERE id = $1 LIMIT 1", [id]);
+  const row = result.rows[0] as DbRow | undefined;
+  return row ? normalizeCategory(row) : null;
+}
+
+export async function getKbCategoryBySlug(name: string): Promise<KbCategory | null> {
+  const result = await query("SELECT * FROM kb_categories WHERE name = $1 LIMIT 1", [name]);
+  const row = result.rows[0] as DbRow | undefined;
+  return row ? normalizeCategory(row) : null;
+}
+
+export async function createKbCategory(name: string, label: string): Promise<KbCategory | null> {
+  const slug = slugify(name);
   const id = crypto.randomUUID();
-  d.prepare("INSERT INTO kb_categories (id, name, label) VALUES (?, ?, ?)").run(id, slug, label.trim());
-  return getKbCategoryById(id);
+  await query("INSERT INTO kb_categories (id, name, label) VALUES ($1, $2, $3)", [id, slug, label.trim()]);
+  const category = await getKbCategoryById(id);
+  return category;
 }
 
-export function updateKbCategory(id: string, data: { name?: string; label?: string }) {
-  const d = getDb();
-  initKbTables();
-  const cat = getKbCategoryById(id);
-  if (!cat) return false;
-  if (cat.name === "general" && data.name && data.name !== "general") return false;
-
-  const name = data.name ? data.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") : cat.name;
-  const label = data.label !== undefined ? data.label.trim() : cat.label;
-  const r = d.prepare("UPDATE kb_categories SET name = ?, label = ?, updated_at = datetime('now') WHERE id = ?")
-    .run(name, label, id);
-  return r.changes > 0;
+export async function updateKbCategory(
+  id: string,
+  data: { name?: string; label?: string },
+): Promise<boolean> {
+  const category = await getKbCategoryById(id);
+  if (!category) return false;
+  if (category.name === "general" && data.name && data.name !== "general") return false;
+  const name = data.name ? slugify(data.name) : category.name;
+  const label = data.label !== undefined ? data.label.trim() : category.label;
+  const result = await query(
+    "UPDATE kb_categories SET name = $1, label = $2, updated_at = NOW() WHERE id = $3",
+    [name, label, id],
+  );
+  return (result.rowCount ?? 0) > 0;
 }
 
-export function deleteKbCategory(id: string) {
-  const d = getDb();
-  initKbTables();
-  const cat = getKbCategoryById(id);
-  if (!cat || cat.name === "general") return false;
-  const r = d.prepare("DELETE FROM kb_categories WHERE id = ?").run(id);
-  return r.changes > 0;
+export async function deleteKbCategory(id: string): Promise<boolean> {
+  const category = await getKbCategoryById(id);
+  if (!category || category.name === "general") return false;
+  const result = await query("DELETE FROM kb_categories WHERE id = $1", [id]);
+  return (result.rowCount ?? 0) > 0;
 }
 
-/* ============ KB: FILES ============ */
-
-export function getKbFiles(filters?: { categoryId?: string; status?: string; search?: string }) {
-  const d = getDb();
-  initKbTables();
+export async function getKbFiles(filters?: {
+  categoryId?: string;
+  status?: string;
+  search?: string;
+}): Promise<KbFile[]> {
   let sql = `
     SELECT f.*, c.name AS category_name, c.label AS category_label,
       u.name AS uploader_name,
       cf.filename AS conflict_with_filename,
-      (SELECT COUNT(*) FROM kb_chunks kc WHERE kc.file_id = f.id) AS chunk_count
+      (SELECT COUNT(*)::int FROM kb_chunks kc WHERE kc.file_id = f.id) AS chunk_count
     FROM kb_files f
     LEFT JOIN kb_categories c ON f.category_id = c.id
     LEFT JOIN users u ON f.uploaded_by = u.id
     LEFT JOIN kb_files cf ON f.conflict_with = cf.id
-    WHERE 1=1
-  `;
+    WHERE 1=1`;
   const params: unknown[] = [];
-  if (filters?.categoryId) { sql += " AND f.category_id = ?"; params.push(filters.categoryId); }
-  if (filters?.status) { sql += " AND f.status = ?"; params.push(filters.status); }
+  if (filters?.categoryId) {
+    params.push(filters.categoryId);
+    sql += ` AND f.category_id = $${params.length}`;
+  }
+  if (filters?.status) {
+    params.push(filters.status);
+    sql += ` AND f.status = $${params.length}`;
+  }
   if (filters?.search) {
-    sql += " AND (f.filename LIKE ? OR f.content LIKE ?)";
-    const q = `%${filters.search}%`;
-    params.push(q, q);
+    params.push(`%${filters.search}%`, `%${filters.search}%`);
+    sql += ` AND (f.filename ILIKE $${params.length - 1} OR f.content ILIKE $${params.length})`;
   }
   sql += " ORDER BY f.created_at DESC";
-  return d.prepare(sql).all(...params) as KbFile[];
+  const result = await query(sql, params);
+  return (result.rows as DbRow[]).map(normalizeKbFile);
 }
 
-export function getKbFileById(id: string) {
-  const d = getDb();
-  initKbTables();
-  return d.prepare(`
-    SELECT f.*, c.name AS category_name, c.label AS category_label,
+export async function getKbFileById(id: string): Promise<KbFile | null> {
+  const result = await query(
+    `SELECT f.*, c.name AS category_name, c.label AS category_label,
       u.name AS uploader_name,
       cf.filename AS conflict_with_filename
-    FROM kb_files f
-    LEFT JOIN kb_categories c ON f.category_id = c.id
-    LEFT JOIN users u ON f.uploaded_by = u.id
-    LEFT JOIN kb_files cf ON f.conflict_with = cf.id
-    WHERE f.id = ?
-  `).get(id) as KbFile;
+     FROM kb_files f
+     LEFT JOIN kb_categories c ON f.category_id = c.id
+     LEFT JOIN users u ON f.uploaded_by = u.id
+     LEFT JOIN kb_files cf ON f.conflict_with = cf.id
+     WHERE f.id = $1
+     LIMIT 1`,
+    [id],
+  );
+  const row = result.rows[0] as DbRow | undefined;
+  return row ? normalizeKbFile(row) : null;
 }
 
-export function insertKbFile(data: {
+export async function insertKbFile(data: {
   id: string;
   filename: string;
   format: string;
@@ -862,410 +1071,452 @@ export function insertKbFile(data: {
   content?: string;
   checksum?: string | null;
   uploaded_by?: string | null;
-}) {
-  const d = getDb();
-  initKbTables();
-  d.prepare(`
-    INSERT INTO kb_files (id, filename, format, size_bytes, category_id, status, conflict_with, content, checksum, uploaded_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    data.id,
-    data.filename,
-    data.format,
-    data.size_bytes || 0,
-    data.category_id ?? null,
-    data.status || "processing",
-    data.conflict_with ?? null,
-    data.content || "",
-    data.checksum ?? null,
-    data.uploaded_by ?? null
+}): Promise<void> {
+  await query(
+    `INSERT INTO kb_files
+       (id, filename, format, size_bytes, category_id, status, conflict_with, content, checksum, uploaded_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
+      data.id,
+      data.filename,
+      data.format,
+      data.size_bytes || 0,
+      data.category_id ?? null,
+      data.status || "processing",
+      data.conflict_with ?? null,
+      data.content || "",
+      data.checksum ?? null,
+      data.uploaded_by ?? null,
+    ],
   );
 }
 
-export function updateKbFile(id: string, data: Record<string, unknown>, includeUpdatedAt = true) {
-  const d = getDb();
-  initKbTables();
-  const fields = Object.keys(data).filter((k) => !["id", "created_at", "updated_at"].includes(k));
+export async function updateKbFile(
+  id: string,
+  data: Record<string, unknown>,
+  includeUpdatedAt = true,
+): Promise<void> {
+  const fields = KB_FILE_UPDATE_FIELDS.filter((field) => Object.prototype.hasOwnProperty.call(data, field));
   if (fields.length === 0) return;
-  const sets = fields.map((k) => `${k} = ?`).join(", ");
-  const values = fields.map((k) => (typeof data[k] === "undefined" ? null : data[k]));
-  const ts = includeUpdatedAt ? ", updated_at = datetime('now')" : "";
-  d.prepare(`UPDATE kb_files SET ${sets}${ts} WHERE id = ?`).run(...values, id);
+  const assignments = fields.map((field, index) => `${field} = $${index + 1}`);
+  const values = fields.map((field) => serializeKbValue(field, data[field]));
+  if (includeUpdatedAt) assignments.push("updated_at = NOW()");
+  values.push(id);
+  await query(`UPDATE kb_files SET ${assignments.join(", ")} WHERE id = $${values.length}`, values);
 }
 
-export function deleteKbFileById(id: string) {
-  const d = getDb();
-  initKbTables();
-  // Liberar conflictos que apuntan a este archivo
-  d.prepare("UPDATE kb_files SET conflict_with = NULL WHERE conflict_with = ?").run(id);
-  const r = d.prepare("DELETE FROM kb_files WHERE id = ?").run(id);
-  return r.changes > 0;
+export async function deleteKbFileById(id: string): Promise<boolean> {
+  return withTransaction(async (client: PoolClient) => {
+    await client.query("UPDATE kb_files SET conflict_with = NULL WHERE conflict_with = $1", [id]);
+    const result = await client.query("DELETE FROM kb_files WHERE id = $1", [id]);
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
-export function findKbFileByName(name: string) {
-  const d = getDb();
-  initKbTables();
-  return d.prepare("SELECT * FROM kb_files WHERE filename = ? ORDER BY created_at DESC").all(name) as KbFile[];
+export async function findKbFileByName(name: string): Promise<KbFile[]> {
+  const result = await query(
+    "SELECT * FROM kb_files WHERE filename = $1 ORDER BY created_at DESC",
+    [name],
+  );
+  return (result.rows as DbRow[]).map(normalizeKbFile);
 }
 
-export function getActiveKbFileIds(categoryIds?: string[]) {
-  const d = getDb();
-  initKbTables();
-  if (categoryIds && categoryIds.length > 0) {
-    const placeholders = categoryIds.map(() => "?").join(",");
-    return d.prepare(`SELECT id FROM kb_files WHERE status = 'active' AND category_id IN (${placeholders})`)
-      .all(...categoryIds) as { id: string }[];
+export async function getActiveKbFileIds(categoryIds?: string[]): Promise<Array<{ id: string }>> {
+  if (!categoryIds || categoryIds.length === 0) {
+    const result = await query("SELECT id FROM kb_files WHERE status = 'active'");
+    return (result.rows as DbRow[]).map((row) => ({ id: textValue(row.id) }));
   }
-  return d.prepare("SELECT id FROM kb_files WHERE status = 'active'").all() as { id: string }[];
+  const placeholders = categoryIds.map((_, index) => `$${index + 1}`).join(", ");
+  const result = await query(
+    `SELECT id FROM kb_files WHERE status = 'active' AND category_id IN (${placeholders})`,
+    categoryIds,
+  );
+  return (result.rows as DbRow[]).map((row) => ({ id: textValue(row.id) }));
 }
 
-/* ============ KB: CHUNKS ============ */
-
-export function storeKbChunks(chunks: Array<{
-  id: string;
-  file_id: string;
-  category_id: string | null;
-  chunk_index: number;
-  content: string;
-  embedding: string;
-}>) {
-  const d = getDb();
-  initKbTables();
-  const insert = d.prepare(`
-    INSERT INTO kb_chunks (id, file_id, category_id, chunk_index, content, embedding)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-  const tx = d.transaction((items: typeof chunks) => {
-    for (const c of items) {
-      insert.run(c.id, c.file_id, c.category_id, c.chunk_index, c.content, c.embedding);
+export async function storeKbChunks(
+  chunks: Array<{
+    id: string;
+    file_id: string;
+    category_id: string | null;
+    chunk_index: number;
+    content: string;
+    embedding: EmbeddingInput;
+  }>,
+): Promise<void> {
+  if (chunks.length === 0) return;
+  await withTransaction(async (client: PoolClient) => {
+    for (const chunk of chunks) {
+      await client.query(
+        `INSERT INTO kb_chunks (id, file_id, category_id, chunk_index, content, embedding)
+         VALUES ($1, $2, $3, $4, $5, $6::vector)`,
+        [
+          chunk.id,
+          chunk.file_id,
+          chunk.category_id,
+          chunk.chunk_index,
+          chunk.content,
+          serializeEmbedding(chunk.embedding),
+        ],
+      );
     }
   });
-  tx(chunks);
 }
 
-export function getKbChunksByFile(fileId: string) {
-  const d = getDb();
-  initKbTables();
-  return d.prepare("SELECT * FROM kb_chunks WHERE file_id = ? ORDER BY chunk_index ASC").all(fileId) as KbChunk[];
+export async function getKbChunksByFile(fileId: string): Promise<KbChunk[]> {
+  const result = await query(
+    "SELECT id, file_id, category_id, chunk_index, content, embedding::text AS embedding, created_at FROM kb_chunks WHERE file_id = $1 ORDER BY chunk_index ASC",
+    [fileId],
+  );
+  return (result.rows as DbRow[]).map(normalizeKbChunk);
 }
 
-export function countKbChunksByFile(fileId: string) {
-  const d = getDb();
-  initKbTables();
-  const row = d.prepare("SELECT COUNT(*) as c FROM kb_chunks WHERE file_id = ?").get(fileId) as CountRow;
-  return row?.c || 0;
+export async function countKbChunksByFile(fileId: string): Promise<number> {
+  const result = await query("SELECT COUNT(*)::int AS c FROM kb_chunks WHERE file_id = $1", [fileId]);
+  return countFromRow(result.rows[0]);
 }
 
-export function deleteKbChunksByFile(fileId: string) {
-  const d = getDb();
-  initKbTables();
-  d.prepare("DELETE FROM kb_chunks WHERE file_id = ?").run(fileId);
+export async function deleteKbChunksByFile(fileId: string): Promise<void> {
+  await query("DELETE FROM kb_chunks WHERE file_id = $1", [fileId]);
 }
 
-export function updateKbChunksCategory(fileId: string, categoryId: string | null) {
-  const d = getDb();
-  initKbTables();
-  d.prepare("UPDATE kb_chunks SET category_id = ? WHERE file_id = ?").run(categoryId, fileId);
+export async function updateKbChunksCategory(fileId: string, categoryId: string | null): Promise<void> {
+  await query("UPDATE kb_chunks SET category_id = $1 WHERE file_id = $2", [categoryId, fileId]);
 }
 
-export function getKbChunksByCategoryIds(categoryIds: string[]) {
-  const d = getDb();
-  initKbTables();
+export async function getKbChunksByCategoryIds(
+  categoryIds: string[],
+): Promise<Array<KbChunk & { filename: string }>> {
   if (categoryIds.length === 0) return [];
-  const placeholders = categoryIds.map(() => "?").join(",");
-  return d.prepare(`
-    SELECT kc.*, f.filename, f.category_id
-    FROM kb_chunks kc
-    JOIN kb_files f ON kc.file_id = f.id
-    WHERE kc.category_id IN (${placeholders}) AND f.status = 'active'
-  `).all(...categoryIds) as Array<KbChunk & { filename: string }>;
+  const placeholders = categoryIds.map((_, index) => `$${index + 1}`).join(", ");
+  const result = await query(
+    `SELECT kc.id, kc.file_id, kc.category_id, kc.chunk_index, kc.content,
+       kc.embedding::text AS embedding, kc.created_at, f.filename, f.category_id AS file_category_id
+     FROM kb_chunks kc
+     JOIN kb_files f ON f.id = kc.file_id
+     WHERE kc.category_id IN (${placeholders}) AND f.status = 'active'`,
+    categoryIds,
+  );
+  return (result.rows as DbRow[]).map((row) => ({
+    ...normalizeKbChunk(row),
+    filename: textValue(row.filename, "documento"),
+  }));
 }
 
-/* ============ KB: MIGRATION (legacy knowledge_entries) ============ */
-
-export function migrateKnowledgeEntriesToKb(): { migrated: number; failed: number } {
-  const d = getDb();
-  // Nota: la migración la invoca initKbTables (que ya creó kb_*); no llamar
-  // initKbTables aquí o se forma una recursión infinita.
-  // One-shot migration con flag en config
-  const alreadyDone = getConfig("kb_entries_migrated");
-  if (alreadyDone === "true") return { migrated: 0, failed: 0 };
-
-  // En instalaciones frescas la tabla legacy puede no existir (solo la crean
-  // las funciones legacy de knowledge_entries). Asegurarla evita SQLITE_ERROR
-  // en el primer arranque.
-  initKnowledgeTable();
-
-  const entries = d.prepare("SELECT * FROM knowledge_entries").all() as KnowledgeEntryRow[];
-  if (entries.length === 0) {
-    setConfig("kb_entries_migrated", "true", "Entradas legacy migradas a kb_files");
-    return { migrated: 0, failed: 0 };
-  }
-
-  let migrated = 0;
-  let failed = 0;
-  for (const entry of entries) {
-    try {
-      // Resolver categoría por nombre (o default general)
-      const cat = getKbCategoryBySlug(entry.category || "general");
-      const existing = d.prepare("SELECT id FROM kb_files WHERE filename = ?").get(entry.title) as { id: string } | undefined;
-      if (existing) {
-        // Ya migrada: actualizar contenido
-        d.prepare("UPDATE kb_files SET content = ?, updated_at = datetime('now') WHERE id = ?")
-          .run(entry.content, existing.id);
-      } else {
-        const id = crypto.randomUUID();
-        insertKbFile({
-          id,
-          filename: entry.title,
-          format: "text",
-          category_id: cat?.id || null,
-          // Queda en 'processing' hasta reindexar (genera chunks/embeddings)
-          status: "processing",
-          content: entry.content,
-          uploaded_by: entry.created_by || null,
-        });
-      }
-      migrated++;
-    } catch {
-      failed++;
-    }
-  }
-
-  setConfig("kb_entries_migrated", "true", "Entradas legacy migradas a kb_files");
-  return { migrated, failed };
+export async function searchKbChunksByCategories(
+  categoryIds: string[],
+  embedding: EmbeddingInput,
+  threshold = 0.5,
+  limit = 5,
+): Promise<Array<KbChunk & { filename: string; score: number }>> {
+  if (categoryIds.length === 0) return [];
+  const placeholders = categoryIds.map((_, index) => `$${index + 1}`).join(", ");
+  const vectorPosition = categoryIds.length + 1;
+  const result = await query(
+    `SELECT kc.id, kc.file_id, kc.category_id, kc.chunk_index, kc.content,
+       kc.embedding::text AS embedding, kc.created_at, f.filename,
+       1 - (kc.embedding <=> $${vectorPosition}::vector) AS score
+     FROM kb_chunks kc
+     JOIN kb_files f ON f.id = kc.file_id
+     WHERE kc.category_id IN (${placeholders})
+       AND f.status = 'active'
+       AND 1 - (kc.embedding <=> $${vectorPosition}::vector) > $${vectorPosition + 1}
+     ORDER BY kc.embedding <=> $${vectorPosition}::vector
+     LIMIT $${vectorPosition + 2}`,
+    [...categoryIds, serializeEmbedding(embedding), threshold, limit],
+  );
+  return (result.rows as DbRow[]).map((row) => ({
+    ...normalizeKbChunk(row),
+    filename: textValue(row.filename, "documento"),
+    score: numberValue(row.score),
+  }));
 }
 
-/* ============ ADMIN: CHAT DETAIL ============ */
-
-export function getChatWithMessages(chatId: string) {
-  const d = getDb();
-  const chat = d.prepare(`
-    SELECT c.*, u.name AS user_name, u.email AS user_email, u.role AS user_role
-    FROM chats c
-    LEFT JOIN users u ON c.user_id = u.id
-    WHERE c.id = ?
-  `).get(chatId) as ChatWithOwnerRow;
-  if (!chat) return null;
-
-  const messages = d.prepare("SELECT * FROM messages WHERE chat_id = ? ORDER BY id ASC").all(chatId) as MessageRow[];
-  return { ...chat, messages };
+export async function migrateKnowledgeEntriesToKb(): Promise<{ migrated: number; failed: number }> {
+  return { migrated: 0, failed: 0 };
 }
 
-/* ============ ADMIN: ALL PROJECTS ============ */
+export async function getChatWithMessages(chatId: string): Promise<ChatWithOwnerRow | null> {
+  const result = await query(
+    `SELECT c.*, u.name AS user_name, u.email AS user_email, u.role AS user_role
+     FROM chats c
+     LEFT JOIN users u ON c.user_id = u.id
+     WHERE c.id = $1
+     LIMIT 1`,
+    [chatId],
+  );
+  const rawChat = result.rows[0] as DbRow | undefined;
+  if (!rawChat) return null;
+  const messagesResult = await query(
+    "SELECT * FROM messages WHERE chat_id = $1 ORDER BY id ASC",
+    [chatId],
+  );
+  const chat = normalizeChat(rawChat);
+  return {
+    ...chat,
+    user_name: nullableTextValue(rawChat.user_name),
+    user_email: nullableTextValue(rawChat.user_email),
+    user_role: nullableTextValue(rawChat.user_role),
+    messages: (messagesResult.rows as DbRow[]).map(normalizeMessageRow),
+  } as ChatWithOwnerRow;
+}
 
-export function getAllProjectsAdmin(search = "") {
-  const d = getDb();
+export async function getAllProjectsAdmin(search = ""): Promise<ProjectAdminRow[]> {
   let sql = `
     SELECT p.*, u.name AS user_name, u.email AS user_email, u.role AS user_role,
-      (SELECT COUNT(*) FROM chats WHERE project_id = p.id) AS chat_count
+      (SELECT COUNT(*)::int FROM project_chats pc WHERE pc.project_id = p.id) AS chat_count
     FROM projects p
-    LEFT JOIN users u ON p.user_id = u.id
-  `;
+    LEFT JOIN users u ON p.user_id = u.id`;
   const params: unknown[] = [];
   if (search) {
-    sql += " WHERE (p.name LIKE ? OR u.name LIKE ? OR u.email LIKE ?)";
-    const q = `%${search}%`;
-    params.push(q, q, q);
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    sql += ` WHERE (p.name ILIKE $1 OR u.name ILIKE $2 OR u.email ILIKE $3)`;
   }
   sql += " ORDER BY p.created_at DESC LIMIT 200";
-  return d.prepare(sql).all(...params) as ProjectAdminRow[];
+  const result = await query(sql, params);
+  return (result.rows as DbRow[]).map((row) => ({
+    ...normalizeProject(row),
+    user_name: nullableTextValue(row.user_name),
+    user_email: nullableTextValue(row.user_email),
+    user_role: nullableTextValue(row.user_role),
+    chat_count: numberValue(row.chat_count),
+  })) as ProjectAdminRow[];
 }
 
-/* ============ ADMIN: ALL CHATS ============ */
-
-export function getAllChatsAdmin(search = "") {
-  const d = getDb();
+export async function getAllChatsAdmin(search = ""): Promise<ChatAdminRow[]> {
   let sql = `
     SELECT c.id, c.title, c.created_at, c.updated_at, c.user_id, c.heart_id,
-           u.name AS user_name, u.email AS user_email, u.role AS user_role,
-           (SELECT COUNT(*) FROM messages WHERE chat_id = c.id) AS message_count,
-           (SELECT content FROM messages WHERE chat_id = c.id ORDER BY id DESC LIMIT 1) AS last_message
+      u.name AS user_name, u.email AS user_email, u.role AS user_role,
+      (SELECT COUNT(*)::int FROM messages WHERE chat_id = c.id) AS message_count,
+      (SELECT content FROM messages WHERE chat_id = c.id ORDER BY id DESC LIMIT 1) AS last_message
     FROM chats c
-    LEFT JOIN users u ON c.user_id = u.id
-  `;
+    LEFT JOIN users u ON c.user_id = u.id`;
   const params: unknown[] = [];
   if (search) {
-    sql += " WHERE (c.title LIKE ? OR u.name LIKE ? OR u.email LIKE ?)";
-    const q = `%${search}%`;
-    params.push(q, q, q);
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    sql += ` WHERE (c.title ILIKE $1 OR u.name ILIKE $2 OR u.email ILIKE $3)`;
   }
   sql += " ORDER BY c.updated_at DESC LIMIT 500";
-  return d.prepare(sql).all(...params) as ChatAdminRow[];
+  const result = await query(sql, params);
+  return (result.rows as DbRow[]).map((row) => ({
+    ...normalizeChat(row),
+    user_name: nullableTextValue(row.user_name),
+    user_email: nullableTextValue(row.user_email),
+    user_role: nullableTextValue(row.user_role),
+    message_count: numberValue(row.message_count),
+    last_message: nullableTextValue(row.last_message),
+  })) as ChatAdminRow[];
 }
 
-/* ============ AUDIT LOG ============ */
+export async function initAuditTable(): Promise<void> { return; }
 
-export function initAuditTable() {
-  const d = getDb();
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS audit_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
-      action TEXT NOT NULL,
-      details TEXT DEFAULT '',
-      ip TEXT DEFAULT '',
-      created_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-  try { d.exec("CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id)"); } catch {}
-  try { d.exec("CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action)"); } catch {}
-  try { d.exec("CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at)"); } catch {}
+export async function logAudit(
+  userId: string | null,
+  action: string,
+  details = "",
+  ip = "",
+): Promise<void> {
+  await query(
+    "INSERT INTO audit_log (user_id, action, details, ip) VALUES ($1, $2, $3, $4)",
+    [userId, action, details || "", ip || ""],
+  );
 }
 
-export function logAudit(userId: string | null, action: string, details?: string, ip?: string) {
-  const d = getDb();
-  initAuditTable();
-  d.prepare("INSERT INTO audit_log (user_id, action, details, ip) VALUES (?, ?, ?, ?)")
-    .run(userId, action, details || "", ip || "");
-}
-
-export function getAuditLogs(limit = 100, offset = 0, action?: string, userId?: string, callerRole?: string) {
-  const d = getDb();
-  initAuditTable();
+export async function getAuditLogs(
+  limit = 100,
+  offset = 0,
+  action?: string,
+  userId?: string,
+  callerRole?: string,
+): Promise<AuditLogRow[]> {
   let sql = `
     SELECT a.*, u.name AS user_name, u.email AS user_email
     FROM audit_log a
     LEFT JOIN users u ON a.user_id = u.id
-    WHERE 1=1
-  `;
+    WHERE 1=1`;
   const params: unknown[] = [];
-  // No-super_admin no ven acciones de super_admin
   if (callerRole && callerRole !== "super_admin") {
-    sql += " AND (u.role IS NULL OR u.role != ?)";
     params.push("super_admin");
+    sql += ` AND (u.role IS NULL OR u.role <> $${params.length})`;
   }
-  if (action) { sql += " AND a.action = ?"; params.push(action); }
-  if (userId) { sql += " AND a.user_id = ?"; params.push(userId); }
-  sql += " ORDER BY a.created_at DESC LIMIT ? OFFSET ?";
+  if (action) {
+    params.push(action);
+    sql += ` AND a.action = $${params.length}`;
+  }
+  if (userId) {
+    params.push(userId);
+    sql += ` AND a.user_id = $${params.length}`;
+  }
   params.push(limit, offset);
-  return d.prepare(sql).all(...params) as AuditLogRow[];
+  sql += ` ORDER BY a.created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`;
+  const result = await query(sql, params);
+  return (result.rows as DbRow[]).map(normalizeAuditLog);
 }
 
-export function countAuditLogs(action?: string, userId?: string, callerRole?: string) {
-  const d = getDb();
-  initAuditTable();
-  let sql = "SELECT COUNT(*) as c FROM audit_log a LEFT JOIN users u ON a.user_id = u.id WHERE 1=1";
+export async function countAuditLogs(
+  action?: string,
+  userId?: string,
+  callerRole?: string,
+): Promise<number> {
+  let sql = "SELECT COUNT(*)::int AS c FROM audit_log a LEFT JOIN users u ON a.user_id = u.id WHERE 1=1";
   const params: unknown[] = [];
   if (callerRole && callerRole !== "super_admin") {
-    sql += " AND (u.role IS NULL OR u.role != ?)";
     params.push("super_admin");
+    sql += ` AND (u.role IS NULL OR u.role <> $${params.length})`;
   }
-  if (action) { sql += " AND a.action = ?"; params.push(action); }
-  if (userId) { sql += " AND a.user_id = ?"; params.push(userId); }
-  const row = d.prepare(sql).get(...params) as CountRow;
-  return row?.c || 0;
+  if (action) {
+    params.push(action);
+    sql += ` AND a.action = $${params.length}`;
+  }
+  if (userId) {
+    params.push(userId);
+    sql += ` AND a.user_id = $${params.length}`;
+  }
+  const result = await query(sql, params);
+  return countFromRow(result.rows[0]);
 }
 
-export function getAuditActions() {
-  const d = getDb();
-  initAuditTable();
-  return d.prepare("SELECT DISTINCT action FROM audit_log ORDER BY action").all() as { action: string }[];
+export async function getAuditActions(): Promise<Array<{ action: string }>> {
+  const result = await query("SELECT DISTINCT action FROM audit_log ORDER BY action");
+  return (result.rows as DbRow[]).map((row) => ({ action: textValue(row.action) }));
 }
 
-/* ============ ANNOUNCEMENTS ============ */
+export async function initAnnouncementsTable(): Promise<void> { return; }
 
-export function initAnnouncementsTable() {
-  const d = getDb();
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS announcements (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      content TEXT NOT NULL,
-      type TEXT DEFAULT 'info',
-      active INTEGER DEFAULT 1,
-      created_by TEXT REFERENCES users(id),
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-}
-
-export function getAnnouncements(activeOnly = false) {
-  const d = getDb();
-  initAnnouncementsTable();
+export async function getAnnouncements(activeOnly = false): Promise<AnnouncementRow[]> {
   let sql = `
     SELECT a.*, CASE WHEN u.role = 'super_admin' THEN '—' ELSE u.name END AS created_by_name
     FROM announcements a
-    LEFT JOIN users u ON a.created_by = u.id
-  `;
-  if (activeOnly) sql += " WHERE a.active = 1";
+    LEFT JOIN users u ON a.created_by = u.id`;
+  if (activeOnly) sql += " WHERE a.active = TRUE";
   sql += " ORDER BY a.created_at DESC";
-  return d.prepare(sql).all() as AnnouncementRow[];
+  const result = await query(sql);
+  return (result.rows as DbRow[]).map(normalizeAnnouncement);
 }
 
-export function getActiveAnnouncements() {
-  return getAnnouncements(true);
+export async function getActiveAnnouncements(): Promise<AnnouncementRow[]> {
+  const announcements = await getAnnouncements(true);
+  return announcements;
 }
 
-export function createAnnouncement(id: string, title: string, content: string, type: string, createdBy: string) {
-  const d = getDb();
-  initAnnouncementsTable();
-  d.prepare("INSERT INTO announcements (id, title, content, type, created_by) VALUES (?, ?, ?, ?, ?)")
-    .run(id, title, content, type, createdBy);
+export async function createAnnouncement(
+  id: string,
+  title: string,
+  content: string,
+  type: string,
+  createdBy: string,
+): Promise<void> {
+  await query(
+    "INSERT INTO announcements (id, title, content, type, created_by) VALUES ($1, $2, $3, $4, $5)",
+    [id, title, content, type, createdBy],
+  );
 }
 
-export function updateAnnouncement(id: string, data: Record<string, unknown>) {
-  const d = getDb();
-  initAnnouncementsTable();
-  const fields = Object.keys(data).filter(k => k !== "id").map(k => `${k} = ?`).join(", ");
-  const values = Object.keys(data).filter(k => k !== "id").map(k => data[k]);
-  if (!fields) return;
-  d.prepare(`UPDATE announcements SET ${fields}, updated_at = datetime('now') WHERE id = ?`).run(...values, id);
+export async function updateAnnouncement(id: string, data: Record<string, unknown>): Promise<void> {
+  const fields = ANNOUNCEMENT_UPDATE_FIELDS.filter((field) =>
+    Object.prototype.hasOwnProperty.call(data, field),
+  );
+  if (fields.length === 0) return;
+  const assignments = fields.map((field, index) => `${field} = $${index + 1}`);
+  const values = fields.map((field) => (field === "active" ? booleanValue(data[field]) : data[field] ?? null));
+  values.push(id);
+  await query(
+    `UPDATE announcements SET ${assignments.join(", ")}, updated_at = NOW() WHERE id = $${values.length}`,
+    values,
+  );
 }
 
-export function deleteAnnouncement(id: string) {
-  const d = getDb();
-  initAnnouncementsTable();
-  d.prepare("DELETE FROM announcements WHERE id = ?").run(id);
+export async function deleteAnnouncement(id: string): Promise<void> {
+  await query("DELETE FROM announcements WHERE id = $1", [id]);
 }
 
-/* ============ BACKUPS (metadata) ============ */
+export async function initBackupsTable(): Promise<void> { return; }
 
-export function initBackupsTable() {
-  const d = getDb();
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS backups (
-      id TEXT PRIMARY KEY,
-      filename TEXT NOT NULL,
-      size_bytes INTEGER DEFAULT 0,
-      status TEXT DEFAULT 'pending',
-      created_by TEXT REFERENCES users(id),
-      created_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
+export async function createBackup(id: string, filename: string, createdBy: string): Promise<void> {
+  await query("INSERT INTO backups (id, filename, created_by) VALUES ($1, $2, $3)", [
+    id,
+    filename,
+    createdBy,
+  ]);
 }
 
-export function createBackup(id: string, filename: string, createdBy: string) {
-  const d = getDb();
-  initBackupsTable();
-  d.prepare("INSERT INTO backups (id, filename, created_by) VALUES (?, ?, ?)").run(id, filename, createdBy);
-}
-
-export function updateBackupStatus(id: string, status: string, sizeBytes?: number) {
-  const d = getDb();
-  initBackupsTable();
+export async function updateBackupStatus(id: string, status: string, sizeBytes?: number): Promise<void> {
   if (sizeBytes !== undefined) {
-    d.prepare("UPDATE backups SET status = ?, size_bytes = ? WHERE id = ?").run(status, sizeBytes, id);
+    await query("UPDATE backups SET status = $1, size_bytes = $2 WHERE id = $3", [status, sizeBytes, id]);
   } else {
-    d.prepare("UPDATE backups SET status = ? WHERE id = ?").run(status, id);
+    await query("UPDATE backups SET status = $1 WHERE id = $2", [status, id]);
   }
 }
 
-export function getBackups(limit = 20) {
-  const d = getDb();
-  initBackupsTable();
-  return d.prepare(`
-    SELECT b.*, u.name AS created_by_name
-    FROM backups b
-    LEFT JOIN users u ON b.created_by = u.id
-    ORDER BY b.created_at DESC LIMIT ?
-  `).all(limit) as BackupRow[];
+export async function getBackups(limit = 20): Promise<BackupRow[]> {
+  const result = await query(
+    `SELECT b.*, u.name AS created_by_name
+     FROM backups b
+     LEFT JOIN users u ON b.created_by = u.id
+     ORDER BY b.created_at DESC
+     LIMIT $1`,
+    [limit],
+  );
+  return (result.rows as DbRow[]).map(normalizeBackup);
 }
 
-/* ============ LEGACY JSON MIGRATION ============ */
-export function hasData() {
-  const d = getDb();
-  const row = d.prepare("SELECT COUNT(*) as count FROM chats").get() as CountRow;
-  return row.count > 0;
+export async function hasData(): Promise<boolean> {
+  const result = await query("SELECT COUNT(*)::int AS count FROM chats");
+  return countFromRow(result.rows[0], "count") > 0;
+}
+
+export async function createAttachment(data: {
+  id: string;
+  message_id?: string | null;
+  kb_file_id?: string | null;
+  uploaded_by?: string | null;
+  bucket: string;
+  object_key: string;
+  original_filename: string;
+  mime_type: string;
+  extension: string;
+  size_bytes: number;
+  checksum_sha256?: string | null;
+  status?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  await query(
+    `INSERT INTO attachments
+       (id, message_id, kb_file_id, uploaded_by, bucket, object_key, original_filename,
+        mime_type, extension, size_bytes, checksum_sha256, status, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)`,
+    [
+      data.id,
+      data.message_id || null,
+      data.kb_file_id || null,
+      data.uploaded_by || null,
+      data.bucket,
+      data.object_key,
+      data.original_filename,
+      data.mime_type,
+      data.extension,
+      data.size_bytes,
+      data.checksum_sha256 || null,
+      data.status || "ready",
+      JSON.stringify(data.metadata || {}),
+    ],
+  );
+}
+
+export async function getAttachmentsByKbFile(kbFileId: string): Promise<Array<{ id: string; bucket: string; object_key: string; original_filename: string; mime_type: string }>> {
+  const result = await query(
+    "SELECT id, bucket, object_key, original_filename, mime_type FROM attachments WHERE kb_file_id = $1 AND status <> 'deleted'",
+    [kbFileId],
+  );
+  return (result.rows as DbRow[]).map((row) => ({
+    id: textValue(row.id),
+    bucket: textValue(row.bucket),
+    object_key: textValue(row.object_key),
+    original_filename: textValue(row.original_filename),
+    mime_type: textValue(row.mime_type),
+  }));
+}
+
+export async function deleteAttachment(id: string): Promise<void> {
+  await query("DELETE FROM attachments WHERE id = $1", [id]);
 }

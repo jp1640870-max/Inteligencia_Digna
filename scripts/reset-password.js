@@ -1,8 +1,6 @@
-const path = require("path");
 const bcrypt = require("bcryptjs");
-const Database = require("better-sqlite3");
+const { Pool } = require("pg");
 
-const DB_PATH = path.join(__dirname, "..", "data", "app.db");
 const email = process.argv[2];
 const newPassword = process.argv[3];
 
@@ -10,17 +8,32 @@ if (!email || !newPassword) {
   console.error("Uso: node scripts/reset-password.js <email> <nueva-password>");
   process.exit(1);
 }
-
-const db = new Database(DB_PATH);
-const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
-
-if (!user) {
-  console.error(`Usuario con email "${email}" no encontrado.`);
+if (newPassword.length < 12) {
+  console.error("La nueva contraseña debe tener al menos 12 caracteres");
+  process.exit(1);
+}
+if (!process.env.DATABASE_URL) {
+  console.error("Falta DATABASE_URL");
   process.exit(1);
 }
 
-const hash = bcrypt.hashSync(newPassword, 10);
-db.prepare("UPDATE users SET password_hash = ? WHERE email = ?").run(hash, email);
+async function main() {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+  try {
+    const hash = await bcrypt.hash(newPassword, 10);
+    const result = await pool.query("UPDATE users SET password_hash = $1 WHERE LOWER(email) = LOWER($2)", [hash, email]);
+    if (result.rowCount === 0) {
+      console.error(`Usuario con email "${email}" no encontrado.`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`Contraseña actualizada para ${email}`);
+  } finally {
+    await pool.end();
+  }
+}
 
-console.log(`Contraseña actualizada para ${email}`);
-db.close();
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+});

@@ -1,36 +1,86 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Inteligencia Digna
 
-## Getting Started
+Backend y frontend de Inteligencia Digna con Next.js, PostgreSQL/pgvector, MinIO y Ollama nativo.
 
-First, run the development server:
+## Inicio rápido con Docker
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env
+# completa .env con secretos y valores del servidor
+docker compose up -d --build
+docker compose ps
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+El servicio `migrate` crea el esquema y ejecuta el seed antes de iniciar la aplicación. La base de datos conserva sus datos en el volumen `postgres_data`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Para el primer despliegue con los datos existentes, transfiere `data/app.db` al servidor y ejecuta una sola vez:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+docker compose run --rm --no-deps app npm run db:import
+docker compose run --rm --no-deps app npm run db:reindex
+```
 
-## Learn More
+Consulta `docs/SERVIDOR.md` para la instalación completa, backups y MinIO.
 
-To learn more about Next.js, take a look at the following resources:
+## Desarrollo en el host
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+cp .env.example .env
+cp .env.example .env.local
+npm ci
+docker compose up -d postgres
+npm run db:migrate
+npm run db:seed
+npm run dev
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+El host usa `127.0.0.1` y el puerto definido en `POSTGRES_PORT`. Dentro de los contenedores se usan los nombres internos `postgres:5432` y `minio:9000`.
 
-## Deploy on Vercel
+## Desarrollo de datos
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+PostgreSQL es una dependencia real y consultable, no una base oculta detrás de la aplicación.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+La herramienta de gestión es **pgAdmin 4**, el equivalente de SSMS para PostgreSQL. Está en un perfil aparte para no exponer acceso de superusuario al arrancar la app:
+
+```bash
+docker compose --profile db-tools up -d pgadmin
+xdg-open http://127.0.0.1:5050
+```
+
+Se inicia sesión con `PGADMIN_EMAIL` y `PGADMIN_PASSWORD` de `.env`. El servidor **Inteligencia Digna (Docker)** ya aparece precargado; solo hay que pegar `POSTGRES_PASSWORD` una vez, porque pgAdmin no permite precargar contraseñas.
+
+También puedes conectarte con DBeaver (`127.0.0.1:5433`) o la extensión PostgreSQL de VS Code usando los valores de `.env`.
+
+```bash
+npm run smoke:db
+```
+
+Consulta `docs/ARQUITECTURA-NUEVA.md` para el diagrama, file tree, MinIO, Ollama, migraciones y flujo de importación.
+
+## Comandos principales
+
+```bash
+npm run db:migrate
+npm run db:seed
+npm run db:import
+npm run db:reindex
+npm run db:create-admin
+npm run db:query -- "SELECT 1"
+npm run lint
+npx tsc --noEmit
+npm test
+npm run build
+```
+
+## Migración desde SQLite
+
+SQLite se conserva únicamente como fuente de migración/rollback. El runtime nuevo utiliza PostgreSQL. El importador no modifica `data/app.db`.
+
+```bash
+SQLITE_PATH=data/app.db npm run db:import
+npm run db:reindex
+```
+
+## Seguridad
+
+No subas `.env` a Git. En desarrollo mantén PostgreSQL, MinIO y Ollama en la red local. Antes de producción agrega firewall, TLS, secretos gestionados, respaldos y control de acceso.

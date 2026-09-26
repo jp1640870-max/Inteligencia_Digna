@@ -9,6 +9,6 @@ export async function GET(req: NextRequest) {
   }
 
   const q = req.nextUrl.searchParams.get("q") || "";
-  const projects = getProjectsByUser(userId, q);
+  const projects = await getProjectsByUser(userId, q);
   return NextResponse.json(projects);
 }

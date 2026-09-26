@@ -13,10 +13,12 @@ import {
   getKbCategoryBySlug,
   getConfig,
   logAudit,
+  createAttachment,
 } from "@/lib/db";
 import { extractText } from "@/lib/file-processor";
 import { indexKbFile, normalizeFileName } from "@/lib/kb";
 import { log, childLogger } from "@/lib/logger";
+import { getStorageConfig, objectKey, putObject } from "@/lib/storage";
 
 const ALLOWED_EXTENSIONS = ["pdf", "docx", "xlsx", "xls", "txt", "md", "csv"];
 const MIN_USEFUL_TEXT = 20;
@@ -41,7 +43,7 @@ export async function GET(req: Request) {
   const status = searchParams.get("status") || undefined;
   const search = searchParams.get("search") || undefined;
 
-  const files = getKbFiles({ categoryId, status, search });
+  const files = await getKbFiles({ categoryId, status, search });
   return NextResponse.json({ files });
 }
 
@@ -71,12 +73,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No se recibieron archivos" }, { status: 400 });
     }
 
-    const maxSizeMb = parseInt(getConfig("max_file_size_mb") || "20", 10) || 20;
+    const maxSizeMb = parseInt((await getConfig("max_file_size_mb")) || "20", 10) || 20;
 
     // Categoría por defecto: general
     let categoryId = categoryIdParam;
     if (!categoryId) {
-      const general = getKbCategoryBySlug("general");
+      const general = await getKbCategoryBySlug("general");
       categoryId = general?.id ?? null;
     }
 
@@ -91,11 +93,11 @@ export async function POST(req: Request) {
         results.push({ name: title || "(sin título)", status: "invalid", message: "Título y contenido útil son requeridos" });
       } else {
         // Upsert: si existe una entrada de texto con el mismo título, reemplaza
-        const existing = findKbFileByName(title).find((f) => f.format === "text");
+        const existing = (await findKbFileByName(title)).find((f) => f.format === "text");
         if (existing) {
-          updateKbFile(existing.id, { content, category_id: categoryId, checksum: null });
+          await updateKbFile(existing.id, { content, category_id: categoryId, checksum: null });
           const indexing = await indexKbFile(existing.id);
-          updateKbFile(existing.id, { status: "active" });
+          await updateKbFile(existing.id, { status: "active" });
           results.push({
             name: title,
             status: "active",
@@ -105,7 +107,7 @@ export async function POST(req: Request) {
           });
         } else {
           const fileId = uuidv4();
-          insertKbFile({
+          await insertKbFile({
             id: fileId,
             filename: title,
             format: "text",
@@ -116,7 +118,7 @@ export async function POST(req: Request) {
             uploaded_by: user.id,
           });
           const indexing = await indexKbFile(fileId);
-          updateKbFile(fileId, { status: "active" });
+          await updateKbFile(fileId, { status: "active" });
           results.push({
             name: title,
             status: "active",
@@ -125,7 +127,7 @@ export async function POST(req: Request) {
             chunkCount: indexing.chunks,
           });
         }
-        logAudit(user.id, "kb.upload", `Entrada manual: "${title}"`, "");
+        await logAudit(user.id, "kb.upload", `Entrada manual: "${title}"`, "");
       }
     }
 
@@ -147,7 +149,7 @@ export async function POST(req: Request) {
       const checksum = createHash("sha256").update(buffer).digest("hex");
 
       // ─── Detección de duplicados / conflictos por nombre ───
-      const existingByName = findKbFileByName(name);
+      const existingByName = await findKbFileByName(name);
       const previous = existingByName.find((f) => f.status !== "hold") || existingByName[0];
 
       if (previous && previous.checksum === checksum) {
@@ -169,7 +171,7 @@ export async function POST(req: Request) {
       const isConflict = !!previous;
       const lowContent = content.trim().length < MIN_USEFUL_TEXT;
 
-      insertKbFile({
+      await insertKbFile({
         id: fileId,
         filename: name,
         format: ext,
@@ -182,9 +184,32 @@ export async function POST(req: Request) {
         uploaded_by: user.id,
       });
 
+      const key = objectKey("kb", name);
+      try {
+        await putObject(key, buffer, file.type || "application/octet-stream", { source: "knowledge-base" });
+        await createAttachment({
+          id: uuidv4(),
+          kb_file_id: fileId,
+          uploaded_by: user.id,
+          bucket: getStorageConfig().bucket,
+          object_key: key,
+          original_filename: name,
+          mime_type: file.type || "application/octet-stream",
+          extension: ext,
+          size_bytes: file.size,
+          checksum_sha256: checksum,
+          status: "ready",
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await updateKbFile(fileId, { status: "hold" });
+        results.push({ name, status: "error", message: `No se pudo guardar el archivo en MinIO: ${message}`, fileId });
+        continue;
+      }
+
       if (isConflict) {
         // Conflicto de nombre: HOLD sin indexar hasta resolución
-        updateKbFile(fileId, { status: "hold" });
+        await updateKbFile(fileId, { status: "hold" });
         results.push({
           name,
           status: "hold",
@@ -192,26 +217,26 @@ export async function POST(req: Request) {
           fileId,
           conflictWith: previous.id,
         });
-        logAudit(user.id, "kb.conflict", `Conflicto KB: "${name}" choca con "${previous.filename}"`, "");
+        await logAudit(user.id, "kb.conflict", `Conflicto KB: "${name}" choca con "${previous.filename}"`, "");
         continue;
       }
 
       if (lowContent) {
-        updateKbFile(fileId, { status: "hold" });
+        await updateKbFile(fileId, { status: "hold" });
         results.push({
           name,
           status: "hold",
           message: "No se pudo extraer texto útil del archivo. En revisión.",
           fileId,
         });
-        logAudit(user.id, "kb.hold", `Archivo en revisión (texto insuficiente): "${name}"`, "");
+        await logAudit(user.id, "kb.hold", `Archivo en revisión (texto insuficiente): "${name}"`, "");
         continue;
       }
 
       // ─── Caso normal: indexar y activar ───
       try {
         const indexing = await indexKbFile(fileId);
-        updateKbFile(fileId, { status: "active" });
+        await updateKbFile(fileId, { status: "active" });
         results.push({
           name,
           status: "active",
@@ -219,7 +244,7 @@ export async function POST(req: Request) {
           fileId,
           chunkCount: indexing.chunks,
         });
-        logAudit(user.id, "kb.upload", `Archivo subido e indexado: "${name}" (${indexing.chunks} chunks)`, "");
+        await logAudit(user.id, "kb.upload", `Archivo subido e indexado: "${name}" (${indexing.chunks} chunks)`, "");
       } catch (e) {
         // Indexación falló → queda en processing para reintento manual
         const msg = e instanceof Error ? e.message : String(e);

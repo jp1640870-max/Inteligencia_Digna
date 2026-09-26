@@ -8,6 +8,6 @@ export async function GET() {
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   }
 
-  const stats = getSystemStats(user.role);
+  const stats = await getSystemStats(user.role);
   return NextResponse.json(stats);
 }

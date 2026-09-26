@@ -32,6 +32,7 @@ yarn-error.log*
 .env*
 .env.local
 !.env.example
+!tests/.env.test
 
 # vercel
 .vercel
@@ -50,6 +51,8 @@ dashboardplan.txxt
 
 # database & uploads
 data/app.db*
+data/backups/
 data/Backups/
+*.dump
 uploads/
 generated/

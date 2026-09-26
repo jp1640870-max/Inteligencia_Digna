@@ -2,7 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { getChatById, getMessagesByChat, truncateMessagesToCount, addMessage } from "@/lib/db";
-import { sglangChatStream } from "@/lib/sglang";
+import { ollamaChatStream, getChatModel } from "@/lib/ollama";
 import { buildMessages } from "@/lib/prompt-builder";
 import { getUserIdFromRequest } from "@/lib/auth";
 import { retrieveKb, getKbScopeIdsForUser, formatKbContext, toKbSources } from "@/lib/kb";
@@ -18,7 +18,7 @@ export async function POST(req: Request) {
   try {
     const { chatId } = await req.json();
 
-    const chat = getChatById(chatId);
+    const chat = await getChatById(chatId);
     if (!chat) {
       return NextResponse.json({ error: "Chat no encontrado" }, { status: 404 });
     }
@@ -26,23 +26,23 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No autorizado" }, { status: 403 });
     }
 
-    const messages = getMessagesByChat(chatId);
+    const messages = await getMessagesByChat(chatId);
     const lastMsg = messages[messages.length - 1];
 
     if (!lastMsg || lastMsg.role !== "ai") {
       return NextResponse.json({ error: "No hay mensaje para regenerar" }, { status: 400 });
     }
 
-    truncateMessagesToCount(chatId, messages.length - 1);
+    await truncateMessagesToCount(chatId, messages.length - 1);
 
-    const remainingMessages = getMessagesByChat(chatId);
-    const model = process.env.TEXT_MODEL!;
+    const remainingMessages = await getMessagesByChat(chatId);
+    const model = getChatModel();
 
     // --- KB retrieval para regeneración ---
     let kbContext = "";
     let kbSources: KbSource[] = [];
     try {
-      const scopeIds = getKbScopeIdsForUser();
+      const scopeIds = await getKbScopeIdsForUser();
       const lastUserMsg = [...remainingMessages].reverse().find((m) => m.role === "user");
       if (scopeIds.length > 0 && lastUserMsg?.text) {
         const kbHits = await retrieveKb(lastUserMsg.text, scopeIds);
@@ -61,9 +61,9 @@ export async function POST(req: Request) {
 
     let fullReply = "";
 
-    const streamSglang = async () => {
+    const streamOllama = async () => {
       try {
-        const generator = sglangChatStream(model, chatMessages);
+        const generator = ollamaChatStream(model, chatMessages, { signal: req.signal });
         for await (const chunk of generator) {
           fullReply += chunk;
           await writer.write(encoder.encode(chunk));
@@ -78,7 +78,7 @@ export async function POST(req: Request) {
         } else {
           try {
             fullReply = "";
-            const retryGen = sglangChatStream(model, chatMessages);
+            const retryGen = ollamaChatStream(model, chatMessages, { signal: req.signal });
             for await (const chunk of retryGen) {
               fullReply += chunk;
               await writer.write(encoder.encode(chunk));
@@ -95,13 +95,13 @@ export async function POST(req: Request) {
         }
       } finally {
         if (fullReply && fullReply !== "No se pudo responder.") {
-          addMessage(chatId, "assistant", fullReply, undefined, undefined, kbSources);
+          await addMessage(chatId, "assistant", fullReply, undefined, undefined, kbSources);
         }
         try { await writer.close(); } catch {}
       }
     };
 
-    streamSglang();
+    void streamOllama();
 
     return new Response(readable, {
       headers: { "Content-Type": "text/plain; charset=utf-8" },

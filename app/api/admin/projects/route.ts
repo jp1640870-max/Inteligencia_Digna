@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const search = searchParams.get("search") || "";
 
-  const all = getAllProjectsAdmin(search);
+  const all = await getAllProjectsAdmin(search);
   const projects = filterVisibleItems(all, user);
   return NextResponse.json({ projects });
 }

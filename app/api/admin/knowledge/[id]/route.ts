@@ -12,7 +12,7 @@ export async function DELETE(
   }
 
   const { id } = await params;
-  deleteKnowledgeEntry(id);
+  await deleteKnowledgeEntry(id);
 
   return NextResponse.json({ success: true });
 }
@@ -33,7 +33,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Título y contenido son requeridos" }, { status: 400 });
   }
 
-  updateKnowledgeEntry(id, title, content, category || "general");
+  await updateKnowledgeEntry(id, title, content, category || "general");
 
   return NextResponse.json({ success: true });
 }

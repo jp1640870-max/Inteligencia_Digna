@@ -8,7 +8,7 @@ export async function GET() {
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   }
 
-  const configs = getAllConfig();
+  const configs = await getAllConfig();
   return NextResponse.json({ configs });
 }
 
@@ -23,8 +23,8 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "key y value son requeridos" }, { status: 400 });
   }
 
-  setConfig(key, String(value), description);
-  logAudit(user.id, "config_change", `Config ${key} = ${value}`);
+  await setConfig(key, String(value), description);
+  await logAudit(user.id, "config_change", `Config ${key} = ${value}`);
   return NextResponse.json({ success: true });
 }
 
@@ -39,6 +39,6 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "key es requerido" }, { status: 400 });
   }
 
-  deleteConfig(key);
+  await deleteConfig(key);
   return NextResponse.json({ success: true });
 }

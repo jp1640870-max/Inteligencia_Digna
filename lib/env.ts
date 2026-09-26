@@ -1,63 +1,48 @@
-/**
- * Validación estricta de variables de entorno.
- * Se ejecuta al importar el módulo. Si falta una variable crítica,
- * la app explota en startup en lugar de fallar silenciosamente.
- */
-
-const REQUIRED_VARS = [
-  "JWT_SECRET",
-  "SGLANG_URL",
-  "TEXT_MODEL",
-] as const;
+const REQUIRED_VARS = ["JWT_SECRET"] as const;
 
 const OPTIONAL_VARS = [
+  "DATABASE_URL",
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
   "NEXTAUTH_URL",
   "SEARXNG_URL",
-  "SGLANG_HEARTS_URL",
-  "HEARTS_MODEL",
-  "SGLANG_EMBEDDINGS_URL",
-  "EMBEDDING_MODEL",
+  "OLLAMA_URL",
+  "OLLAMA_CHAT_MODEL",
+  "OLLAMA_AGENT_MODEL",
+  "OLLAMA_EMBEDDING_MODEL",
 ] as const;
 
-type EnvVars = Record<string, string>;
+type Env = Record<string, string | undefined> & {
+  JWT_SECRET: string;
+  OLLAMA_URL: string;
+  OLLAMA_CHAT_MODEL: string;
+  OLLAMA_AGENT_MODEL: string;
+  OLLAMA_EMBEDDING_MODEL: string;
+};
 
-function validateEnv(): EnvVars {
-  const missing: string[] = [];
-
-  for (const key of REQUIRED_VARS) {
-    if (!process.env[key]) {
-      missing.push(key);
-    }
-  }
-
+function validateEnv(): Env {
+  const missing = REQUIRED_VARS.filter((key) => !process.env[key]);
   if (missing.length > 0) {
-    const msg = `❌ Variables de entorno faltantes:\n  ${missing.join("\n  ")}\n\nRevisa tu archivo .env.local`;
-    throw new Error(msg);
+    throw new Error(`Variables de entorno faltantes: ${missing.join(", ")}`);
   }
 
-  // Advertencias para opcionales (no bloquean)
+  const jwt = process.env.JWT_SECRET as string;
+  if (jwt.length < 16 || jwt === "dev-secret-change-in-production" || jwt === "mi-ia-seguro-2026-cambiar-en-produccion") {
+    throw new Error("JWT_SECRET debe ser un secreto nuevo de al menos 16 caracteres");
+  }
+
   for (const key of OPTIONAL_VARS) {
-    if (!process.env[key]) {
-      console.warn(`⚠️  Variable opcional no configurada: ${key}`);
-    }
+    if (!process.env[key]) delete process.env[key];
   }
 
-  // Validar que JWT_SECRET no sea el valor hardcodeado por defecto
-  const jwt = process.env.JWT_SECRET!;
-  if (
-    jwt === "dev-secret-change-in-production" ||
-    jwt === "mi-ia-seguro-2026-cambiar-en-produccion" ||
-    jwt.length < 16
-  ) {
-    throw new Error(
-      "❌ JWT_SECRET es inseguro. Genera uno nuevo con:\n" +
-      "  node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
-    );
-  }
-
-  return process.env as unknown as EnvVars;
+  return {
+    ...process.env,
+    JWT_SECRET: jwt,
+    OLLAMA_URL: process.env.OLLAMA_URL || "",
+    OLLAMA_CHAT_MODEL: process.env.OLLAMA_CHAT_MODEL || process.env.TEXT_MODEL || "",
+    OLLAMA_AGENT_MODEL: process.env.OLLAMA_AGENT_MODEL || process.env.HEARTS_MODEL || process.env.TEXT_MODEL || "",
+    OLLAMA_EMBEDDING_MODEL: process.env.OLLAMA_EMBEDDING_MODEL || process.env.EMBEDDING_MODEL || "inteligencia-digna:bge-m3-rag",
+  };
 }
 
 export const env = validateEnv();

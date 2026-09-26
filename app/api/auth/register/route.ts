@@ -14,7 +14,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const existing = getUserByEmail(email);
+    const existing = await getUserByEmail(email);
     if (existing) {
       return NextResponse.json(
         { error: "El email ya está registrado" },
@@ -24,11 +24,11 @@ export async function POST(req: Request) {
 
     const id = uuidv4();
     const passwordHash = hashPassword(password);
-    createUser(id, email, name || null, passwordHash);
+    await createUser(id, email, name || null, passwordHash);
 
     const role = "user"; // Nuevos registros siempre empiezan como user
     const token = signToken({ userId: id, email, role });
-    logAudit(id, "register", `Nuevo registro: ${email}`, req.headers.get("x-forwarded-for") || "");
+    await logAudit(id, "register", `Nuevo registro: ${email}`, req.headers.get("x-forwarded-for") || "");
 
     const response = NextResponse.json({
       token,

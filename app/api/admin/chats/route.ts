@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const search = searchParams.get("search") || "";
 
-  const all = getAllChatsAdmin(search);
+  const all = await getAllChatsAdmin(search);
   const chats = filterVisibleItems(all, user);
   return NextResponse.json({ chats });
 }

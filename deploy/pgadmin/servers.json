@@ -1,0 +1,21 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Inteligencia Digna (Docker)",
+      "Group": "Inteligencia Digna",
+      "Host": "postgres",
+      "HostAddr": "",
+      "Port": 5432,
+      "MaintenanceDB": "inteligencia_digna",
+      "Username": "inteligencia_digna",
+      "Role": "",
+      "SSLMode": "prefer",
+      "Comment": "PostgreSQL local del proyecto. Conecta desde el host con 127.0.0.1:5433.",
+      "Shared": false,
+      "ConnectionParameters": {
+        "sslmode": "prefer",
+        "connect_timeout": 10
+      }
+    }
+  }
+}

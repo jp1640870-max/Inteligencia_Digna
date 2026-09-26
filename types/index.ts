@@ -209,11 +209,9 @@ export type KbConflictAction =
   | "reindex"
   | "move";
 
-// ─── Filas de base de datos (contrato SQLite ↔ dominio) ───
-// Los casts viven solo en lib/db.ts y lib/projects.ts; el resto del código
-// recibe tipos reales por inferencia.
-// Convención F0: los NULL de SQLite se modelan con el tipo base
-// (el endurecimiento de nulabilidad es trabajo de Fase 2).
+// ─── Filas de base de datos (contrato PostgreSQL ↔ dominio) ───
+// Las conversiones de tipos viven en lib/db.ts y lib/projects.ts; el resto
+// del código recibe tipos reales por inferencia.
 
 export type CountRow = { c: number; count: number };
 
@@ -228,7 +226,7 @@ export type UserRow = {
   created_at: string;
 };
 
-export type UserWithCountsRow = UserRow & {
+export type UserWithCountsRow = Omit<UserRow, "password_hash"> & {
   chat_count: number;
   project_count: number;
 };

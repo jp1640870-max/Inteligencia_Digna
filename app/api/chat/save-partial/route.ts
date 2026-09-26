@@ -16,11 +16,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "chatId y content requeridos" }, { status: 400 });
     }
 
-    const chat = getChatById(chatId);
+    const chat = await getChatById(chatId);
     if (!chat) return NextResponse.json({ error: "Chat no encontrado" }, { status: 404 });
     if (chat.user_id !== userId) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
 
-    addMessage(chatId, "assistant", content);
+    await addMessage(chatId, "assistant", content);
     return NextResponse.json({ success: true });
   } catch (e) {
     console.error("Save partial error:", e);

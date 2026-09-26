@@ -12,7 +12,7 @@ export async function GET() {
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   }
 
-  const categories = getKbCategories();
+  const categories = await getKbCategories();
   return NextResponse.json({ categories });
 }
 
@@ -27,8 +27,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "El nombre de la categoría es requerido" }, { status: 400 });
   }
 
-  const category = createKbCategory(label, label);
-  logAudit(user.id, "kb.category_create", `Categoría creada: ${category.name}`, "");
+  const category = await createKbCategory(label, label);
+  if (!category) {
+    return NextResponse.json({ error: "No se pudo crear la categoría" }, { status: 500 });
+  }
+  await logAudit(user.id, "kb.category_create", `Categoría creada: ${category.name}`, "");
 
   return NextResponse.json({ success: true, category });
 }

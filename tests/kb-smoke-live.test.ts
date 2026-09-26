@@ -3,58 +3,52 @@ import assert from "node:assert/strict";
 import { env } from "../lib/env.js";
 import { cosineSimilarity, chunkDocument } from "../lib/rag.js";
 
-// Smoke test contra SGLang real (protocolo OpenAI-compatible). Solo corre con:
-//   SMOKE_LIVE=1 SGLANG_URL=http://10.0.201.10:8005 SGLANG_EMBEDDINGS_URL=http://10.0.201.10:8007 npm test
-// (Migrado desde el smoke de Ollama /api/*.)
 const LIVE = process.env.SMOKE_LIVE === "1";
+const ollamaUrl = (env.OLLAMA_URL || "http://127.0.0.1:11434").replace(/\/+$/, "").replace(/\/v1$/, "");
+const chatModel = env.OLLAMA_CHAT_MODEL || "qwen3:8b";
+const embeddingModel = env.OLLAMA_EMBEDDING_MODEL || "bge-m3";
 
-function base(raw: string): string {
-  return raw.replace(/\/+$/, "").replace(/\/v1$/, "");
-}
-
-describe("kb smoke (SGLang en vivo)", { skip: !LIVE }, () => {
-  it("embeddings + similitud + chunking", async () => {
-    const EMB_URL = base(env.SGLANG_EMBEDDINGS_URL || env.SGLANG_URL);
-    const EMB_MODEL = env.EMBEDDING_MODEL || "bge-m3";
-    const emb = async (p: string): Promise<number[]> =>
-      (
-        await (
-          await fetch(`${EMB_URL}/v1/embeddings`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model: EMB_MODEL, input: p }),
-          })
-        ).json()
-      ).data[0].embedding;
-
-    const a = await emb("Política de vacaciones de la empresa");
-    assert.ok((a?.length || 0) > 0, "embedding vacío");
-    const b = await emb("Política de vacaciones");
-    const c = await emb("Receta de pasta con tomate");
-    assert.ok(
-      cosineSimilarity(a, b) > cosineSimilarity(a, c),
-      "relacionados deben puntuar más"
-    );
-    const chunks = chunkDocument("Un texto de prueba ".repeat(50));
-    assert.ok(chunks.length > 0);
+describe("Ollama smoke", { skip: !LIVE }, () => {
+  it("lista modelos", async () => {
+    const response = await fetch(`${ollamaUrl}/api/tags`);
+    assert.equal(response.ok, true);
+    const payload = (await response.json()) as { models?: unknown[] };
+    assert.ok(Array.isArray(payload.models));
   });
 
-  it("chat completions responde texto", async () => {
-    const CHAT_URL = base(env.SGLANG_URL);
-    const res = await fetch(`${CHAT_URL}/v1/chat/completions`, {
+  it("responde chat con Qwen", async () => {
+    const response = await fetch(`${ollamaUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: env.TEXT_MODEL,
+        model: chatModel,
         messages: [{ role: "user", content: "Responde solo con la palabra: ok" }],
         stream: false,
-        max_tokens: 20,
+        think: false,
+        options: { num_predict: 20 },
       }),
     });
-    assert.equal(res.ok, true);
-    const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+    assert.equal(response.ok, true);
+    const payload = (await response.json()) as { message?: { content?: string } };
+    assert.ok((payload.message?.content || "").length > 0);
+  });
+
+  it("genera embeddings BGE y valida similitud", async () => {
+    const embed = async (input: string): Promise<number[]> => {
+      const response = await fetch(`${ollamaUrl}/api/embed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: embeddingModel, input, truncate: true }),
+      });
+      assert.equal(response.ok, true);
+      const payload = (await response.json()) as { embeddings?: number[][] };
+      return payload.embeddings?.[0] || [];
     };
-    assert.ok((json.choices?.[0]?.message?.content || "").length > 0);
+    const a = await embed("Política de vacaciones de la empresa");
+    const b = await embed("Política de vacaciones");
+    const c = await embed("Receta de pasta con tomate");
+    assert.ok(a.length > 0);
+    assert.ok(cosineSimilarity(a, b) > cosineSimilarity(a, c));
+    assert.ok(chunkDocument("Un texto de prueba ".repeat(50)).length > 0);
   });
 });

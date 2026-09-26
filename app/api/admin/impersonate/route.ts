@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireRole, signToken } from "@/lib/auth";
+import { requireRole, signToken, isUserRole } from "@/lib/auth";
 import { getUserById, logAudit } from "@/lib/db";
 
 export async function POST(req: Request) {
@@ -17,8 +17,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "No puedes impersonarte a ti mismo" }, { status: 400 });
   }
 
-  const target = getUserById(targetUserId);
+  const target = await getUserById(targetUserId);
   if (!target) {
+    return NextResponse.json({ error: "Usuario target no existe" }, { status: 404 });
+  }
+  if (!isUserRole(target.role)) {
     return NextResponse.json({ error: "Usuario target no existe" }, { status: 404 });
   }
 
@@ -26,19 +29,26 @@ export async function POST(req: Request) {
   const token = signToken({
     userId: target.id,
     email: target.email,
-    role: target.role || "user",
+    role: target.role,
   });
 
-  logAudit(user.id, "impersonate", `Admin impersonó a ${target.email}`, req.headers.get("x-forwarded-for") || "");
+  await logAudit(user.id, "impersonate", `Admin impersonó a ${target.email}`, req.headers.get("x-forwarded-for") || "");
 
-  return NextResponse.json({
-    token,
+  const response = NextResponse.json({
     user: {
       id: target.id,
       email: target.email,
       name: target.name,
-      role: target.role || "user",
+      role: target.role,
     },
     message: `Ahora eres ${target.email}. Para volver a tu cuenta, cierra sesión y vuelve a entrar.`,
   });
+  response.cookies.set("token", token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 15 * 60,
+    path: "/",
+  });
+  return response;
 }

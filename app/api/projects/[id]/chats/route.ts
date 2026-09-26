@@ -13,12 +13,12 @@ export async function GET(
   }
 
   const { id } = await context.params;
-  const project = getProjectById(id);
+  const project = await getProjectById(id);
   if (!project || project.user_id !== userId) {
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   }
 
-  const chats = getChatsByProject(id);
+  const chats = await getChatsByProject(id);
   return NextResponse.json(chats);
 }
 
@@ -32,7 +32,7 @@ export async function POST(
   }
 
   const { id } = await context.params;
-  const project = getProjectById(id);
+  const project = await getProjectById(id);
   if (!project || project.user_id !== userId) {
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   }
@@ -42,13 +42,13 @@ export async function POST(
     return NextResponse.json({ error: "chatId requerido" }, { status: 400 });
   }
 
-  const chat = getChatById(chatId);
+  const chat = await getChatById(chatId);
   if (!chat || chat.user_id !== userId) {
     return NextResponse.json({ error: "Chat no encontrado" }, { status: 404 });
   }
 
-  addChatToProject(id, chatId);
-  const chats = getChatsByProject(id);
+  await addChatToProject(id, chatId);
+  const chats = await getChatsByProject(id);
   return NextResponse.json(chats);
 }
 
@@ -67,11 +67,11 @@ export async function DELETE(
     return NextResponse.json({ error: "chatId requerido" }, { status: 400 });
   }
 
-  const project = getProjectById(id);
+  const project = await getProjectById(id);
   if (!project || project.user_id !== userId) {
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   }
 
-  removeChatFromProject(id, chatId);
+  await removeChatFromProject(id, chatId);
   return NextResponse.json({ success: true });
 }

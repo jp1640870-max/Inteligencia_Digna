@@ -1,45 +1,57 @@
-import fs from "fs";
-import path from "path";
+import { execFile } from "node:child_process";
+import { mkdir, readdir, stat } from "node:fs/promises";
+import path from "node:path";
+import { promisify } from "node:util";
 import { createBackup, updateBackupStatus } from "@/lib/db";
-import { getSharedDb } from "@/lib/db-connection";
 
-export function runBackup(backupId: string, createdBy: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    try {
-      const backupDir = path.join(process.cwd(), "data", "backups");
-      const dbPathLocal = path.join(process.cwd(), "data", "app.db");
-      if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+const execFileAsync = promisify(execFile);
 
-      const dateStr = new Date().toISOString().replace(/[:.]/g, "-");
-      const filename = `backup-${dateStr}.db`;
-      const destPath = path.join(backupDir, filename);
-
-      // WAL checkpoint primero, sobre la conexión compartida
-      getSharedDb().pragma("wal_checkpoint(TRUNCATE)");
-
-      // Copiar archivo
-      fs.copyFileSync(dbPathLocal, destPath);
-      const stats = fs.statSync(destPath);
-
-      createBackup(backupId, filename, createdBy);
-      updateBackupStatus(backupId, "completed", stats.size);
-
-      resolve(filename);
-    } catch (e) {
-      updateBackupStatus(backupId, "failed");
-      reject(e);
-    }
-  });
+function databaseUrl(): string {
+  const value = process.env.DATABASE_URL;
+  if (!value) throw new Error("Falta DATABASE_URL");
+  return value;
 }
 
-export function getBackupFiles() {
+export async function runBackup(backupId: string, createdBy: string): Promise<string> {
   const backupDir = path.join(process.cwd(), "data", "backups");
-  if (!fs.existsSync(backupDir)) return [];
-  return fs.readdirSync(backupDir)
-    .filter((f) => f.endsWith(".db"))
-    .map((f) => {
-      const stat = fs.statSync(path.join(backupDir, f));
-      return { filename: f, size: stat.size, mtime: stat.mtime.toISOString() };
-    })
-    .sort((a, b) => b.mtime.localeCompare(a.mtime));
+  const filename = `backup-${new Date().toISOString().replace(/[:.]/g, "-")}.dump`;
+  const destination = path.join(backupDir, filename);
+  await createBackup(backupId, filename, createdBy);
+  await updateBackupStatus(backupId, "processing");
+  try {
+    await mkdir(backupDir, { recursive: true });
+    await execFileAsync("pg_dump", [
+      "--dbname",
+      databaseUrl(),
+      "--format=custom",
+      "--no-owner",
+      "--no-acl",
+      "--file",
+      destination,
+    ]);
+    const file = await stat(destination);
+    await updateBackupStatus(backupId, "completed", file.size);
+    return filename;
+  } catch (error) {
+    await updateBackupStatus(backupId, "failed");
+    throw error;
+  }
+}
+
+export async function getBackupFiles(): Promise<Array<{ filename: string; size: number; mtime: string }>> {
+  const backupDir = path.join(process.cwd(), "data", "backups");
+  try {
+    const files = await readdir(backupDir);
+    const entries = await Promise.all(
+      files
+        .filter((filename) => filename.endsWith(".dump"))
+        .map(async (filename) => {
+          const file = await stat(path.join(backupDir, filename));
+          return { filename, size: file.size, mtime: file.mtime.toISOString() };
+        }),
+    );
+    return entries.sort((left, right) => right.mtime.localeCompare(left.mtime));
+  } catch {
+    return [];
+  }
 }

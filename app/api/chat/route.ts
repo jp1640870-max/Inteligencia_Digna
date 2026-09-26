@@ -10,7 +10,7 @@ import {
   updateChatTitle,
   truncateMessagesToCount,
 } from "@/lib/db";
-import { sglangChat, sglangChatStream, type SGLangMessage } from "@/lib/sglang";
+import { ollamaChat, ollamaChatStream, getChatModel, type InferenceMessage } from "@/lib/ollama";
 import { buildMessages } from "@/lib/prompt-builder";
 import { getUserIdFromRequest } from "@/lib/auth";
 import { getProjectById, syncProjectChatTitle } from "@/lib/projects";
@@ -120,7 +120,7 @@ REGLAS:
 - Para Word/PDF: incluye todo el contenido solicitado.
 - El filename debe terminar en .${format}.`;
 
-  const jsonMessages: SGLangMessage[] = [
+  const jsonMessages: InferenceMessage[] = [
     { role: "system", content: "Eres un generador de documentos. Devuelve ÚNICAMENTE JSON válido, sin texto adicional, sin markdown, sin explicaciones." },
     { role: "user", content: jsonPrompt },
   ];
@@ -133,8 +133,8 @@ REGLAS:
   console.log(`📄 Generando ${formatLabel} (llamadas paralelas)...`);
 
   const [jsonResponse, textResponse] = await Promise.all([
-    sglangChat(model, jsonMessages),
-    sglangChat(model, normalMessages),
+    ollamaChat(model, jsonMessages),
+    ollamaChat(model, normalMessages),
   ]);
 
   const cleaned = extractJson(jsonResponse);
@@ -175,20 +175,21 @@ REGLAS:
 
 async function doStream(
   model: string,
-  messages: SGLangMessage[],
+  messages: InferenceMessage[],
   writer: WritableStreamDefaultWriter<Uint8Array>,
   encoder: TextEncoder,
   chatId: string,
   onFullReply: (reply: string) => void,
   kbSources?: KbSource[],
+  signal?: AbortSignal,
 ): Promise<void> {
   let fullReply = "";
   const startTime = Date.now();
   let cont = 0;
 
   try {
-    console.log("🤖 SGLang streaming: modelo=", model, "| mensajes:", messages.length);
-    const generator = sglangChatStream(model, messages);
+    console.log("🤖 Ollama streaming: modelo=", model, "| mensajes:", messages.length);
+    const generator = ollamaChatStream(model, messages, { signal });
     for await (const chunk of generator) {
       if (cont === 0) console.log(`🤖 Primer chunk en ${Date.now() - startTime}ms: "${chunk.slice(0, 40)}..."`);
       cont++;
@@ -210,7 +211,7 @@ async function doStream(
       let retried = false;
       try {
         fullReply = "";
-        const retryGen = sglangChatStream(model, messages);
+        const retryGen = ollamaChatStream(model, messages, { signal });
         let cont2 = 0;
         for await (const chunk of retryGen) {
           if (cont2 === 0) retried = true;
@@ -232,7 +233,7 @@ async function doStream(
   } finally {
     fullReply = fullReply.trim();
     if (fullReply && fullReply !== "No se pudo responder.") {
-      try { addMessage(chatId, "assistant", fullReply, undefined, undefined, kbSources); } catch {}
+      try { await addMessage(chatId, "assistant", fullReply, undefined, undefined, kbSources); } catch {}
       console.log("💾 DB guardado:", fullReply.length, "chars");
     }
     onFullReply(fullReply);
@@ -245,7 +246,7 @@ export async function GET() {
   if (!userId) {
     return NextResponse.json({ error: "No autenticado" }, { status: 401 });
   }
-  const chats = getChatsByUser(userId);
+  const chats = await getChatsByUser(userId);
   return NextResponse.json(chats);
 }
 
@@ -267,7 +268,7 @@ export async function POST(req: Request) {
   }
 
   let chatId = crypto.randomUUID();
-  let model = process.env.TEXT_MODEL!;
+  let model = getChatModel();
   let reqLog = childLogger({ userId });
 
   try {
@@ -284,24 +285,24 @@ export async function POST(req: Request) {
       }
     });
 
-    model = process.env.TEXT_MODEL!;
+    model = getChatModel();
     reqLog = childLogger({ userId, chatId, model, projectId: projectId || undefined });
 
     reqLog.info({ msgLen: message.length, images: images.length, files: filesContent ? "yes" : "no" }, "Chat request iniciado");
 
     let chat;
     if (editFromIndex) {
-      chat = getChatById(chatId);
+      chat = await getChatById(chatId);
       if (chat && chat.user_id !== userId) {
         return NextResponse.json({ error: "No autorizado" }, { status: 403 });
       }
-      truncateMessagesToCount(chatId, parseInt(editFromIndex));
-      chat = getChatById(chatId);
+      await truncateMessagesToCount(chatId, parseInt(editFromIndex));
+      chat = await getChatById(chatId);
     } else {
-      chat = getChatById(chatId);
+      chat = await getChatById(chatId);
       if (!chat) {
-        createChat(chatId, userId, message.slice(0, 30));
-        chat = getChatById(chatId);
+        await createChat(chatId, userId, message.slice(0, 30));
+        chat = await getChatById(chatId);
       } else if (chat.user_id !== userId) {
         return NextResponse.json({ error: "No autorizado" }, { status: 403 });
       }
@@ -312,7 +313,7 @@ export async function POST(req: Request) {
     let projectContext = "";
 
     if (projectId) {
-      const project = getProjectById(projectId);
+      const project = await getProjectById(projectId);
       if (project && project.user_id === userId) {
         // NOTA: la tabla projects no tiene columna `files`; el contexto
         // incluye solo nombre e instrucciones (ver schema en lib/projects.ts).
@@ -326,7 +327,7 @@ ${project.instructions}`;
     const dbMessage = filesContent
       ? `[Archivos adjuntos]\n\n${message}\n\n---\n${filesContent}`
       : message;
-    try { addMessage(chatId, "user", dbMessage, images); } catch {}
+    try { await addMessage(chatId, "user", dbMessage, images); } catch {}
 
     // --- RAG retrieval ---
     let ragContext = "";
@@ -344,7 +345,7 @@ ${project.instructions}`;
     let kbContext = "";
     let kbSources: KbSource[] = [];
     try {
-      const scopeIds = getKbScopeIdsForUser();
+      const scopeIds = await getKbScopeIdsForUser();
       if (scopeIds.length > 0) {
         const kbHits = await retrieveKb(message, scopeIds);
         if (kbHits.length > 0) {
@@ -379,7 +380,7 @@ ${project.instructions}`;
         model, chatId, docMessageForContent, filesContent, history, images, projectContext, ragContext, kbContext, kbSources, format
       );
 
-      try { addMessage(chatId, "assistant", result.text, undefined, result.docData, result.kbSources); } catch {}
+      try { await addMessage(chatId, "assistant", result.text, undefined, result.docData, result.kbSources); } catch {}
       console.log(`💾 DB guardado (doc): ${result.text.length} chars`);
 
       return NextResponse.json({
@@ -421,7 +422,7 @@ ${project.instructions}`;
       }
       try {
         console.log("🌐 Decision call (num_predict=20)...");
-        const decision = await sglangChat(model, decisionMessages, { max_tokens: 20 });
+        const decision = await ollamaChat(model, decisionMessages, { max_tokens: 20 });
         console.log(`🌐 Decisión: "${decision.slice(0, 100)}"`);
         const searchMatch = decision.length > 3 ? decision.match(/^\[SEARCH:\s*(.+?)\s*\]/i) : null;
         if (searchMatch) {
@@ -454,7 +455,7 @@ ${project.instructions}`;
     const { readable, writable } = new TransformStream();
     const writer = writable.getWriter();
 
-    doStream(model, chatMessages, writer, encoder, chatId, () => {}, kbSources);
+    void doStream(model, chatMessages, writer, encoder, chatId, () => {}, kbSources, req.signal);
 
     // Wrap readable in an outer stream that appends sources at the end
     const bodyStream = new ReadableStream({
@@ -510,7 +511,7 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "Título requerido" }, { status: 400 });
     }
 
-    const chat = getChatById(id);
+    const chat = await getChatById(id);
 
     if (!chat) {
       return NextResponse.json({ error: "Chat no encontrado" }, { status: 404 });
@@ -520,13 +521,13 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "No autorizado" }, { status: 403 });
     }
 
-    const updated = updateChatTitle(id, userId, title);
+    const updated = await updateChatTitle(id, userId, title);
 
     if (!updated) {
       return NextResponse.json({ error: "No se pudo renombrar" }, { status: 400 });
     }
 
-    syncProjectChatTitle(id, title);
+    await syncProjectChatTitle(id, title);
 
     return NextResponse.json({ success: true, id, title });
   } catch {
@@ -548,7 +549,7 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: "ID requerido" }, { status: 400 });
     }
 
-    const chat = getChatById(id);
+    const chat = await getChatById(id);
     if (!chat) {
       return NextResponse.json({ error: "Chat no encontrado" }, { status: 404 });
     }
@@ -556,7 +557,7 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: "No autorizado" }, { status: 403 });
     }
 
-    deleteChat(id);
+    await deleteChat(id);
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: "Error al eliminar" }, { status: 500 });

@@ -8,7 +8,7 @@ export async function GET() {
   const { allowed } = await requireRole(["super_admin", "admin"]);
   if (!allowed) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
 
-  const backups = getBackups();
+  const backups = await getBackups();
   return NextResponse.json({ backups });
 }
 
@@ -21,11 +21,11 @@ export async function POST() {
   const backupId = uuidv4();
   try {
     const filename = await runBackup(backupId, user.id);
-    logAudit(user.id, "backup", `Backup creado: ${filename}`);
+    await logAudit(user.id, "backup", `Backup creado: ${filename}`);
     return NextResponse.json({ success: true, id: backupId, filename });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    logAudit(user.id, "backup", `Backup FALLIDO: ${message}`);
+    await logAudit(user.id, "backup", `Backup FALLIDO: ${message}`);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

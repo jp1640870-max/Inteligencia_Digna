@@ -50,9 +50,7 @@ export default function AdminSesiones() {
       const data2 = await res.json();
       if (res.ok) {
         setImpersonateMsg(`✅ ${data2.message}`);
-        // Ofrecer redirigir
         if (confirm(`¿Ir a la app como ${target.email}?`)) {
-          document.cookie = `token=${data2.token}; path=/; max-age=604800; SameSite=Lax`;
           window.location.href = "/";
         }
       } else {

@@ -13,7 +13,7 @@ export async function POST(
   }
 
   const { id } = await context.params;
-  const project = getProjectById(id);
+  const project = await getProjectById(id);
   if (!project || project.user_id !== userId) {
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   }
@@ -22,8 +22,8 @@ export async function POST(
   const chatId = crypto.randomUUID();
   const title = body.title || "Nueva conversación";
 
-  createChat(chatId, userId, title);
-  addChatToProject(id, chatId);
+  await createChat(chatId, userId, title);
+  await addChatToProject(id, chatId);
 
   return NextResponse.json({ id: chatId, title, projectId: id });
 }

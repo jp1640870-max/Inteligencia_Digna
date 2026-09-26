@@ -21,12 +21,12 @@ export async function PATCH(
     return NextResponse.json({ error: "Nada que actualizar" }, { status: 400 });
   }
 
-  const updated = updateKbCategory(id, { name, label });
+  const updated = await updateKbCategory(id, { name, label });
   if (!updated) {
     return NextResponse.json({ error: "No se pudo actualizar (la categoría 'general' es protegida)" }, { status: 400 });
   }
 
-  logAudit(user.id, "kb.category_update", `Categoría actualizada: ${id}`, "");
+  await logAudit(user.id, "kb.category_update", `Categoría actualizada: ${id}`, "");
 
   return NextResponse.json({ success: true });
 }
@@ -41,17 +41,17 @@ export async function DELETE(
   }
 
   const { id } = await params;
-  const category = getKbCategoryById(id);
+  const category = await getKbCategoryById(id);
   if (!category || category.name === "general") {
     return NextResponse.json({ error: "No se puede eliminar (la categoría 'general' es protegida)" }, { status: 400 });
   }
 
-  const deleted = deleteKbCategory(id);
+  const deleted = await deleteKbCategory(id);
   if (!deleted) {
     return NextResponse.json({ error: "No se pudo eliminar" }, { status: 400 });
   }
 
-  logAudit(user.id, "kb.category_delete", `Categoría eliminada: ${category.name}`, "");
+  await logAudit(user.id, "kb.category_delete", `Categoría eliminada: ${category.name}`, "");
 
   return NextResponse.json({ success: true });
 }

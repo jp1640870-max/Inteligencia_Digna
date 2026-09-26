@@ -23,6 +23,28 @@ export type AuthUser = {
   role: UserRole;
 };
 
+const VALID_USER_ROLES = new Set<UserRole>([
+  "super_admin",
+  "admin",
+  "editor",
+  "viewer",
+  "power_user",
+  "user",
+  "restricted",
+]);
+
+export function isUserRole(value: unknown): value is UserRole {
+  return typeof value === "string" && VALID_USER_ROLES.has(value as UserRole);
+}
+
+export function canAssignRole(actorRole: string, role: unknown): role is UserRole {
+  if (!isUserRole(actorRole) || !isUserRole(role)) return false;
+  if (actorRole === "super_admin") return true;
+  if (actorRole === "admin") return role !== "super_admin";
+  if (actorRole === "editor") return role === "user";
+  return false;
+}
+
 // ─── Password ───
 
 export function hashPassword(password: string): string {
@@ -89,8 +111,8 @@ export async function getAuthUserFromRequest(): Promise<AuthUser | null> {
     if (!payload) return null;
 
     // Buscar en DB para datos frescos
-    const user = getUserById(payload.userId);
-    if (!user) return null;
+    const user = await getUserById(payload.userId);
+    if (!user || !isUserRole(user.role)) return null;
 
     return {
       id: user.id,
@@ -145,6 +167,7 @@ export function getRoleLevel(role: string): number {
  * - viewer y menores no gestionan a nadie
  */
 export function canManageUser(actorRole: string, targetRole: string): boolean {
+  if (!isUserRole(actorRole) || !isUserRole(targetRole)) return false;
   if (actorRole === "super_admin") return true;
   if (actorRole === "admin") return targetRole !== "super_admin";
   if (actorRole === "editor") return isUserGroupRole(targetRole);
@@ -164,6 +187,7 @@ export function isUserGroupRole(role: string): boolean {
  * Solo regla: super_admin es invisible para todos excepto sí mismo.
  */
 export function canViewUser(actorRole: string, targetRole: string, actorId: string, targetId: string): boolean {
+  if (!isUserRole(actorRole) || !isUserRole(targetRole)) return false;
   if (targetRole !== "super_admin") return true;
   return actorId === targetId; // solo el propio super_admin se ve a sí mismo
 }

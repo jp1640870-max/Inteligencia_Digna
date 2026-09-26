@@ -12,7 +12,7 @@ export async function GET(
   }
 
   const { id } = await params;
-  const heart = getHeartById(id);
+  const heart = await getHeartById(id);
   if (!heart) {
     return NextResponse.json({ error: "Heart no encontrado" }, { status: 404 });
   }
@@ -33,7 +33,7 @@ export async function PATCH(
   const data = await req.json();
 
   delete data.id;
-  updateHeart(id, data);
+  await updateHeart(id, data);
 
   return NextResponse.json({ success: true });
 }
@@ -48,11 +48,11 @@ export async function DELETE(
   }
 
   const { id } = await params;
-  const heart = getHeartById(id);
+  const heart = await getHeartById(id);
   if (heart) {
-    logAudit(user.id, "delete_heart", `Heart eliminado: ${heart.name}`);
+    await logAudit(user.id, "delete_heart", `Heart eliminado: ${heart.name}`);
   }
-  deleteHeart(id);
+  await deleteHeart(id);
 
   return NextResponse.json({ success: true });
 }

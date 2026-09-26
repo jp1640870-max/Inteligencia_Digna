@@ -8,10 +8,12 @@ export async function GET() {
 
   const isSuperAdmin = user.role === "super_admin";
 
-  const stats = getSystemStats(user.role);
-  const allUsers = getAllUsers();
-  const hearts = getAllHearts();
-  const allChats = getAllChatsAdmin();
+  const [stats, allUsers, hearts, allChats] = await Promise.all([
+    getSystemStats(user.role),
+    getAllUsers(),
+    getAllHearts(),
+    getAllChatsAdmin(),
+  ]);
 
   const users = isSuperAdmin ? allUsers : filterVisibleUsers(allUsers, user);
   const chats = isSuperAdmin ? allChats : filterVisibleItems(allChats, user);

@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   }
 
   const q = req.nextUrl.searchParams.get("q") || undefined;
-  const projects = getProjectsByUser(userId, q);
+  const projects = await getProjectsByUser(userId, q);
   return NextResponse.json(projects);
 }
 
@@ -24,6 +24,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Nombre requerido" }, { status: 400 });
   }
 
-  const project = createProject(userId, body.name.trim(), body.instructions || "");
+  const project = await createProject(userId, body.name.trim(), body.instructions || "");
   return NextResponse.json(project);
 }

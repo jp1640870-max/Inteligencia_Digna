@@ -6,7 +6,7 @@ import { getAnnouncements, createAnnouncement } from "@/lib/db";
 export async function GET() {
   const { allowed } = await requireRole(["super_admin", "admin", "editor", "viewer"]);
   if (!allowed) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
-  const announcements = getAnnouncements();
+  const announcements = await getAnnouncements();
   return NextResponse.json({ announcements });
 }
 
@@ -20,6 +20,6 @@ export async function POST(req: Request) {
   }
 
   const id = uuidv4();
-  createAnnouncement(id, title, content, type || "info", user.id);
+  await createAnnouncement(id, title, content, type || "info", user.id);
   return NextResponse.json({ success: true, id });
 }

@@ -1,75 +1,50 @@
-//Este archivo consiste en un script de inicialización para la base de datos
-//  SQLite utilizada en la aplicación. Su propósito es crear las tablas necesarias 
-// y agregar un usuario de soporte predeterminado si no existe.
-const Database = require("better-sqlite3");
-const bcrypt = require("bcryptjs");
-const path = require("path");
-const { v4: uuidv4 } = require("uuid");
-const DB_PATH = path.join(process.cwd(), "data", "app.db");
-const db = new Database(DB_PATH);
-db.pragma("journal_mode = WAL");
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import bcrypt from "bcryptjs";
+import { randomUUID } from "node:crypto";
+import { Pool } from "pg";
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    email TEXT UNIQUE NOT NULL,
-    name TEXT,
-    password_hash TEXT,
-    google_id TEXT UNIQUE,
-    picture TEXT,
-    role TEXT DEFAULT 'user',
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS chats (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    title TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-    role TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
-    content TEXT NOT NULL DEFAULT '',
-    images TEXT,
-    files TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_chats_user ON chats(user_id);
-  CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id);
-`);
-
-try { db.exec("ALTER TABLE users ADD COLUMN picture TEXT"); } catch {}
-try { db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'"); } catch {}
-
-const id = "soporte-dev-user-id";
-const email = "Admin@digna.com";
-const userName = "Soporte";
-const passwordHash = bcrypt.hashSync("Admin123", 10);
-const role = "admin";
-
-// SQL equivalente:
-// INSERT INTO users (email, password, role) VALUES ('Admin@digna.com', 'Admin123', 'admin');
-
-const existing = db.prepare("SELECT id FROM users WHERE id = ?").get(id);
-
-if (existing) {
-  db.prepare(
-    "UPDATE users SET email = ?, password_hash = ?, role = ? WHERE id = ?"
-  ).run(email, passwordHash, role, id);
-  console.log("✅ Usuario Soporte actualizado.");
-} else {
-  db.prepare(
-    "INSERT INTO users (id, email, name, password_hash, role) VALUES (?, ?, ?, ?, ?)"
-  ).run(id, email, userName, passwordHash, role);
-  console.log("✅ Usuario Soporte creado con ID:", id);
+function loadEnvironment(): void {
+  for (const fileName of [".env", ".env.local"]) {
+    const filePath = resolve(process.cwd(), fileName);
+    if (existsSync(filePath)) process.loadEnvFile(filePath);
+  }
 }
 
-console.log("📧 Email:", email);
-console.log("🔑 Contraseña: Admin123");
+async function main(): Promise<void> {
+  loadEnvironment();
+  const email = process.env.ADMIN_EMAIL;
+  const password = process.env.ADMIN_PASSWORD;
+  const name = process.env.ADMIN_NAME || "Administración";
+  const role = process.env.ADMIN_ROLE || "admin";
+  if (!process.env.DATABASE_URL || !email || !password) {
+    throw new Error("Define DATABASE_URL, ADMIN_EMAIL y ADMIN_PASSWORD para crear el administrador");
+  }
+  if (!["super_admin", "admin"].includes(role)) throw new Error("ADMIN_ROLE debe ser super_admin o admin");
+  if (password.length < 12) throw new Error("ADMIN_PASSWORD debe tener al menos 12 caracteres");
 
-db.close();
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+  try {
+    const passwordHash = await bcrypt.hash(password, 10);
+    const existing = await pool.query("SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1", [email]);
+    if (existing.rows[0]) {
+      await pool.query(
+        "UPDATE users SET name = $1, password_hash = $2, role = $3 WHERE id = $4",
+        [name, passwordHash, role, existing.rows[0].id],
+      );
+    } else {
+      await pool.query(
+        "INSERT INTO users (id, email, name, password_hash, role) VALUES ($1, $2, $3, $4, $5)",
+        [randomUUID(), email.toLowerCase(), name, passwordHash, role],
+      );
+    }
+    console.log(`Administrador ${email} creado o actualizado`);
+  } finally {
+    await pool.end();
+  }
+}
+
+main().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+});

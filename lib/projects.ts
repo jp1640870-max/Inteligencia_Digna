@@ -1,151 +1,190 @@
-import type Database from "better-sqlite3";
-import { getSharedDb } from "./db-connection";
+import { query, withTransaction } from "./db-connection";
+import type { PoolClient } from "pg";
 import type { ChatRow, ProjectRow } from "@/types";
 
-let projectTablesInit = false;
+type DbRow = Record<string, unknown>;
 
-function getDb(): Database.Database {
-  const db = getSharedDb();
-  if (!projectTablesInit) {
-    // Marcar ANTES (misma razón que en lib/db.ts: protege de reentrada).
-    projectTablesInit = true;
-    initProjectTables(db);
-  }
-  return db;
+function textValue(value: unknown, fallback = ""): string {
+  if (value === null || value === undefined) return fallback;
+  if (value instanceof Date) return value.toISOString();
+  return String(value);
 }
 
-function initProjectTables(db: Database.Database) {
-  db.exec(`
-      CREATE TABLE IF NOT EXISTS projects (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        instructions TEXT DEFAULT '',
-        created_at TEXT DEFAULT (datetime('now'))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
-
-      CREATE TABLE IF NOT EXISTS project_chats (
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-        added_at TEXT DEFAULT (datetime('now')),
-        PRIMARY KEY (project_id, chat_id)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_project_chats_project ON project_chats(project_id);
-      CREATE INDEX IF NOT EXISTS idx_project_chats_chat ON project_chats(chat_id);
-    `);
-
-  try { db.exec("ALTER TABLE project_chats ADD COLUMN chat_title TEXT DEFAULT ''"); } catch {}
-  try { db.exec("UPDATE project_chats SET chat_title = (SELECT title FROM chats WHERE id = chat_id) WHERE chat_title = ''"); } catch {}
+function nullableTextValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return value.toISOString();
+  return String(value);
 }
 
-export function getProjectsByUser(userId: string, searchQuery?: string) {
-  const d = getDb();
-  if (searchQuery) {
-    return d.prepare(`
-      SELECT p.*, (SELECT COUNT(*) FROM project_chats pc WHERE pc.project_id = p.id) as chat_count
-      FROM projects p
-      WHERE p.user_id = ? AND p.name LIKE ?
-      ORDER BY p.created_at DESC
-    `).all(userId, `%${searchQuery}%`);
+function numberValue(value: unknown, fallback = 0): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : fallback;
+  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
   }
-  return d.prepare(`
-    SELECT p.*, (SELECT COUNT(*) FROM project_chats pc WHERE pc.project_id = p.id) as chat_count
+  return fallback;
+}
+
+function normalizeProject(row: DbRow): ProjectRow {
+  return {
+    ...row,
+    id: textValue(row.id),
+    user_id: textValue(row.user_id),
+    name: textValue(row.name),
+    instructions: textValue(row.instructions),
+    created_at: textValue(row.created_at),
+    chat_count: row.chat_count === undefined ? undefined : numberValue(row.chat_count),
+  } as ProjectRow;
+}
+
+function normalizeChat(row: DbRow): ChatRow {
+  return {
+    ...row,
+    id: textValue(row.id),
+    user_id: textValue(row.user_id),
+    title: textValue(row.title),
+    heart_id: nullableTextValue(row.heart_id),
+    created_at: textValue(row.created_at),
+    updated_at: textValue(row.updated_at),
+  } as ChatRow;
+}
+
+export async function getProjectsByUser(userId: string, searchQuery?: string): Promise<ProjectRow[]> {
+  let sql = `
+    SELECT p.*, (SELECT COUNT(*)::int FROM project_chats pc WHERE pc.project_id = p.id) AS chat_count
     FROM projects p
-    WHERE p.user_id = ?
-    ORDER BY p.created_at DESC
-  `).all(userId);
+    WHERE p.user_id = $1`;
+  const params: unknown[] = [userId];
+  if (searchQuery) {
+    params.push(`%${searchQuery}%`);
+    sql += ` AND p.name ILIKE $${params.length}`;
+  }
+  sql += " ORDER BY p.created_at DESC";
+  const result = await query(sql, params);
+  return (result.rows as DbRow[]).map(normalizeProject);
 }
 
-export function getProjectById(id: string) {
-  return getDb().prepare("SELECT * FROM projects WHERE id = ?").get(id) as ProjectRow;
+export async function getProjectById(id: string): Promise<ProjectRow | null> {
+  const result = await query("SELECT * FROM projects WHERE id = $1 LIMIT 1", [id]);
+  const row = result.rows[0] as DbRow | undefined;
+  return row ? normalizeProject(row) : null;
 }
 
-export function createProject(userId: string, name: string, instructions: string) {
+export async function createProject(
+  userId: string,
+  name: string,
+  instructions: string,
+): Promise<ProjectRow | null> {
   const id = crypto.randomUUID();
-  getDb().prepare(`
-    INSERT INTO projects (id, user_id, name, instructions)
-    VALUES (?, ?, ?, ?)
-  `).run(id, userId, name, instructions);
-  return getProjectById(id);
+  await query("INSERT INTO projects (id, user_id, name, instructions) VALUES ($1, $2, $3, $4)", [
+    id,
+    userId,
+    name,
+    instructions,
+  ]);
+  const project = await getProjectById(id);
+  return project;
 }
 
-export function updateProject(id: string, userId: string, data: { name?: string; instructions?: string }) {
-  const sets: string[] = [];
+export async function updateProject(
+  id: string,
+  userId: string,
+  data: { name?: string; instructions?: string },
+): Promise<void> {
+  const fields: string[] = [];
   const params: unknown[] = [];
-  if (data.name !== undefined) { sets.push("name = ?"); params.push(data.name); }
-  if (data.instructions !== undefined) { sets.push("instructions = ?"); params.push(data.instructions); }
-  if (sets.length === 0) return;
+  if (data.name !== undefined) {
+    fields.push("name");
+    params.push(data.name);
+  }
+  if (data.instructions !== undefined) {
+    fields.push("instructions");
+    params.push(data.instructions);
+  }
+  if (fields.length === 0) return;
+  const assignments = fields.map((field, index) => `${field} = $${index + 1}`);
   params.push(id, userId);
-  getDb().prepare(`UPDATE projects SET ${sets.join(", ")} WHERE id = ? AND user_id = ?`).run(...params);
+  await query(
+    `UPDATE projects SET ${assignments.join(", ")} WHERE id = $${fields.length + 1} AND user_id = $${fields.length + 2}`,
+    params,
+  );
 }
 
-export function deleteProject(id: string, userId: string) {
-  const d = getDb();
-  d.prepare("DELETE FROM project_chats WHERE project_id = ?").run(id);
-  const result = d.prepare("DELETE FROM projects WHERE id = ? AND user_id = ?").run(id, userId);
-  return result.changes > 0;
+export async function deleteProject(id: string, userId: string): Promise<boolean> {
+  return withTransaction(async (client: PoolClient) => {
+    await client.query("DELETE FROM project_chats WHERE project_id = $1", [id]);
+    const result = await client.query("DELETE FROM projects WHERE id = $1 AND user_id = $2", [id, userId]);
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
-export function addChatToProject(projectId: string, chatId: string) {
-  const d = getDb();
-  const exists = d.prepare("SELECT * FROM project_chats WHERE project_id = ? AND chat_id = ?").get(projectId, chatId);
-  if (exists) return;
-  const chat = d.prepare("SELECT title FROM chats WHERE id = ?").get(chatId) as { title: string } | undefined;
-  d.prepare("INSERT INTO project_chats (project_id, chat_id, chat_title) VALUES (?, ?, ?)").run(projectId, chatId, chat?.title || "");
+export async function addChatToProject(projectId: string, chatId: string): Promise<void> {
+  await query(
+    `INSERT INTO project_chats (project_id, chat_id, chat_title)
+     SELECT $1, c.id, c.title
+     FROM chats c
+     WHERE c.id = $2
+     ON CONFLICT (project_id, chat_id) DO NOTHING`,
+    [projectId, chatId],
+  );
 }
 
-export function syncProjectChatTitle(chatId: string, title: string) {
-  getDb().prepare("UPDATE project_chats SET chat_title = ? WHERE chat_id = ?").run(title, chatId);
+export async function syncProjectChatTitle(chatId: string, title: string): Promise<void> {
+  await query("UPDATE project_chats SET chat_title = $1 WHERE chat_id = $2", [title, chatId]);
 }
 
-export function removeChatFromProject(projectId: string, chatId: string) {
-  getDb().prepare("DELETE FROM project_chats WHERE project_id = ? AND chat_id = ?").run(projectId, chatId);
+export async function removeChatFromProject(projectId: string, chatId: string): Promise<void> {
+  await query("DELETE FROM project_chats WHERE project_id = $1 AND chat_id = $2", [projectId, chatId]);
 }
 
-export function getChatsByProject(projectId: string) {
-  const d = getDb();
-  const row = d.prepare(`
-    SELECT p.name as project_name FROM projects p WHERE p.id = ?
-  `).get(projectId) as { project_name: string } | undefined;
-  const projectName = row?.project_name || "";
-  const rows = d.prepare(`
-    SELECT c.* FROM chats c
-    JOIN project_chats pc ON c.id = pc.chat_id
-    WHERE pc.project_id = ?
-    ORDER BY pc.added_at DESC
-  `).all(projectId) as ChatRow[];
-  return rows.map((row) => ({
-    id: row.id,
-    title: row.title,
-    user_id: row.user_id,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    project_name: projectName,
-    messages: [],
-  }));
+export async function getChatsByProject(
+  projectId: string,
+): Promise<Array<ChatRow & { project_name: string; messages: [] }>> {
+  const [projectResult, chatsResult] = await Promise.all([
+    query("SELECT name FROM projects WHERE id = $1 LIMIT 1", [projectId]),
+    query(
+      `SELECT c.*
+       FROM chats c
+       JOIN project_chats pc ON c.id = pc.chat_id
+       WHERE pc.project_id = $1
+       ORDER BY pc.added_at DESC`,
+      [projectId],
+    ),
+  ]);
+  const projectRow = projectResult.rows[0] as DbRow | undefined;
+  const projectName = textValue(projectRow?.name);
+  return (chatsResult.rows as DbRow[]).map((rawRow) => {
+    const row = normalizeChat(rawRow);
+    return { ...row, project_name: projectName, messages: [] };
+  });
 }
 
-export function getProjectsByChat(chatId: string, userId: string) {
-  return getDb().prepare(`
-    SELECT p.* FROM projects p
-    JOIN project_chats pc ON p.id = pc.project_id
-    WHERE pc.chat_id = ? AND p.user_id = ?
-  `).all(chatId, userId);
+export async function getProjectsByChat(chatId: string, userId: string): Promise<ProjectRow[]> {
+  const result = await query(
+    `SELECT p.*
+     FROM projects p
+     JOIN project_chats pc ON p.id = pc.project_id
+     WHERE pc.chat_id = $1 AND p.user_id = $2`,
+    [chatId, userId],
+  );
+  return (result.rows as DbRow[]).map(normalizeProject);
 }
 
-export function getChatsSinProyecto(userId: string) {
-  const d = getDb();
-  const rows = d.prepare(`
-    SELECT c.* FROM chats c
-    WHERE c.user_id = ? AND c.id NOT IN (SELECT chat_id FROM project_chats)
-    ORDER BY c.updated_at DESC
-  `).all(userId) as ChatRow[];
-  return rows.map((row) => ({
-    id: row.id,
-    title: row.title,
+export async function getChatsSinProyecto(
+  userId: string,
+): Promise<Array<{ id: string; title: string; messages: [] }>> {
+  const result = await query(
+    `SELECT c.*
+     FROM chats c
+     WHERE c.user_id = $1
+       AND NOT EXISTS (SELECT 1 FROM project_chats pc WHERE pc.chat_id = c.id)
+     ORDER BY c.updated_at DESC`,
+    [userId],
+  );
+  return (result.rows as DbRow[]).map((row) => ({
+    id: textValue(row.id),
+    title: textValue(row.title),
     messages: [],
   }));
 }
