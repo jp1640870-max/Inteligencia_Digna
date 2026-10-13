@@ -18,7 +18,10 @@ services:
       start_period: 10s
 
   minio:
-    image: minio/minio:latest
+    # MinIO upstream dejó de publicar imágenes en Docker Hub (minio/minio quedó "Archived").
+    # pgsty/minio es un fork comunitario con API S3 y variables MINIO_* compatibles.
+    # Tag fijo para reproducibilidad; actualizar siguiendo las releases del fork.
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
     profiles: ["local-storage"]
     restart: unless-stopped
     command: server /data --console-address ":9001"

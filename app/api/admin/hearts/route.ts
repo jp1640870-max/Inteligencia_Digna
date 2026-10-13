@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { requireRole } from "@/lib/auth";
+import {
+  requireCapability,
+} from "@/lib/auth";
 import { getAllHearts, createHeart, logAudit } from "@/lib/db";
 
 export async function GET() {
-  const { allowed } = await requireRole(["super_admin", "admin"]);
+  const { allowed, status } = await requireCapability("hearts.manage");
   if (!allowed) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
   const hearts = await getAllHearts();
@@ -14,9 +16,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const { allowed, user } = await requireRole(["super_admin", "admin"]);
+  const { allowed, status, user } = await requireCapability("hearts.manage");
   if (!allowed || !user) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
   const { name, role, tone, instructions, limitations, temperature, tools, isPreset } = await req.json();

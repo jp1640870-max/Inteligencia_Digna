@@ -18,22 +18,32 @@ import {
   HardDrive,
   Megaphone,
   UserCheck,
+  Building2,
 } from "lucide-react";
 import { useAuthStore, ADMIN_VISIBLE_ROLES } from "@/lib/stores/auth-store";
+import type { UserRole } from "@/types";
 
-const navItems = [
-  { label: "Dashboard", href: "/admin/dashboard", icon: <BarChart3 size={18} /> },
-  { label: "Usuarios", href: "/admin/usuarios", icon: <Users size={18} /> },
-  { label: "Conversaciones", href: "/admin/chats", icon: <MessageSquare size={18} /> },
-  { label: "Hearts", href: "/admin/hearts", icon: <Brain size={18} /> },
-  { label: "Anuncios", href: "/admin/anuncios", icon: <Megaphone size={18} /> },
-  { label: "Auditoría", href: "/admin/auditoria", icon: <Shield size={18} /> },
-  { label: "Sesiones", href: "/admin/sesiones", icon: <UserCheck size={18} /> },
-  { label: "Sistema", href: "/admin/sistema", icon: <Activity size={18} /> },
-  { label: "Configuración", href: "/admin/configuracion", icon: <Settings size={18} /> },
-  { label: "Knowledge Base", href: "/admin/knowledge", icon: <BookOpen size={18} /> },
-  { label: "Backups", href: "/admin/backups", icon: <HardDrive size={18} /> },
-  { label: "Reportes", href: "/admin/reportes", icon: <ClipboardList size={18} /> },
+const ALL_NAV_ITEMS = [
+  { label: "Dashboard", href: "/admin/dashboard", icon: <BarChart3 size={18} />, roles: null },
+  { label: "Usuarios", href: "/admin/usuarios", icon: <Users size={18} />, roles: null },
+  { label: "Knowledge Base", href: "/admin/knowledge", icon: <BookOpen size={18} />, roles: null },
+  {
+    label: "Accesos",
+    href: "/admin/accesos",
+    icon: <Building2 size={18} />,
+    // Solo el perímetro gestiona quién ve qué. `editor` prepara contenido pero no
+    // decide su destino, así que no ve esta sección.
+    roles: ["super_admin", "admin"] as UserRole[],
+  },
+  { label: "Conversaciones", href: "/admin/chats", icon: <MessageSquare size={18} />, roles: null },
+  { label: "Hearts", href: "/admin/hearts", icon: <Brain size={18} />, roles: null },
+  { label: "Anuncios", href: "/admin/anuncios", icon: <Megaphone size={18} />, roles: null },
+  { label: "Auditoría", href: "/admin/auditoria", icon: <Shield size={18} />, roles: null },
+  { label: "Sesiones", href: "/admin/sesiones", icon: <UserCheck size={18} />, roles: null },
+  { label: "Sistema", href: "/admin/sistema", icon: <Activity size={18} />, roles: null },
+  { label: "Configuración", href: "/admin/configuracion", icon: <Settings size={18} />, roles: null },
+  { label: "Backups", href: "/admin/backups", icon: <HardDrive size={18} />, roles: null },
+  { label: "Reportes", href: "/admin/reportes", icon: <ClipboardList size={18} />, roles: null },
 ];
 
 export default function AdminShell({ children }: { children: ReactNode }) {
@@ -44,6 +54,12 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   const logout = useAuthStore((s) => s.logout);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Ocultar el enlace no es el control de acceso: cada API revalida el rol. Esto
+  // solo evita mostrar una sección que devolvería 403.
+  const navItems = ALL_NAV_ITEMS.filter(
+    (item) => item.roles === null || item.roles.includes(user?.role as UserRole),
+  );
 
   useEffect(() => {
     if (!loading && (!user || !ADMIN_VISIBLE_ROLES.includes(user.role))) {
@@ -96,7 +112,6 @@ export default function AdminShell({ children }: { children: ReactNode }) {
             </Link>
           ))}
         </nav>
-
         {/* User info */}
         <div className="p-3 border-t border-[#202938]">
           <div className="flex items-center gap-3 px-3 py-2">

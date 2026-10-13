@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
-import { requireRole, filterVisibleUsers, filterVisibleItems } from "@/lib/auth";
+import {
+  requireCapability,
+  filterVisibleUsers,
+  filterVisibleItems,
+} from "@/lib/auth";
 import { getSystemStats, getAllUsers, getAllHearts, getAllChatsAdmin } from "@/lib/db";
 
 export async function GET() {
-  const { allowed, user } = await requireRole(["super_admin", "admin", "editor"]);
-  if (!allowed || !user) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
-
-  const isSuperAdmin = user.role === "super_admin";
+  const { allowed, status, user } = await requireCapability("panel.read");
+  if (!allowed || !user) return NextResponse.json({ error: "No autorizado" }, { status });
 
   const [stats, allUsers, hearts, allChats] = await Promise.all([
     getSystemStats(user.role),
@@ -15,8 +17,13 @@ export async function GET() {
     getAllChatsAdmin(),
   ]);
 
-  const users = isSuperAdmin ? allUsers : filterVisibleUsers(allUsers, user);
-  const chats = isSuperAdmin ? allChats : filterVisibleItems(allChats, user);
+  // Sin caso especial para `super_admin`: el filtro ya declara la regla de que
+  // un `super_admin` es invisible para todos menos para sí mismo, y saltar el
+  // filtro para ese rol hacía que los informes mostraran una regla distinta de
+  // la que aplica el listado de usuarios. Dos reglas que se contradicen, y la que
+  // pierde es la del panel de usuarios, que además es la que se audita.
+  const users = filterVisibleUsers(allUsers, user);
+  const chats = filterVisibleItems(allChats, user);
 
   const report = {
     generatedAt: new Date().toISOString(),

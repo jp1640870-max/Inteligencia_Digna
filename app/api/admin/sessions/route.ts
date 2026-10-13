@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
-import { requireRole, filterVisibleUsers } from "@/lib/auth";
+import {
+  requireCapability,
+  filterVisibleUsers,
+} from "@/lib/auth";
 
 export async function GET() {
-  const { allowed, user } = await requireRole(["super_admin", "admin"]);
-  if (!allowed || !user) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+  const { allowed, status, user } = await requireCapability("sessions.read");
+  if (!allowed || !user) return NextResponse.json({ error: "No autorizado" }, { status });
 
   // Sesiones activas: usuarios con actividad hoy
   const { getSystemStats, getAllUsers } = await import("@/lib/db");

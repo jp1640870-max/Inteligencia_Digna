@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   Copy,
   ListRestart,
+  Clock,
   X,
 } from "lucide-react";
 
@@ -26,7 +27,7 @@ type KbFile = {
   category_id: string | null;
   category_name: string | null;
   category_label: string | null;
-  status: "active" | "hold" | "processing";
+  status: "active" | "hold" | "processing" | "pending_review";
   conflict_with: string | null;
   conflict_with_filename: string | null;
   uploader_name: string | null;
@@ -45,7 +46,7 @@ type KbCategory = {
 
 type UploadResult = {
   name: string;
-  status: "active" | "hold" | "duplicate" | "invalid" | "error";
+  status: "active" | "pending_review" | "hold" | "duplicate" | "invalid" | "error";
   message: string;
   fileId?: string;
 };
@@ -94,6 +95,8 @@ export default function AdminKnowledge() {
   // Modal de conflicto
   const [conflictFile, setConflictFile] = useState<KbFile | null>(null);
   const [conflictBusy, setConflictBusy] = useState(false);
+  const [previewFile, setPreviewFile] = useState<KbFile | null>(null);
+  const [previewContent, setPreviewContent] = useState("");
 
   const loadCategories = useCallback(() => {
     fetch("/api/admin/knowledge/categories")
@@ -173,6 +176,49 @@ export default function AdminKnowledge() {
       const data = await res.json().catch(() => ({}));
       alert(data.message || (res.ok ? "Reindexado" : data.error || "Error"));
       await loadFiles();
+    } catch {}
+  };
+
+  /**
+   * Aprobar o rechazar.
+   *
+   * Aprobar indexa y activa, pero no concede acceso por sí solo: sin un grant
+   * nadie lo leerá salvo el perímetro. Los dos pasos están separados a propósito,
+   * para que publicar y repartir permisos quedan en el registro como decisiones
+   * distintas.
+   *
+   * Reservado a admin/super_admin: el endpoint rechaza a `editor` con 403.
+   */
+  const handleReview = async (file: KbFile, action: "approve" | "reject") => {
+    const question =
+      action === "approve"
+        ? `¿Aprobar "${file.filename}"?\n\nSe indexará y quedará activo. Recuerda que sigue sin acceso para los usuarios hasta que concedas un grant en Accesos.`
+        : `¿Rechazar "${file.filename}"?\n\nSe eliminará el documento y su archivo almacenado.`;
+    if (!confirm(question)) return;
+    try {
+      const res = await fetch(`/api/admin/knowledge/files/${file.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json().catch(() => ({}));
+      alert(data.message || (res.ok ? "Listo" : data.error || "Error"));
+      await loadFiles();
+      await loadCategories();
+    } catch {}
+  };
+
+  const handlePreview = async (file: KbFile) => {
+    try {
+      // El listado ya no trae `content`. Se pide aquí, y queda auditado.
+      const res = await fetch(`/api/admin/knowledge/files/${file.id}/preview`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || "No se pudo abrir el documento");
+        return;
+      }
+      setPreviewFile(file);
+      setPreviewContent(data.content ?? "");
     } catch {}
   };
 
@@ -403,7 +449,8 @@ export default function AdminKnowledge() {
             >
               <option value="" className="bg-[#030812]">Todos los estados</option>
               <option value="active" className="bg-[#030812]">Activos</option>
-              <option value="hold" className="bg-[#030812]">En revisión</option>
+              <option value="pending_review" className="bg-[#030812]">Pendientes de aprobar</option>
+              <option value="hold" className="bg-[#030812]">Bloqueados</option>
               <option value="processing" className="bg-[#030812]">Procesando</option>
             </select>
           </div>
@@ -466,6 +513,13 @@ export default function AdminKnowledge() {
                           ))}
                         </select>
                         <button
+                          onClick={() => handlePreview(file)}
+                          className="p-2 rounded-lg text-gray-500 hover:text-cyan-400 hover:bg-cyan-500/10 transition-colors"
+                          title="Ver el texto (queda registrado en Auditoría)"
+                        >
+                          <FileText size={15} />
+                        </button>
+                        <button
                           onClick={() => handleReindex(file)}
                           className="p-2 rounded-lg text-gray-500 hover:text-blue-400 hover:bg-blue-500/10 transition-colors"
                           title="Reindexar"
@@ -481,6 +535,26 @@ export default function AdminKnowledge() {
                         </button>
                       </div>
                     </div>
+                    {file.status === "pending_review" && (
+                      <div className="mt-3 pt-3 border-t border-[#202938] flex items-center gap-2">
+                        <Clock size={14} className="text-amber-400" />
+                        <span className="text-[11px] text-gray-400 flex-1">
+                          Pendiente de aprobar. Todavía no es buscable por los usuarios.
+                        </span>
+                        <button
+                          onClick={() => handleReview(file, "approve")}
+                          className="px-3 py-1.5 rounded-lg bg-green-600/20 text-green-400 text-[11px] font-medium border border-green-500/30 hover:bg-green-600/30 transition-colors"
+                        >
+                          Aprobar
+                        </button>
+                        <button
+                          onClick={() => handleReview(file, "reject")}
+                          className="px-3 py-1.5 rounded-lg bg-red-600/20 text-red-400 text-[11px] font-medium border border-red-500/30 hover:bg-red-600/30 transition-colors"
+                        >
+                          Rechazar
+                        </button>
+                      </div>
+                    )}
                     {file.status === "hold" && file.conflict_with && (
                       <div className="mt-3 pt-3 border-t border-[#202938] flex items-center gap-2">
                         <AlertTriangle size={14} className="text-amber-400" />
@@ -755,9 +829,52 @@ export default function AdminKnowledge() {
         </div>
       )}
 
+      {/* ═══════════ VISTA PREVIA DEL TEXTO ═══════════ */}
+      {previewFile && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+          onClick={() => setPreviewFile(null)}
+        >
+          <div
+            className="bg-[#0d131d] border border-[#202938] rounded-xl w-full max-w-3xl max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-4 border-b border-[#202938] flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h3 className="font-medium text-white truncate">{previewFile.filename}</h3>
+                <p className="text-[11px] text-gray-500 mt-0.5">
+                  Texto extraído del documento. Esta lectura queda registrada en Auditoría.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <a
+                  href={`/api/admin/knowledge/files/${previewFile.id}/download`}
+                  className="px-3 py-1.5 rounded-lg bg-cyan-600/20 text-cyan-400 text-[11px] border border-cyan-500/30 hover:bg-cyan-600/30 transition-colors"
+                >
+                  Descargar original
+                </a>
+                <button
+                  onClick={() => setPreviewFile(null)}
+                  className="p-1.5 rounded-lg text-gray-500 hover:text-white hover:bg-[#1e293b] transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1">
+              <pre className="text-xs text-gray-300 whitespace-pre-wrap break-words font-mono leading-relaxed">
+                {previewContent || "(sin texto extraído)"}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
+
       <p className="text-[11px] text-gray-600">
-        {files.length} documento{files.length !== 1 ? "s" : ""} en total
-        ({files.filter((f) => f.status === "active").length} activos, {files.filter((f) => f.status === "hold").length} en revisión)
+        {files.length} documento{files.length !== 1 ? "s" : ""} en total (
+        {files.filter((f) => f.status === "active").length} activos,{" "}
+        {files.filter((f) => f.status === "pending_review").length} pendientes de aprobar,{" "}
+        {files.filter((f) => f.status === "hold").length} bloqueados)
       </p>
     </div>
   );

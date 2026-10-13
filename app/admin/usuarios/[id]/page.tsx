@@ -3,8 +3,9 @@
 import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, MessageSquare, FolderKanban, Calendar, Mail, Trash2, Key, Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, MessageSquare, FolderKanban, Calendar, Mail, Trash2, Key, Eye, EyeOff, Building2, Users, X } from "lucide-react";
 import { useAuthStore } from "@/lib/stores/auth-store";
+import { assignableRolesFor } from "@/types";
 
 type UserDetail = {
   id: string;
@@ -16,13 +17,19 @@ type UserDetail = {
   created_at: string;
   projectCount: number;
   chatCount: number;
+  areas: { id: string; name: string }[];
+  groups: { id: string; name: string }[];
   recentChats: { id: string; title: string; created_at: string; updated_at: string }[];
   recentProjects: { id: string; name: string; created_at: string; updated_at: string }[];
 };
 
+/** Área o grupo: la tarjeta de membresías trata los dos igual. */
+type Membership = { id: string; name: string };
+type AreaLite = { id: string; name: string };
+type GroupLite = { id: string; name: string };
+
 const ROLE_STYLES: Record<string, string> = {
   user: "bg-gray-600",
-  viewer: "bg-blue-600",
   editor: "bg-purple-600",
   admin: "bg-amber-600",
   super_admin: "bg-red-600",
@@ -31,7 +38,6 @@ const ROLE_STYLES: Record<string, string> = {
 export default function UserDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const currentUser = useAuthStore((s) => s.user);
   const [user, setUser] = useState<UserDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
@@ -41,6 +47,19 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   const [newPassword, setNewPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
+
+  // Membresías: las que tiene el usuario y el catálogo completo de áreas y
+  // grupos activos, para poder quitar una y ofrecer la que le falta.
+  const [allAreas, setAllAreas] = useState<AreaLite[]>([]);
+  const [allGroups, setAllGroups] = useState<GroupLite[]>([]);
+  const [membershipBusy, setMembershipBusy] = useState<string | null>(null);
+
+  const currentUser = useAuthStore((s) => s.user);
+  const myRole = currentUser?.role || "user";
+  // Asignar pertenencia decide a qué puede leer alguien. Es de perímetro:
+  // un `editor` ve las membresías pero no las mueve, y las APIs de miembros
+  // le devuelven 403 de todas formas.
+  const canAssignMembership = ["super_admin", "admin"].includes(myRole);
 
   useEffect(() => {
     fetch(`/api/admin/users/${id}`)
@@ -52,6 +71,86 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
       })
       .catch(() => setLoading(false));
   }, [id]);
+
+  // Catálogos para los selectores. Diferido a una macrotarea para no hacer
+  // setState síncrono dentro del efecto (react-hooks/set-state-in-effect), igual
+  // que en la lista de usuarios.
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [areasRes, groupsRes] = await Promise.all([
+          fetch("/api/admin/areas"),
+          fetch("/api/admin/groups"),
+        ]);
+        if (areasRes.ok) {
+          const data = await areasRes.json();
+          setAllAreas((data.areas ?? []).map((a: AreaLite) => ({ id: a.id, name: a.name })));
+        }
+        if (groupsRes.ok) {
+          const data = await groupsRes.json();
+          setAllGroups((data.groups ?? []).map((g: GroupLite) => ({ id: g.id, name: g.name })));
+        }
+      } catch {}
+    };
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
+  }, []);
+
+  /**
+   * Alta o baja de una pertenencia.
+   *
+   * El alta envía `{ userId }` en el body y la baja `?userId=` en la query: son
+   * las dos formas distintas que esperan las rutas de miembros. Mandarlo al revés
+   * devolvía `userId es requerido` sin llegar a tocar nada.
+   *
+   * El alta es idempotente en el servidor, así que un doble clic no rompe nada;
+   * la baja responde 404 si ya no era miembro.
+   */
+  const toggleMembership = async (
+    kind: "areas" | "groups",
+    principalId: string,
+    member: boolean,
+  ) => {
+    setMembershipBusy(principalId);
+    try {
+      const res = await fetch(
+        member
+          ? `/api/admin/${kind}/${principalId}/members`
+          : `/api/admin/${kind}/${principalId}/members?userId=${encodeURIComponent(id)}`,
+        {
+          method: member ? "POST" : "DELETE",
+          ...(member
+            ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: id }) }
+            : {}),
+        },
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setMessage({ type: "error", text: data.error || "No se pudo actualizar" });
+        return;
+      }
+      const next: Membership =
+        kind === "areas"
+          ? { id: principalId, name: allAreas.find((a) => a.id === principalId)?.name ?? "área" }
+          : { id: principalId, name: allGroups.find((g) => g.id === principalId)?.name ?? "grupo" };
+      setUser((prev) =>
+        prev
+          ? {
+              ...prev,
+              [kind]: member
+                ? [...prev[kind], next]
+                : prev[kind].filter((m) => m.id !== principalId),
+            }
+          : prev,
+      );
+      setMessage({ type: "success", text: member ? `Añadido a ${next.name}` : `Quitado de ${next.name}` });
+      setTimeout(() => setMessage(null), 3000);
+    } catch {
+      setMessage({ type: "error", text: "Error de red" });
+    } finally {
+      setMembershipBusy(null);
+    }
+  };
 
   const handleRoleChange = async (newRole: string) => {
     if (!user) return;
@@ -133,17 +232,11 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   }
 
   const isGoogleUser = !!user.google_id;
-  const myRole = currentUser?.role || "user";
   const canEdit = ["super_admin", "admin", "editor"].includes(myRole);
   const canDelete = ["super_admin", "admin"].includes(myRole);
 
-  /** Roles que puede asignar este usuario */
-  const ASSIGNABLE_ROLES: Record<string, string[]> = {
-    super_admin: ["user", "viewer", "editor", "admin", "super_admin"],
-    admin: ["user", "viewer", "editor", "admin"],
-    editor: ["user"],
-  };
-  const myAssignableRoles = ASSIGNABLE_ROLES[myRole] || [];
+  /** Roles que puede asignar este usuario. La tabla vive en `@/types`. */
+  const myAssignableRoles = assignableRolesFor(myRole);
 
   return (
     <div className="space-y-6">
@@ -241,6 +334,89 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
           <p className="text-2xl font-bold text-white">{user.recentProjects.length}</p>
           <p className="text-xs text-gray-500 mt-1">Proyectos recientes</p>
         </div>
+      </div>
+
+      {/* ─── Áreas y grupos ─── */}
+      <div className="rounded-xl bg-[#121824] border border-[#202938] p-5">
+        <h3 className="text-sm font-medium text-white mb-1 flex items-center gap-2">
+          <Building2 size={16} className="text-cyan-400" />
+          Áreas y grupos
+        </h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Entrar en un área no da acceso por sí solo: solo recupera los documentos que el área
+          ya tiene concedidos. Sin al menos un área, este usuario no lee nada de la base de
+          conocimiento.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {(
+            [
+              { kind: "areas" as const, label: "Áreas", icon: Building2, catalog: allAreas },
+              { kind: "groups" as const, label: "Grupos", icon: Users, catalog: allGroups },
+            ] as const
+          ).map(({ kind, label, icon: Icon, catalog }) => {
+            const assigned = user[kind];
+            const available = catalog.filter((c) => !assigned.some((m) => m.id === c.id));
+            return (
+              <div key={kind}>
+                <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-2 flex items-center gap-1.5">
+                  <Icon size={12} />
+                  {label}
+                  <span className="text-gray-600">({assigned.length})</span>
+                </p>
+
+                {assigned.length === 0 ? (
+                  <p className="text-xs text-gray-600 mb-2">Sin asignar</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {assigned.map((m) => (
+                      <span
+                        key={m.id}
+                        className="inline-flex items-center gap-1 text-[11px] bg-cyan-600/10 text-cyan-400 px-2 py-1 rounded-full"
+                      >
+                        {m.name}
+                        {canAssignMembership && (
+                          <button
+                            disabled={membershipBusy === m.id}
+                            onClick={() => toggleMembership(kind, m.id, false)}
+                            className="text-cyan-300/60 hover:text-red-400 transition-colors disabled:opacity-40"
+                            title={`Quitar de ${m.name}`}
+                          >
+                            <X size={11} />
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {canAssignMembership && available.length > 0 && (
+                  <select
+                    value=""
+                    disabled={membershipBusy !== null}
+                    onChange={(e) => {
+                      if (e.target.value) toggleMembership(kind, e.target.value, true);
+                    }}
+                    className="w-full appearance-none bg-[#030812] border border-[#202938] rounded-lg px-3 py-2 text-xs text-gray-500 focus:outline-none disabled:opacity-50"
+                  >
+                    <option value="">+ añadir a {label.toLowerCase()}...</option>
+                    {available.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {!canAssignMembership && (
+          <p className="text-[11px] text-gray-600 mt-4">
+            Solo un administrador puede cambiar estas pertenencias.
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

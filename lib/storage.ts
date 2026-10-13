@@ -13,14 +13,40 @@ type StorageConfig = {
   forcePathStyle: boolean;
 };
 
+const PLACEHOLDER_SECRETS = new Set([
+  "cambiar-esta-clave-minio",
+  "cambiar-esta-clave",
+  "change-me",
+  "changeme",
+  "minioadmin",
+]);
+
+function requireAccessKey(value: string | undefined, variable: string): string {
+  const normalized = value?.trim();
+  if (!normalized) {
+    throw new Error(`Falta ${variable} en la configuración de storage (S3/MinIO).`);
+  }
+  return normalized;
+}
+
+function requireSecretKey(value: string | undefined, variable: string): string {
+  const normalized = requireAccessKey(value, variable);
+  if (PLACEHOLDER_SECRETS.has(normalized.toLowerCase())) {
+    throw new Error(`${variable} sigue usando un valor de ejemplo. Genera una credencial real.`);
+  }
+  return normalized;
+}
+
 function config(): StorageConfig {
   const endpoint = env.MINIO_ENDPOINT || `http://${env.MINIO_HOST || "127.0.0.1"}:${env.MINIO_PORT || "9000"}`;
+  const accessKeyId = env.MINIO_ACCESS_KEY || env.MINIO_ROOT_USER;
+  const secretAccessKey = env.MINIO_SECRET_KEY || env.MINIO_ROOT_PASSWORD;
   return {
     endpoint,
     bucket: env.MINIO_BUCKET || "attachments",
     region: env.MINIO_REGION || "us-east-1",
-    accessKeyId: env.MINIO_ACCESS_KEY || env.MINIO_ROOT_USER || "minio_admin",
-    secretAccessKey: env.MINIO_SECRET_KEY || env.MINIO_ROOT_PASSWORD || "cambiar-esta-clave-minio",
+    accessKeyId: requireAccessKey(accessKeyId, "MINIO_ACCESS_KEY (o MINIO_ROOT_USER)"),
+    secretAccessKey: requireSecretKey(secretAccessKey, "MINIO_SECRET_KEY (o MINIO_ROOT_PASSWORD)"),
     forcePathStyle: String(env.MINIO_FORCE_PATH_STYLE ?? "true") !== "false",
   };
 }

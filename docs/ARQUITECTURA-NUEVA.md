@@ -56,7 +56,8 @@ El navegador nunca conoce `DATABASE_URL`, `MINIO_ENDPOINT` ni `OLLAMA_URL`. Esas
 │   └── SERVIDOR.md
 ├── migrations/
 │   ├── 001_initial.sql
-│   └── 002_legacy_and_embedding_metadata.sql
+│   ├── 002_legacy_and_embedding_metadata.sql
+│   └── 003_rbac.sql           áreas, grupos, grants y pending_review
 ├── deploy/
 │   └── pgadmin/
 │       └── servers.json        conexión precargada (sin secretos)
@@ -79,10 +80,15 @@ El navegador nunca conoce `DATABASE_URL`, `MINIO_ENDPOINT` ni `OLLAMA_URL`. Esas
 │   ├── ollama.ts              chat, NDJSON, embeddings y health
 │   ├── storage.ts             cliente S3/MinIO
 │   ├── rag.ts                 chunking y retrieval
+│   ├── permissions.ts         matriz rol → capacidad (fuente única)
+│   ├── kb-access.ts           política de lectura (fuente única)
 │   └── kb.ts                  Knowledge Base
 ├── tests/
 │   ├── ollama.test.ts
 │   ├── rag.test.ts
+│   ├── permissions.test.ts    matriz de capacidades, sin base de datos
+│   ├── kb-access.test.ts      política, sin base de datos
+│   ├── kb-access-db.test.ts   resolución real contra Postgres
 │   └── ...
 └── package.json
 ```
@@ -288,6 +294,71 @@ Las sentencias `SELECT`, `SHOW`, `EXPLAIN` y `WITH` se ejecutan dentro de una tr
 `retrieveRelevantChunks` y `retrieveKb` consultan primero si existen chunks. Si no hay documentos, no generan embeddings y no cargan BGE-M3.
 
 La indexación utiliza batches y `/api/embed`. Un cambio de modelo de embeddings exige reindexar ambos conjuntos y revisar la dimensión de las columnas vectoriales.
+
+## Control de acceso a la base de conocimiento
+
+La Knowledge Base no se protege por categoría sino por archivo. El identificador que decide es `kb_files.id`: un grant lo nombra de forma explícita y, sin ese grant, nadie lo lee. Las categorías solo clasifican y `kb_chunks.category_id` no autoriza nada.
+
+### Roles
+
+| Rol | Lee la KB | Sube | Aprueba | Reparte grants |
+|---|---|---|---|---|
+| `super_admin` | Todo (bypass) | Sí | Sí | Sí |
+| `admin` | Todo (bypass) | Sí | Sí | Sí |
+| `editor` | Lo concedido **y lo que él sube** | Sí | No | No |
+| `user` | Solo lo concedido | No | No | No |
+
+El bypass de `admin` y `super_admin` es deliberado: son el perímetro. El control sobre ellos es detective, no preventivo, y por eso las dos acciones quedan registradas: `audit_log` y revisión mensual de la pantalla de Accesos.
+
+`editor` es un segundo control. Puede subir, reclasificar y mover contenido, pero no decide ni la publicación ni quién lo lee. Si pudiera otorgar, su propia subida quedaría accesible por su decisión sin que nadie más la validara.
+
+Las capacidades por rol viven en `lib/permissions.ts` como una matriz explícita, y las rutas las piden con `requireCapability("kb.publish")` en vez de declarar roles. Lo que la tabla de arriba significa en el código es: `editor` tiene `kb.read`, pero la capability solo abre la puerta al endpoint; qué archivos salen lo decide el ACL.
+
+### Lo que ve el `editor`
+
+Ver sus propias subidas no es una excepción al modelo, es lo que hace que `editor` sea un rol útil, y conviene decir por qué no abre nada:
+
+- Un archivo recién subido vive en `pending_review`: no está indexado y a un solo grant de ser visible. Verlo desde el panel es comprobar que la extracción funcionó; verlo desde el chat saltaría la cola de revisión.
+- Verlo no lo aprueba. La aprobación sigue siendo del perímetro, y sin grants sigue sin ser legible para nadie más.
+- `preview` y `download` exigen lo mismo que el listado, así que un `editor` no puede abrir el contenido de un documento ajeno aunque conozca su identificador.
+
+Antes, `preview` y `download` admitían `editor` sin mirar el ACL, y `GET /knowledge/files` filtraba por el contenido completo: un `editor` podía leer cualquier documento, incluidos los no publicados, y usar el buscador para confirmar si un texto arbitrario estaba dentro de uno ajeno. Esa ruta es `kb.read` **más** `userCanReadKbFile`, nunca solo la capability.
+
+### Principios
+
+Un grant apunta a un área o a un grupo. No hay grants por usuario: si una persona necesita leer un documento que su área no concede, la vía es un grupo con esa concesión. Las áreas son la vía normal de trabajo: cada usuario tiene al menos una y hereda todo lo que el área tenga concedido. Los grupos sirven para afinar permisos sin crear áreas.
+
+Desactivar un área **conserva** los grants, de modo que reactivar devuelve el acceso exactamente como estaba y sirve como mecanismo reversible ante una urgencia. Desactivar un grupo, en cambio, **revoca** sus grants: un grupo es una decisión de permisos activa, no un contenedor de historial.
+
+La asimetría se sostiene en la capa de datos, no en las rutas: `is_active` no está entre los campos que `updateUserGroup` acepta, así que la única forma de desactivar un grupo es la que revoca. Un `PATCH` con `is_active` devuelve 400 en vez de ignorar el campo.
+
+### Publicación
+
+Una subida nueva nace `pending_review`: el texto se extrae y se guarda, pero no se indexa ni es buscable. El chunking y los embeddings se ejecutan al aprobar, no antes, para no gastar cómputo ni embeddings en un documento que se iba a rechazar.
+
+Aprobar y conceder acceso son dos decisiones separadas y auditables. Aprobar no otorga acceso por sí mismo.
+
+Los grants solo pueden concederse sobre archivos `active`. Conceder acceso a un documento pendiente de aprobación lo volvería legible sin pasar por la cola de revisión.
+
+### Reglas que sostienen el modelo
+
+- **Fail closed**: sin grant explícito no hay lectura.
+- **Sin caché de permisos**: cada consulta revalida, así una revocación surte efecto en la siguiente petición. Si se añadiera caché, tendría que invalidarse en cada cambio de grant o área.
+- **Aprobar sin texto extraído falla**: un documento que no produce fragmentos no se marca activo, porque el estado mentiría sobre su disponibilidad.
+- **El listado de la KB no devuelve contenido**: solo metadatos. El texto llega por el endpoint de preview, que se audita y comprueba el ACL.
+- **La capability no es el acceso**: `kb.read` dice que el rol entra al endpoint; el predicado de ACL dice de qué archivo se trata. Un endpoint que devuelve contenido sin el predicado es un agujero, aunque la capability sea correcta.
+- **Los grants solo salen hacia el perímetro**: el detalle de un área o de un grupo incluye la ACL y es `org.read.detail`. El catálogo (`org.read`) no la incluye y sí lo ve `editor`.
+- **El último `super_admin` no se puede degradar ni borrar**, con un guard transaccional que serializa las operaciones concurrentes.
+
+### Límite de responsabilidad
+
+Las APIs revalidan el rol en cada petición. Ocultar un enlace en el panel es solo experiencia de usuario: no es un control de seguridad. Si alguien llama al endpoint directamente, la autorización se decide en el servidor.
+
+`app/admin/layout.tsx` cierra `/admin/*` en el servidor: resuelve la sesión y comprueba `admin.access` antes de renderizar. Sin eso, el árbol de las páginas del panel se servía a cualquiera y solo los datos quedaban protegidos, ruta por ruta. El `useEffect` de `AdminShell` sigue ahí para cuando la sesión caduca con el panel abierto, y eso es experiencia de usuario, no control.
+
+### Recuperación
+
+`npm run db:create-admin` crea un `super_admin` con la contraseña de `ADMIN_PASSWORD`. Es el mecanismo de ruptura previsto cuando no queda ninguno accesible, por ejemplo tras un bloqueo de la cuenta. El rol por defecto es `super_admin` porque un `admin` no puede crear ni administrar super_admins: si el valor por defecto fuera más bajo, el comando de recuperación crearía una cuenta sin la capacidad que existe para recuperar. `ADMIN_ROLE=admin` lo pide explícitamente.
 
 ## Seguridad de la fase de desarrollo
 

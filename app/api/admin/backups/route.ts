@@ -1,21 +1,23 @@
 import { NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { requireRole } from "@/lib/auth";
+import {
+  requireCapability,
+} from "@/lib/auth";
 import { getBackups, logAudit } from "@/lib/db";
 import { runBackup } from "@/lib/backup";
 
 export async function GET() {
-  const { allowed } = await requireRole(["super_admin", "admin"]);
-  if (!allowed) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+  const { allowed, status } = await requireCapability("backups.manage");
+  if (!allowed) return NextResponse.json({ error: "No autorizado" }, { status });
 
   const backups = await getBackups();
   return NextResponse.json({ backups });
 }
 
 export async function POST() {
-  const { allowed, user } = await requireRole(["super_admin", "admin"]);
+  const { allowed, status, user } = await requireCapability("backups.manage");
   if (!allowed || !user) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
   const backupId = uuidv4();

@@ -106,26 +106,6 @@ export default function AdminDashboard() {
           ))}
         </div>
       </div>
-
-      {/* ─── Placeholder info ─── */}
-      <div className="rounded-xl bg-[#121824] border border-[#202938] p-6">
-        <h3 className="text-sm font-semibold text-green-400 mb-2">
-          🚧 Panel en construcción
-        </h3>
-        <p className="text-sm text-gray-400">
-          Las secciones de este panel se están implementando progresivamente.
-          Próximamente: gestión de usuarios, monitoreo en vivo, configuración
-          global y más.
-        </p>
-        <div className="mt-4 flex gap-2">
-          <span className="px-2.5 py-1 rounded-full bg-green-600/20 text-green-400 text-[10px] font-medium border border-green-500/30">
-            Fase 1: Roles y acceso ✅
-          </span>
-          <span className="px-2.5 py-1 rounded-full bg-amber-600/20 text-amber-400 text-[10px] font-medium border border-amber-500/30">
-            Fase 2: En desarrollo
-          </span>
-        </div>
-      </div>
     </div>
   );
 }

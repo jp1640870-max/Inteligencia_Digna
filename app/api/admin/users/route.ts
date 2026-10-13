@@ -1,33 +1,64 @@
 import { NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { requireRole, hashPassword, filterVisibleUsers, isUserRole, canAssignRole } from "@/lib/auth";
+import {
+  requireCapability,
+  hashPassword,
+  filterVisibleUsers,
+  matchesMembershipFilters,
+  isUserRole,
+  canAssignRole,
+} from "@/lib/auth";
 import { getAllUsers, createUser, getUserByEmail, logAudit } from "@/lib/db";
 
-export async function GET() {
-  const { allowed, user } = await requireRole(["super_admin", "admin", "editor", "viewer"]);
+/**
+ * `areaId` y `groupId` se combinan con AND; `SIN_AREA` selecciona a quien no
+ * pertenece a ninguna área.
+ *
+ * El recorte se hace aquí y no en el cliente porque `getAllUsers` ya trae las
+ * membresías de cada usuario, así que filtrar evita mandar el padrón entero y
+ * descartarlo en el navegador. La búsqueda por texto sí queda en el cliente: es
+ * presentación y no revela nada que la respuesta ya no traiga.
+ *
+ * Un área o grupo desconocido devuelve vacío en vez de toda la lista: quien lo
+ * pidió buscaba a los miembros de algo que ya no existe.
+ *
+ * El predicado vive en `lib/auth` para poder testearlo sin base de datos.
+ */
+export async function GET(req: Request) {
+  const { allowed, status, user } = await requireCapability("users.read");
   if (!allowed || !user) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
-  const all = await getAllUsers();
-  const users = filterVisibleUsers(all, user).map((entry) => ({
-    id: entry.id,
-    email: entry.email,
-    name: entry.name,
-    google_id: entry.google_id,
-    picture: entry.picture,
-    role: entry.role,
-    created_at: entry.created_at,
-    chat_count: entry.chat_count,
-    project_count: entry.project_count,
-  }));
+  const { searchParams } = new URL(req.url);
+  const filters = {
+    areaId: searchParams.get("areaId"),
+    groupId: searchParams.get("groupId"),
+  };
+
+  const users = filterVisibleUsers(await getAllUsers(), user)
+    .filter((entry) => matchesMembershipFilters(entry, filters))
+    .map((entry) => ({
+      id: entry.id,
+      email: entry.email,
+      name: entry.name,
+      google_id: entry.google_id,
+      picture: entry.picture,
+      role: entry.role,
+      created_at: entry.created_at,
+      chat_count: entry.chat_count,
+      project_count: entry.project_count,
+      area_ids: entry.area_ids ?? [],
+      group_ids: entry.group_ids ?? [],
+    }));
+
   return NextResponse.json({ users, requester: user.id });
 }
 
 export async function POST(req: Request) {
-  const { allowed, user } = await requireRole(["super_admin", "admin", "editor"]);
+  const { allowed, status, user } = await requireCapability("users.write");
   if (!allowed || !user) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
   const { email, password, name, role } = await req.json();

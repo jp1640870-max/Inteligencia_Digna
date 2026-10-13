@@ -12,12 +12,12 @@ import {
 } from "@/lib/db";
 import { ollamaChat, ollamaChatStream, getChatModel, type InferenceMessage } from "@/lib/ollama";
 import { buildMessages } from "@/lib/prompt-builder";
-import { getUserIdFromRequest } from "@/lib/auth";
+import { getAuthUserFromRequest, getUserIdFromRequest } from "@/lib/auth";
 import { getProjectById, syncProjectChatTitle } from "@/lib/projects";
 import { generateDocument } from "@/lib/document-generator";
 import { searchWeb, formatSearchResults, shouldAutoSearch } from "@/lib/web-search";
 import { retrieveRelevantChunks, formatRagContext } from "@/lib/rag";
-import { retrieveKb, getKbScopeIdsForUser, formatKbContext, toKbSources } from "@/lib/kb";
+import { retrieveKb, formatKbContext, toKbSources } from "@/lib/kb";
 import { log, childLogger } from "@/lib/logger";
 import { checkRateLimit } from "@/lib/rate-limit";
 import type { DocGenStructure, DocGenFormat, EditResult, SearchResult, KbSource } from "@/types";
@@ -252,8 +252,11 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const startTime = Date.now();
-  const userId = await getUserIdFromRequest();
-  if (!userId) {
+  // El objeto completo (id + rol) porque el acceso a la KB depende del rol:
+  // `admin`/`super_admin` tienen bypass y `user`/`editor` se rigen por su ACL.
+  const user = await getAuthUserFromRequest();
+  const userId = user?.id;
+  if (!userId || !user) {
     return NextResponse.json({ error: "No autenticado" }, { status: 401 });
   }
 
@@ -341,19 +344,16 @@ ${project.instructions}`;
       console.log(`🧠 RAG error: ${e instanceof Error ? e.message : String(e)}`);
     }
 
-    // --- KB retrieval (base de conocimiento compartida) ---
+    // --- KB retrieval (base de conocimiento compartida, sujeta al ACL) ---
     let kbContext = "";
     let kbSources: KbSource[] = [];
     try {
-      const scopeIds = await getKbScopeIdsForUser();
-      if (scopeIds.length > 0) {
-        const kbHits = await retrieveKb(message, scopeIds);
-        if (kbHits.length > 0) {
-          kbContext = formatKbContext(kbHits);
-          kbSources = toKbSources(kbHits);
-          const scores = kbHits.map((h) => h.score.toFixed(2)).join(", ");
-          console.log(`📚 KB: ${kbHits.length} fragmentos recuperados [scores: ${scores}]`);
-        }
+      const kbHits = await retrieveKb(message, user);
+      if (kbHits.length > 0) {
+        kbContext = formatKbContext(kbHits);
+        kbSources = toKbSources(kbHits);
+        const scores = kbHits.map((h) => h.score.toFixed(2)).join(", ");
+        console.log(`📚 KB: ${kbHits.length} fragmentos recuperados [scores: ${scores}]`);
       }
     } catch (e) {
       console.log(`📚 KB error: ${e instanceof Error ? e.message : String(e)}`);

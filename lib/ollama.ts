@@ -64,6 +64,21 @@ function numberSetting(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+/**
+ * Ollama acepta `keep_alive` como número (segundos) o como string con unidad
+ * ("5m"). Un valor type env siempre llega como string, así que "-1" (mantener
+ * el modelo siempre en memoria) se envía como string y Ollama responde
+ * `time: missing unit in duration "-1"`. Si el string es numérico puro, se
+ * convierte a número; si trae unidad, se deja como string.
+ */
+function normalizeKeepAlive(value: string | number | undefined): string | number | undefined {
+  if (typeof value === "number") return value;
+  if (typeof value !== "string" || value.trim() === "") return value;
+  const trimmed = value.trim();
+  const numeric = Number(trimmed);
+  return Number.isFinite(numeric) ? numeric : trimmed;
+}
+
 function chatOptions(model: string, options?: ChatOptions): {
   bodyOptions: Record<string, unknown>;
   keepAlive?: string | number;
@@ -82,7 +97,9 @@ function chatOptions(model: string, options?: ChatOptions): {
 
   return {
     bodyOptions,
-    keepAlive: keep_alive ?? (model === getAgentModel() ? env.OLLAMA_AGENT_KEEP_ALIVE : env.OLLAMA_CHAT_KEEP_ALIVE),
+    keepAlive: normalizeKeepAlive(
+      keep_alive ?? (model === getAgentModel() ? env.OLLAMA_AGENT_KEEP_ALIVE : env.OLLAMA_CHAT_KEEP_ALIVE),
+    ),
   };
 }
 
@@ -222,7 +239,7 @@ export async function ollamaEmbeddings(
       model: getEmbeddingModel(),
       input: texts,
       truncate: true,
-      keep_alive: options?.keep_alive ?? env.OLLAMA_EMBEDDING_KEEP_ALIVE ?? "0",
+      keep_alive: normalizeKeepAlive(options?.keep_alive ?? env.OLLAMA_EMBEDDING_KEEP_ALIVE ?? "0"),
     }),
     signal: timeoutSignal(numberSetting(env.OLLAMA_EMBEDDING_TIMEOUT_MS, 30000), options?.signal),
   });

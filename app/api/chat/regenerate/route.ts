@@ -4,14 +4,16 @@ import { NextResponse } from "next/server";
 import { getChatById, getMessagesByChat, truncateMessagesToCount, addMessage } from "@/lib/db";
 import { ollamaChatStream, getChatModel } from "@/lib/ollama";
 import { buildMessages } from "@/lib/prompt-builder";
-import { getUserIdFromRequest } from "@/lib/auth";
-import { retrieveKb, getKbScopeIdsForUser, formatKbContext, toKbSources } from "@/lib/kb";
+import { getAuthUserFromRequest } from "@/lib/auth";
+import { retrieveKb, formatKbContext, toKbSources } from "@/lib/kb";
 import type { KbSource } from "@/types";
 
 
 export async function POST(req: Request) {
-  const userId = await getUserIdFromRequest();
-  if (!userId) {
+  // Se necesita el rol, no solo el id: el acceso a la KB depende de él.
+  const user = await getAuthUserFromRequest();
+  const userId = user?.id;
+  if (!userId || !user) {
     return NextResponse.json({ error: "No autenticado" }, { status: 401 });
   }
 
@@ -42,10 +44,9 @@ export async function POST(req: Request) {
     let kbContext = "";
     let kbSources: KbSource[] = [];
     try {
-      const scopeIds = await getKbScopeIdsForUser();
       const lastUserMsg = [...remainingMessages].reverse().find((m) => m.role === "user");
-      if (scopeIds.length > 0 && lastUserMsg?.text) {
-        const kbHits = await retrieveKb(lastUserMsg.text, scopeIds);
+      if (lastUserMsg?.text) {
+        const kbHits = await retrieveKb(lastUserMsg.text, user);
         if (kbHits.length > 0) {
           kbContext = formatKbContext(kbHits);
           kbSources = toKbSources(kbHits);

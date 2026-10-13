@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import {
+  requireCapability,
+} from "@/lib/auth";
 import { getSystemStats } from "@/lib/db";
 import { getAgentModel, getChatModel, getEmbeddingModel, listOllamaModels } from "@/lib/ollama";
 import { checkBucket } from "@/lib/storage";
 
 export async function GET() {
-  const { allowed } = await requireRole(["super_admin", "admin", "editor", "viewer"]);
-  if (!allowed) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+  const { allowed, status } = await requireCapability("panel.read");
+  if (!allowed) return NextResponse.json({ error: "No autorizado" }, { status });
 
   const checks: Record<string, { status: "ok" | "error"; detail?: string; latency?: number }> = {};
   try {

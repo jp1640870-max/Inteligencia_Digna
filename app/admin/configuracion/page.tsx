@@ -11,14 +11,24 @@ type ConfigItem = {
   updated_at: string;
 };
 
+/**
+ * Claves que se pintan en cada bloque.
+ *
+ * No aparecen `allow_registration`, `allow_guest_access`, `default_user_role` ni
+ * `maintenance_mode`: se sembraban y se ofrecían como interruptores sin que
+ * ningún código los leyera. El registro público es una decisión del código
+ * (`POST /api/auth/register` asigna siempre `user`), no una bandera.
+ *
+ * El bloque "Generales" desapareció con ellas: era el único que las contenía, y
+ * una clave repetida en dos bloques se renderiza dos veces con la misma `key`.
+ */
 const CATEGORIES: Record<string, { label: string; keys: string[] }> = {
-  general: { label: "Generales", keys: ["allow_registration", "allow_guest_access", "default_user_role", "maintenance_mode"] },
   limits: { label: "Límites", keys: ["max_chats_per_user", "max_file_size_mb", "max_knowledge_files_per_heart", "rate_limit_per_minute"] },
   ollama: { label: "Ollama / Modelo", keys: ["ollama_context_length", "ollama_num_predict", "ollama_temperature"] },
   features: { label: "Features", keys: ["heart_memory_enabled", "chat_summary_enabled"] },
 };
 
-const BOOLEAN_KEYS = ["allow_registration", "allow_guest_access", "maintenance_mode", "heart_memory_enabled", "chat_summary_enabled"];
+const BOOLEAN_KEYS = ["heart_memory_enabled", "chat_summary_enabled"];
 
 export default function AdminConfig() {
   const user = useAuthStore((s) => s.user);
@@ -108,7 +118,7 @@ export default function AdminConfig() {
 
       {!canEdit && (
         <div className="rounded-xl bg-amber-600/10 border border-amber-500/30 p-4 text-amber-400 text-sm">
-          Solo los usuarios <strong>super_admin</strong> pueden modificar la configuración.
+          Necesitas rol <strong>admin</strong> o <strong>super_admin</strong> para modificar la configuración.
         </div>
       )}
 

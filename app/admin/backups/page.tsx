@@ -80,7 +80,7 @@ export default function AdminBackups() {
 
       {!canCreate && (
         <div className="rounded-xl bg-amber-600/10 border border-amber-500/30 p-4 text-amber-400 text-sm">
-          Solo super_admin puede crear backups.
+          Necesitas rol admin o super_admin para crear backups.
         </div>
       )}
 

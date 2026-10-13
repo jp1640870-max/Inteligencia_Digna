@@ -1,14 +1,21 @@
 import { NextResponse } from "next/server";
-import { requireRole, hashPassword, canManageUser, canViewUser, isUserRole, canAssignRole } from "@/lib/auth";
+import {
+  requireCapability,
+  hashPassword,
+  canManageUser,
+  canViewUser,
+  isUserRole,
+  canAssignRole,
+} from "@/lib/auth";
 import { updateUserRole, updateUserPassword, deleteUserById, getUserById, getUserByIdFull, logAudit } from "@/lib/db";
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { allowed, user: caller } = await requireRole(["super_admin", "admin", "editor", "viewer"]);
+  const { allowed, status, user: caller } = await requireCapability("users.read");
   if (!allowed || !caller) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
   const { id } = await params;
@@ -38,6 +45,9 @@ export async function GET(
     created_at: user.created_at,
     projectCount: user.projectCount,
     chatCount: user.chatCount,
+    // Con nombre, no solo ids: la tarjeta de membresías los muestra en crudo.
+    areas: user.areas,
+    groups: user.groups,
     recentChats: user.recentChats,
     recentProjects: user.recentProjects,
   });
@@ -47,9 +57,9 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { allowed, user: caller } = await requireRole(["super_admin", "admin", "editor"]);
+  const { allowed, status, user: caller } = await requireCapability("users.write");
   if (!allowed || !caller) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
   const { id } = await params;
@@ -105,9 +115,9 @@ export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const result = await requireRole(["super_admin", "admin"]);
+  const result = await requireCapability("users.delete");
   if (!result.allowed || !result.user) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status: result.status });
   }
 
   const { id } = await params;

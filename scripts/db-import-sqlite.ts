@@ -52,9 +52,7 @@ function booleanValue(value: unknown): boolean {
 
 function roleValue(value: unknown): string {
   const role = text(value) || "user";
-  return ["super_admin", "admin", "editor", "viewer", "power_user", "user", "restricted"].includes(role)
-    ? role
-    : "user";
+  return ["super_admin", "admin", "editor", "user"].includes(role) ? role : "user";
 }
 
 function uuidFor(value: unknown): string {

@@ -1,19 +1,16 @@
 import { v4 as uuidv4 } from "uuid";
 import {
   getKbFileById,
-  getKbCategoryById,
-  getKbCategories,
   storeKbChunks,
-  getKbChunksByCategoryIds,
-  searchKbChunksByCategories,
   deleteKbChunksByFile,
   deleteKbFileById,
   updateKbFile,
   countKbChunksByFile,
   findKbFileByName,
 } from "@/lib/db";
+import { expandNeighborChunks, retrieveAccessibleChunks } from "@/lib/kb-access";
 import { chunkDocument, generateEmbedding, generateEmbeddings } from "@/lib/rag";
-import type { KbCategory, KbSource } from "@/types";
+import type { KbSource, UserRole } from "@/types";
 
 const SIMILARITY_THRESHOLD = 0.5;
 const TOP_K = 5;
@@ -66,56 +63,34 @@ export async function indexKbFile(fileId: string): Promise<IndexResult> {
   return { chunks: valid.length, truncated, tookMs: Date.now() - started };
 }
 
-export async function retrieveKb(query: string, categoryIds?: string[]): Promise<KbHit[]> {
-  if (!query.trim() || !categoryIds || categoryIds.length === 0) return [];
-  const chunks = await getKbChunksByCategoryIds(categoryIds);
-  if (chunks.length === 0) return [];
+/**
+ * Recuperación de la KB para un usuario concreto.
+ *
+ * El alcance ya no se deriva de las categorías: se resuelve contra el ACL del
+ * usuario en `lib/kb-access.ts`. Las categorías se siguen usando para clasificar
+ * y para el dashboard, pero no deciden quién lee qué.
+ */
+export async function retrieveKb(
+  query: string,
+  user: { id: string; role: UserRole | string },
+): Promise<KbHit[]> {
+  if (!query.trim()) return [];
   const queryEmbedding = await generateEmbedding(query);
   if (queryEmbedding.length === 0) return [];
 
-  const categoryCache = new Map<string, Promise<KbCategory | null>>();
-  const getCategory = (id: string | null): Promise<KbCategory | null> => {
-    if (!id) return Promise.resolve(null);
-    let value = categoryCache.get(id);
-    if (!value) {
-      value = getKbCategoryById(id);
-      categoryCache.set(id, value);
-    }
-    return value;
-  };
-
-  const scored = await searchKbChunksByCategories(categoryIds, queryEmbedding, SIMILARITY_THRESHOLD, TOP_K);
+  const scored = await retrieveAccessibleChunks(user, queryEmbedding, SIMILARITY_THRESHOLD, TOP_K);
   if (scored.length === 0) return [];
 
-  const byFile = new Map<string, typeof chunks>();
-  for (const chunk of chunks) {
-    const list = byFile.get(chunk.file_id) || [];
-    list.push(chunk);
-    byFile.set(chunk.file_id, list);
-  }
-  const seen = new Set<string>();
-  const expanded: KbHit[] = [];
-  for (const hit of scored) {
-    const fileChunks = byFile.get(hit.file_id) || [];
-    for (const index of [hit.chunk_index - 1, hit.chunk_index, hit.chunk_index + 1]) {
-      const neighbor = fileChunks.find((chunk) => chunk.chunk_index === index);
-      if (!neighbor) continue;
-      const key = `${neighbor.file_id}:${neighbor.chunk_index}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const category = await getCategory(neighbor.category_id);
-      expanded.push({
-        file_id: neighbor.file_id,
-        filename: neighbor.filename || "documento",
-        category: category?.name || null,
-        chunk_index: neighbor.chunk_index,
-        score: hit.score,
-        content: neighbor.content,
-      });
-    }
-  }
-  expanded.sort((a, b) => b.score - a.score);
-  return expanded;
+  const expanded = await expandNeighborChunks(scored);
+  if (expanded.length === 0) return [];
+  return expanded.map((hit) => ({
+    file_id: hit.file_id,
+    filename: hit.filename,
+    category: hit.category,
+    chunk_index: hit.chunk_index,
+    score: hit.score,
+    content: hit.content,
+  }));
 }
 
 export async function deleteKbFile(fileId: string): Promise<boolean> {
@@ -168,15 +143,13 @@ export function toKbSources(hits: Array<{ content: string; category: string | nu
   }));
 }
 
-export async function getKbScopeIdsForUser(): Promise<string[]> {
-  const categories = await getKbCategories();
-  return categories.filter((category) => category.active_count > 0).map((category) => category.id);
-}
-
-export function formatKbContext(hits: Array<{ content: string; category: string | null; score: number }>): string {
+export function formatKbContext(hits: Array<{ content: string; category: string | null; score: number; filename: string }>): string {
   if (hits.length === 0) return "";
   return hits
-    .map((hit) => `[Área: ${hit.category || "general"} | Relevancia: ${(hit.score * 100).toFixed(0)}%]\n${hit.content}`)
+    .map(
+      (hit) =>
+        `[Documento: ${hit.filename} | Área: ${hit.category || "general"} | Relevancia: ${(hit.score * 100).toFixed(0)}%]\n${hit.content}`,
+    )
     .join("\n\n---\n\n");
 }
 

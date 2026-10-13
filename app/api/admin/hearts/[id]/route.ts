@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import {
+  requireCapability,
+} from "@/lib/auth";
 import { getHeartById, updateHeart, deleteHeart, logAudit } from "@/lib/db";
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { allowed } = await requireRole(["super_admin", "admin"]);
+  const { allowed, status } = await requireCapability("hearts.manage");
   if (!allowed) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
   const { id } = await params;
@@ -24,9 +26,9 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { allowed } = await requireRole(["super_admin", "admin"]);
+  const { allowed, status } = await requireCapability("hearts.manage");
   if (!allowed) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
   const { id } = await params;
@@ -42,9 +44,9 @@ export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { allowed, user } = await requireRole(["super_admin", "admin"]);
+  const { allowed, status, user } = await requireCapability("hearts.manage");
   if (!allowed || !user) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
   const { id } = await params;

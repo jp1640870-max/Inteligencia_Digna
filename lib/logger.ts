@@ -4,7 +4,7 @@
  * Uso:
  *   import { log } from "@/lib/logger";
  *   log.info({ userId, chatId }, "Mensaje enviado");
- *   log.warn({ userId }, "Rate limit接近");
+ *   log.warn({ userId }, "Rate limit alcanzado");
  *   log.error({ err }, "Error en chat");
  *
  * Los logs salen en formato JSON → aptos para ingestión en Datadog, Grafana, etc.

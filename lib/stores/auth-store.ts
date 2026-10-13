@@ -25,7 +25,6 @@ export const ADMIN_VISIBLE_ROLES: UserRole[] = [
   "super_admin",
   "admin",
   "editor",
-  "viewer",
 ];
 
 export const useAuthStore = create<AuthState>((set, get) => ({

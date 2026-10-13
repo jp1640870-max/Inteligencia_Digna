@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import {
+  requireCapability,
+} from "@/lib/auth";
 import { updateKbCategory, deleteKbCategory, getKbCategoryById } from "@/lib/db";
 import { logAudit } from "@/lib/db";
 
@@ -7,9 +9,9 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { allowed, user } = await requireRole(["super_admin", "admin", "editor"]);
+  const { allowed, status, user } = await requireCapability("kb.manage");
   if (!allowed || !user) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
   const { id } = await params;
@@ -35,9 +37,9 @@ export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { allowed, user } = await requireRole(["super_admin", "admin"]);
+  const { allowed, status, user } = await requireCapability("kb.delete");
   if (!allowed || !user) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
   const { id } = await params;

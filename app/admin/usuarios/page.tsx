@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Trash2, Shield, Search, RefreshCw, ChevronDown, Plus, X } from "lucide-react";
 import Link from "next/link";
+import { SIN_AREA, assignableRolesFor } from "@/types";
 import type { UserRole } from "@/types";
 import { useAuthStore } from "@/lib/stores/auth-store";
 
@@ -16,22 +17,21 @@ type AdminUser = {
   created_at: string;
   chat_count: number;
   project_count: number;
+  area_ids: string[];
+  group_ids: string[];
 };
+
+type Area = { id: string; name: string };
+type UserGroup = { id: string; name: string };
 
 const ROLE_OPTIONS: { value: UserRole; label: string; color: string }[] = [
   { value: "user", label: "Usuario", color: "bg-gray-600" },
-  { value: "viewer", label: "Viewer", color: "bg-blue-600" },
   { value: "editor", label: "Editor", color: "bg-purple-600" },
   { value: "admin", label: "Admin", color: "bg-amber-600" },
   { value: "super_admin", label: "Super Admin", color: "bg-red-600" },
 ];
 
-/** Roles que puede asignar cada rol administrativo */
-const ASSIGNABLE_ROLES: Record<string, UserRole[]> = {
-  super_admin: ["user", "viewer", "editor", "admin", "super_admin"],
-  admin: ["user", "viewer", "editor", "admin"],
-  editor: ["user"],
-};
+/** Roles que puede asignar cada rol administrativo. La tabla vive en `@/types`. */
 
 export default function AdminUsuarios() {
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -42,31 +42,67 @@ export default function AdminUsuarios() {
   const [createForm, setCreateForm] = useState({ email: "", password: "", name: "", role: "user" as string });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [areas, setAreas] = useState<Area[]>([]);
+  const [groups, setGroups] = useState<UserGroup[]>([]);
+  const [areaFilter, setAreaFilter] = useState("");
+  const [groupFilter, setGroupFilter] = useState("");
 
   const currentUser = useAuthStore((s) => s.user);
   const myRole = currentUser?.role || "user";
   const canCreate = ["super_admin", "admin", "editor"].includes(myRole);
   const canDelete = ["super_admin", "admin"].includes(myRole);
   const canEditRole = ["super_admin", "admin", "editor"].includes(myRole);
-  const myAssignableRoles = ASSIGNABLE_ROLES[myRole] || [];
+  const myAssignableRoles = assignableRolesFor(myRole);
 
+  // Los filtros de área y grupo viajan en la URL de la petición, no se aplican
+  // en el navegador: `getAllUsers` ya trae las membresías, así que filtrar aquí
+  // evita descargar el padrón entero para descartar. La búsqueda por texto sigue
+  // en el cliente, porque es presentación.
   const loadUsers = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/users");
+      const params = new URLSearchParams();
+      if (areaFilter) params.set("areaId", areaFilter);
+      if (groupFilter) params.set("groupId", groupFilter);
+      const qs = params.toString();
+      const res = await fetch(`/api/admin/users${qs ? `?${qs}` : ""}`);
       if (res.ok) {
         const data = await res.json();
         setUsers(data.users);
       }
     } catch {}
     setLoading(false);
+  }, [areaFilter, groupFilter]);
+
+  const loadPrincipals = useCallback(async () => {
+    try {
+      const [areasRes, groupsRes] = await Promise.all([
+        fetch("/api/admin/areas"),
+        fetch("/api/admin/groups"),
+      ]);
+      if (areasRes.ok) {
+        const data = await areasRes.json();
+        setAreas(data.areas ?? []);
+      }
+      if (groupsRes.ok) {
+        const data = await groupsRes.json();
+        setGroups(data.groups ?? []);
+      }
+    } catch {}
   }, []);
 
   // Fetch inicial diferido a una macrotarea: evita setState síncrono dentro
   // del efecto (react-hooks/set-state-in-effect) sin cambiar comportamiento.
   // TODO(Fase 2): migrar a fetching dirigido por eventos/Suspense.
   useEffect(() => {
-    const id = setTimeout(() => { void loadUsers(); }, 0);
+    const id = setTimeout(() => void loadPrincipals(), 0);
+    return () => clearTimeout(id);
+  }, [loadPrincipals]);
+
+  // Los usuarios se recargan al cambiar un filtro. El macrotarea es por el mismo
+  // motivo que arriba: `loadUsers` marca `loading` de forma síncrona al entrar.
+  useEffect(() => {
+    const id = setTimeout(() => void loadUsers(), 0);
     return () => clearTimeout(id);
   }, [loadUsers]);
 
@@ -229,16 +265,47 @@ export default function AdminUsuarios() {
         </div>
       )}
 
-      {/* Search */}
-      <div className="relative">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-        <input
-          type="text"
-          placeholder="Buscar por email o nombre..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full bg-[#121824] border border-[#202938] rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500/50 transition-colors"
-        />
+      {/* Search + filtros de pertenencia */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="relative">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+          <input
+            type="text"
+            placeholder="Buscar por email o nombre..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full bg-[#121824] border border-[#202938] rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500/50 transition-colors"
+          />
+        </div>
+
+        {/* Área y grupo se combinan: con ambos activos salen quienes pertenecen
+            al área Y al grupo. "Sin área" es un valor centinela, no un id. */}
+        <select
+          value={areaFilter}
+          onChange={(e) => setAreaFilter(e.target.value)}
+          className="bg-[#121824] border border-[#202938] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-green-500/50 transition-colors"
+        >
+          <option value="">Todas las áreas</option>
+          <option value={SIN_AREA}>Sin área</option>
+          {areas.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={groupFilter}
+          onChange={(e) => setGroupFilter(e.target.value)}
+          className="bg-[#121824] border border-[#202938] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-green-500/50 transition-colors"
+        >
+          <option value="">Todos los grupos</option>
+          {groups.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.name}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Table */}
@@ -248,6 +315,7 @@ export default function AdminUsuarios() {
             <tr className="bg-[#0d131d] border-b border-[#202938]">
               <th className="text-left px-4 py-3 font-medium text-gray-400">Usuario</th>
               <th className="text-left px-4 py-3 font-medium text-gray-400">Email</th>
+              <th className="text-left px-4 py-3 font-medium text-gray-400">Áreas</th>
               <th className="text-center px-4 py-3 font-medium text-gray-400">Chats</th>
               <th className="text-center px-4 py-3 font-medium text-gray-400">Proyectos</th>
               <th className="text-left px-4 py-3 font-medium text-gray-400">Rol</th>
@@ -259,15 +327,20 @@ export default function AdminUsuarios() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={8} className="text-center py-12 text-gray-500">
+                <td colSpan={9} className="text-center py-12 text-gray-500">
                   <RefreshCw size={20} className="animate-spin mx-auto mb-2" />
                   Cargando usuarios...
                 </td>
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={8} className="text-center py-12 text-gray-500">
-                  {search ? "No se encontraron usuarios" : "No hay usuarios registrados"}
+                <td colSpan={9} className="text-center py-12 text-gray-500">
+                  {/* Distinguir "el filtro no coincide con nadie" de "no hay
+                      usuarios" importa: son fallos distintos y se corrigen
+                      distinto. */}
+                  {search || areaFilter || groupFilter
+                    ? "Ningún usuario coincide con los filtros"
+                    : "No hay usuarios registrados"}
                 </td>
               </tr>
             ) : (
@@ -288,6 +361,31 @@ export default function AdminUsuarios() {
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-gray-400 truncate max-w-[200px]">{u.email}</td>
+                    <td className="px-4 py-3">
+                      {/* Solo lectura. La asignación vive en el detalle del
+                          usuario: aquí sería una fila con controles, y eso
+                          convertía la lista en una segunda pantalla de
+                          permisos competing con la de Accesos. */}
+                      {u.area_ids.length === 0 ? (
+                        <span
+                          className="text-[10px] text-amber-400 bg-amber-600/10 px-2 py-0.5 rounded-full"
+                          title="Sin área no lee nada de la base de conocimiento"
+                        >
+                          sin área
+                        </span>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {u.area_ids.map((id) => (
+                            <span
+                              key={id}
+                              className="text-[10px] bg-cyan-600/10 text-cyan-400 px-2 py-0.5 rounded-full"
+                            >
+                              {areas.find((a) => a.id === id)?.name ?? "área"}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-center text-gray-400">{u.chat_count}</td>
                     <td className="px-4 py-3 text-center text-gray-400">{u.project_count}</td>
                     <td className="px-4 py-3">

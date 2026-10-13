@@ -1,13 +1,17 @@
 import { NextResponse } from "next/server";
-import { requireRole, canViewUser } from "@/lib/auth";
-import { getChatWithMessages } from "@/lib/db";
+import {
+  requireCapability,
+  canViewUser,
+} from "@/lib/auth";
+import { getChatWithMessages, logAudit } from "@/lib/db";
+import { clientIp } from "@/lib/request";
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { allowed, user: caller } = await requireRole(["super_admin", "admin"]);
-  if (!allowed || !caller) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+  const { allowed, status, user: caller } = await requireCapability("chats.read_content");
+  if (!allowed || !caller) return NextResponse.json({ error: "No autorizado" }, { status });
 
   const { id } = await params;
   const chat = await getChatWithMessages(id);
@@ -17,6 +21,16 @@ export async function GET(
   if (!canViewUser(caller.role, chat.user_role || "user", caller.id, chat.user_id)) {
     return NextResponse.json({ error: "Chat no encontrado" }, { status: 404 });
   }
+
+  // Leer la conversación de otra persona es el acceso más sensible del panel:
+  // incluye todo lo que esa persona escribió y lo que el asistente le respondió.
+  // Queda registrado quién lo abrió y de quién era.
+  await logAudit(
+    caller.id,
+    "chat.read",
+    `Lectura del chat ${id} del usuario ${chat.user_email ?? chat.user_id}`,
+    clientIp(req),
+  );
 
   return NextResponse.json(chat);
 }

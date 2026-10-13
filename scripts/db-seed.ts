@@ -13,14 +13,15 @@ type CategorySeed = {
   label: string;
 };
 
+/**
+ * Solo claves que el código lee. `allow_registration`, `allow_guest_access`,
+ * `default_user_role` y `maintenance_mode` se sembraban aquí y se pintaban en
+ * el panel sin que nada los consultara; la migración 004 las borra.
+ */
 const configSeeds: ConfigSeed[] = [
   { key: "max_chats_per_user", value: "999", description: "Máximo de chats por usuario" },
   { key: "max_file_size_mb", value: "20", description: "Tamaño máximo de archivos (MB)" },
   { key: "max_knowledge_files_per_heart", value: "3", description: "Archivos de conocimiento por Heart" },
-  { key: "allow_registration", value: "true", description: "Permitir nuevos registros" },
-  { key: "allow_guest_access", value: "false", description: "Permitir acceso sin login" },
-  { key: "default_user_role", value: "user", description: "Rol por defecto al registrarse" },
-  { key: "maintenance_mode", value: "false", description: "Modo mantenimiento" },
   { key: "ollama_context_length", value: "32768", description: "Contexto del modelo (tokens)" },
   { key: "ollama_num_predict", value: "4096", description: "Tokens máximos de respuesta" },
   { key: "ollama_temperature", value: "0.3", description: "Temperatura por defecto del modelo" },

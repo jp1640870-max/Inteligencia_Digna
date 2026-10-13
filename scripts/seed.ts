@@ -16,7 +16,13 @@ async function main(): Promise<void> {
   const email = process.env.ADMIN_EMAIL;
   const password = process.env.ADMIN_PASSWORD;
   const name = process.env.ADMIN_NAME || "Administración";
-  const role = process.env.ADMIN_ROLE || "admin";
+  // Por defecto `super_admin`, no `admin`. Este comando es el mecanismo de
+  // ruptura para recuperar la instancia cuando ya no queda ningún `super_admin`
+  // accesible, y un `admin` no puede crear ni administrar super_admins: un valor
+  // por defecto más bajo dejaría el comando capaz de crear una cuenta sin la
+  // capacidad que el comando existe para recuperar. Se puede pedir `admin`
+  // explícito con ADMIN_ROLE cuando lo que se quiere sea eso.
+  const role = process.env.ADMIN_ROLE || "super_admin";
   if (!process.env.DATABASE_URL || !email || !password) {
     throw new Error("Define DATABASE_URL, ADMIN_EMAIL y ADMIN_PASSWORD para crear el administrador");
   }
@@ -38,7 +44,7 @@ async function main(): Promise<void> {
         [randomUUID(), email.toLowerCase(), name, passwordHash, role],
       );
     }
-    console.log(`Administrador ${email} creado o actualizado`);
+    console.log(`Administrador ${email} creado o actualizado con rol ${role}`);
   } finally {
     await pool.end();
   }

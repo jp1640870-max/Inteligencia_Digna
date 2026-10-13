@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import {
+  requireCapability,
+} from "@/lib/auth";
 import { getAuditLogs, countAuditLogs, getAuditActions } from "@/lib/db";
 
 export async function GET(req: NextRequest) {
-  const { allowed, user } = await requireRole(["super_admin", "admin"]);
-  if (!allowed || !user) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+  const { allowed, status, user } = await requireCapability("audit.read");
+  if (!allowed || !user) return NextResponse.json({ error: "No autorizado" }, { status });
 
   const { searchParams } = new URL(req.url);
   const limit = parseInt(searchParams.get("limit") || "100");

@@ -1,7 +1,9 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import {
+  requireCapability,
+} from "@/lib/auth";
 import {
   getKbFileById,
   updateKbFile,
@@ -12,6 +14,7 @@ import {
   deleteAttachment,
 } from "@/lib/db";
 import { indexKbFile, deleteKbFile, resolveKeepBoth } from "@/lib/kb";
+import { can } from "@/lib/permissions";
 import { childLogger } from "@/lib/logger";
 import { deleteObject } from "@/lib/storage";
 import type { KbConflictAction } from "@/types";
@@ -28,9 +31,12 @@ export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { allowed, user } = await requireRole(["super_admin", "admin", "editor"]);
+  // Borrar es una acción de perímetro, igual que aprobar o descartar: destruye
+  // contenido ya publicado y corta el acceso de quien lo tenía concedido. El
+  // `editor` puede subir y reclasificar, pero no decidir qué se elimina.
+  const { allowed, status, user } = await requireCapability("kb.delete");
   if (!allowed || !user) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
   const { id } = await params;
@@ -50,15 +56,39 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { allowed, user } = await requireRole(["super_admin", "admin", "editor"]);
+  const { allowed, status, user } = await requireCapability("kb.manage");
   if (!allowed || !user) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
   const { id } = await params;
   const body = await req.json();
   const action = body.action as KbConflictAction;
   const reqLog = childLogger({ userId: user.id, fileId: id, action });
+
+  // `editor` prepara contenido: puede subir y reclasificar, pero no decide el
+  // destino de un documento ni su visibilidad. Publicar, descartar o
+  // reindexar cambia qué es legible para el resto, así que es del perímetro.
+  //
+  // La condición sale de la matriz de capacidades, no de comparar roles aquí.
+  // Con la lista local, cada acción nueva tenía que acordarse de declararse
+  // de perímetro, y ese acuerdo es justo lo que se pierde cuando vive lejos
+  // de la política.
+  const PUBLISH_ACTIONS: KbConflictAction[] = [
+    "approve",
+    "reject",
+    "keep-both",
+    "delete-new",
+    "delete-old",
+    "reactivate",
+    "reindex",
+  ];
+  if (PUBLISH_ACTIONS.includes(action) && !can(user.role, "kb.publish")) {
+    return NextResponse.json(
+      { error: "Esta acción requiere rol admin o super_admin" },
+      { status: 403 },
+    );
+  }
 
   const file = await getKbFileById(id);
   if (!file) {
@@ -130,6 +160,55 @@ export async function PATCH(
         await updateKbChunksCategory(id, categoryId);
         await logAudit(user.id, "kb.move", `Archivo movido: "${file.filename}" → categoría ${categoryId}`, "");
         return NextResponse.json({ success: true, message: "Categoría actualizada" });
+      }
+
+      case "approve": {
+        // Aprobar es el punto donde el contenido se vuelve buscable, así que
+        // indexa y activa. Sin grants sigue sin ser visible para nadie: aprobar
+        // y conceder acceso son dos decisiones separadas y auditables.
+        if (file.status === "active") {
+          return NextResponse.json({ error: "El archivo ya está activo" }, { status: 400 });
+        }
+        if (file.status === "hold" && file.conflict_with) {
+          return NextResponse.json(
+            { error: "Resuelve primero el conflicto de nombre" },
+            { status: 400 },
+          );
+        }
+        const indexing = await indexKbFile(id);
+        // Un archivo que se aprobó sin extraer nada quedaría "activo" pero sin
+        // fragmentos: el retrieval no lo encontraría nunca y el estado
+        // mentiría sobre la disponibilidad. Se devuelve a `hold` en su lugar.
+        if (indexing.chunks === 0) {
+          await updateKbFile(id, { status: "hold" });
+          return NextResponse.json(
+            {
+              error:
+                "No se extrajo texto del documento. Revisa el formato o el tamaño antes de aprobarlo.",
+            },
+            { status: 422 },
+          );
+        }
+        await updateKbFile(id, { status: "active" });
+        await logAudit(
+          user.id,
+          "kb.approve",
+          `Archivo aprobado: "${file.filename}" (${indexing.chunks} fragmentos). Revisa que tenga grants.`,
+          "",
+        );
+        return NextResponse.json({
+          success: true,
+          message: `Aprobado e indexado (${indexing.chunks} fragmentos). Los grants son un paso aparte.`,
+        });
+      }
+
+      case "reject": {
+        // Rechazar limpia los objetos y el contenido: si se conserva, el
+        // documento sigue en la base sin ningún rastro de que se descartó.
+        await removeStoredObjects(id);
+        await deleteKbFile(id);
+        await logAudit(user.id, "kb.reject", `Archivo rechazado y eliminado: "${file.filename}"`, "");
+        return NextResponse.json({ success: true, message: "Archivo rechazado y eliminado" });
       }
 
       default:

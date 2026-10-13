@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import {
+  requireCapability,
+} from "@/lib/auth";
 import { getAllConfig, setConfig, deleteConfig, logAudit } from "@/lib/db";
 
 export async function GET() {
-  const { allowed } = await requireRole(["super_admin", "admin", "editor", "viewer"]);
+  const { allowed, status } = await requireCapability("config.read");
   if (!allowed) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
   const configs = await getAllConfig();
@@ -13,9 +15,9 @@ export async function GET() {
 }
 
 export async function PATCH(req: Request) {
-  const { allowed, user } = await requireRole(["super_admin", "admin"]);
+  const { allowed, status, user } = await requireCapability("config.write");
   if (!allowed || !user) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado" }, { status });
   }
 
   const { key, value, description } = await req.json();
@@ -29,9 +31,9 @@ export async function PATCH(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  const { allowed } = await requireRole(["super_admin"]);
+  const { allowed, status } = await requireCapability("config.destroy");
   if (!allowed) {
-    return NextResponse.json({ error: "Solo super_admin" }, { status: 403 });
+    return NextResponse.json({ error: "Solo super_admin" }, { status });
   }
 
   const { key } = await req.json();

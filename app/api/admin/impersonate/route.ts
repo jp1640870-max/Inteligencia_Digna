@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
-import { requireRole, signToken, isUserRole } from "@/lib/auth";
+import {
+  requireCapability,
+  signToken,
+  isUserRole,
+} from "@/lib/auth";
 import { getUserById, logAudit } from "@/lib/db";
 
 export async function POST(req: Request) {
-  const { allowed, user } = await requireRole(["super_admin"]);
+  const { allowed, status, user } = await requireCapability("impersonate");
   if (!allowed || !user) {
-    return NextResponse.json({ error: "Solo super_admin puede impersonar" }, { status: 403 });
+    return NextResponse.json({ error: "Solo super_admin puede impersonar" }, { status });
   }
 
   const { targetUserId } = await req.json();

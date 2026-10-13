@@ -24,16 +24,56 @@ export type Chat = {
 };
 
 // ─── Roles de usuario ───
+//
+// `super_admin` y `admin` hacen lo mismo en cuanto a capacidades. La única
+// diferencia es vertical: `super_admin` administra a los `admin`. El control del
+// perímetro es detective (auditoría + revisión periódica), no preventivo.
 export type UserRole =
-  | "super_admin"   // Acceso TOTAL al panel + gestión de admins
-  | "admin"         // Gestiona usuarios, Hearts, config, contenido
-  | "editor"        // Gestiona Hearts públicos, knowledge base
-  | "viewer"        // Solo lectura del panel
-  | "power_user"    // Features avanzadas (ilimitado, docs)
-  | "user"          // Features base (chats, archivos)
-  | "restricted";   // Solo chats básicos, sin archivos ni web search
+  | "super_admin"   // Acceso total + gestión de los demás administradores
+  | "admin"         // Perímetro: usuarios, áreas, grupos, grants, contenido
+  | "editor"        // Prepara contenido (sube archivos); no aprueba ni otorga
+  | "user";         // Acceso a la KB según sus áreas y grupos
 
-export const ADMIN_ROLES: UserRole[] = ["super_admin", "admin", "editor", "viewer"];
+export const ADMIN_ROLES: UserRole[] = ["super_admin", "admin", "editor"];
+
+/** Roles que pueden gestionar el perímetro (todo menos `super_admin`). */
+export const PERIMETER_ROLES: UserRole[] = ["super_admin", "admin"];
+
+/**
+ * Valor centinela del filtro de área: selecciona a quien no pertenece a ninguna.
+ *
+ * No es un id real, es una palabra reservada para que el filtro sea
+ * direccionable desde la URL. Sin ella, la lista de quienes no leen nada de la
+ * base de conocimiento no sería alcanzable desde la interfaz.
+ *
+ * Vive aquí y no en `lib/auth` porque el selector del panel es un componente
+ * cliente, e `lib/auth` importa la base de datos y `next/headers`.
+ */
+export const SIN_AREA = "__sin_area__";
+
+/**
+ * Roles que cada rol administrativo puede asignar.
+ *
+ * Vive en `types` por el mismo motivo que `SIN_AREA`: el selector de rol del
+ * panel es un componente cliente y necesita la misma tabla que aplica el
+ * servidor. Estaba duplicada en `app/admin/usuarios/page.tsx` y
+ * `app/admin/usuarios/[id]/page.tsx`, dos copias que solo iban a divergir.
+ *
+ * `lib/auth` la consume a través de `canAssignRole`, que es la forma en que la
+ * aplica el servidor: el panel muestra lo que hay que elegir y la ruta
+ * comprueba lo que se eligió.
+ */
+const ASSIGNABLE_ROLES: Record<string, UserRole[]> = {
+  super_admin: ["user", "editor", "admin", "super_admin"],
+  admin: ["user", "editor", "admin"],
+  editor: ["user"],
+};
+
+/** Roles asignables por un actor, o lista vacía si no administra a nadie. */
+export function assignableRolesFor(actorRole: unknown): UserRole[] {
+  if (typeof actorRole !== "string") return [];
+  return ASSIGNABLE_ROLES[actorRole] ?? [];
+}
 
 export function isAdminRole(role?: string): boolean {
   if (!role) return false;
@@ -149,7 +189,11 @@ export type DocGenStructure = {
 
 // ─── Knowledge Base ───
 
-export type KbFileStatus = "processing" | "active" | "hold";
+export type KbFileStatus =
+  | "processing"
+  | "pending_review"  // Subido, aún no indexado ni buscable
+  | "active"
+  | "hold";           // Conflicto de nombre o error de storage
 
 export type KbCategory = {
   id: string;
@@ -185,7 +229,8 @@ export type KbChunk = {
   category_id: string | null;
   chunk_index: number;
   content: string;
-  embedding: string;
+  /** Solo presente en las consultas que recuperan vectores. */
+  embedding?: string;
   created_at?: string;
 };
 
@@ -207,7 +252,76 @@ export type KbConflictAction =
   | "delete-old"
   | "reactivate"
   | "reindex"
-  | "move";
+  | "move"
+  | "approve"
+  | "reject";
+
+// ─── Áreas, grupos y grants (RBAC de Knowledge Base) ─────────────────────────
+
+/**
+ * Unidad organizacional. Da acceso a la KB por defecto y admite un solo nivel
+ * de jerarquía (`parent_id`), suficiente para supervised sin invocar una
+ * tercera abstracción.
+ */
+export type Area = {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  parent_id: string | null;
+  source: "manual" | "google";
+  external_id: string | null;
+  is_active: boolean;
+  member_count?: number;
+  grant_count?: number;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * Agrupación transversal para compartir acceso entre áreas distintas.
+ * `is_system` marca los grupos que no se pueden borrar.
+ */
+export type UserGroup = {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  source: "manual" | "google";
+  external_id: string | null;
+  is_active: boolean;
+  is_system: boolean;
+  member_count?: number;
+  grant_count?: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PrincipalType = "area" | "group";
+
+/**
+ * Permiso explícito de lectura sobre un archivo de la KB. Sin grant nadie lee
+ * (fail closed), y solo `admin`/`super_admin` crean o revocan filas aquí.
+ */
+export type KbAccessGrant = {
+  id: string;
+  principal_type: PrincipalType;
+  principal_id: string;
+  principal_name: string;
+  kb_file_id: string;
+  filename: string;
+  category_label: string | null;
+  permission: "read";
+  granted_by: string | null;
+  granted_by_name: string | null;
+  created_at: string;
+};
+
+export type KbPrincipalRef = {
+  type: PrincipalType;
+  id: string;
+  name: string;
+};
 
 // ─── Filas de base de datos (contrato PostgreSQL ↔ dominio) ───
 // Las conversiones de tipos viven en lib/db.ts y lib/projects.ts; el resto
@@ -229,6 +343,10 @@ export type UserRow = {
 export type UserWithCountsRow = Omit<UserRow, "password_hash"> & {
   chat_count: number;
   project_count: number;
+  /** Áreas activas del usuario. Se recalcula en cada lectura, sin caché. */
+  area_ids?: string[];
+  /** Grupos activos del usuario. Igual que `area_ids`. */
+  group_ids?: string[];
 };
 
 export type ChatRow = {
