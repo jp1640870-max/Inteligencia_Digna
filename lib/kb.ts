@@ -98,11 +98,6 @@ export async function deleteKbFile(fileId: string): Promise<boolean> {
   return deleteKbFileById(fileId);
 }
 
-export async function isKbFileActive(fileId: string): Promise<boolean> {
-  const file = await getKbFileById(fileId);
-  return Boolean(file && file.status === "active");
-}
-
 export function nextAvailableName(base: string, ext: string, exists: (candidate: string) => boolean): string {
   let n = 2;
   let candidate = `${base} (${n})${ext}`;

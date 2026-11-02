@@ -21,7 +21,7 @@ const migrationsDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..
 const lockName = "inteligencia_digna:schema_migrations";
 
 function loadEnvironment(): void {
-  for (const fileName of [".env", ".env.local"]) {
+  for (const fileName of [".env"]) {
     const filePath = resolve(process.cwd(), fileName);
     if (existsSync(filePath)) process.loadEnvFile(filePath);
   }

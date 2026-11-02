@@ -1,9 +1,8 @@
 import { existsSync } from "node:fs";
-import { readEffectiveEnv, readFileEnv } from "./lib/env-file";
+import { readEffectiveEnv } from "./lib/env-file";
 
 const strict = process.argv.includes("--strict");
 const env = readEffectiveEnv();
-const fileEnv = readFileEnv();
 
 const errors: string[] = [];
 const warnings: string[] = [];
@@ -137,9 +136,19 @@ required("OLLAMA_AGENT_MODEL");
 required("OLLAMA_EMBEDDING_MODEL");
 
 // ── Seguridad / despliegue ────────────────────────────────────────────────
-if (fileEnv.ADMIN_PASSWORD) {
+const servicePasswords: Record<string, string | undefined> = {
+  POSTGRES_PASSWORD: value("POSTGRES_PASSWORD"),
+  PGADMIN_PASSWORD: value("PGADMIN_PASSWORD"),
+  MINIO_ROOT_PASSWORD: value("MINIO_ROOT_PASSWORD"),
+  MINIO_SECRET_KEY: value("MINIO_SECRET_KEY"),
+};
+const configuredPasswords = Object.entries(servicePasswords).filter(([, v]) => v);
+if (
+  configuredPasswords.length > 1 &&
+  new Set(configuredPasswords.map(([, v]) => v)).size > 1
+) {
   warnings.push(
-    "ADMIN_PASSWORD está persistido en .env/.env.local; pásalo solo como variable de proceso"
+    "Las contraseñas de servicio no son todas iguales (en local se esperaba la misma para PostgreSQL, pgAdmin y MinIO)"
   );
 }
 const ngrokDomain = value("NGROK_DOMAIN");
@@ -155,7 +164,6 @@ if (ngrokDomain) {
 // ── Resultado ─────────────────────────────────────────────────────────────
 console.log("\n🔎 Verificando configuración de Inteligencia Digna\n");
 console.log(`  .env:       ${existsSync(".env") ? "sí" : "no"}`);
-console.log(`  .env.local: ${existsSync(".env.local") ? "sí" : "no"}`);
 console.log(`  Modo:       ${strict ? "estricto" : "normal"}\n`);
 
 if (errors.length > 0) {

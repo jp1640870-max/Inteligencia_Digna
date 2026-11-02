@@ -5,7 +5,7 @@ import { Pool, type PoolClient } from "pg";
 type EmbeddingRow = { id: string; content: string };
 
 function loadEnvironment(): void {
-  for (const fileName of [".env", ".env.local"]) {
+  for (const fileName of [".env"]) {
     const filePath = resolve(process.cwd(), fileName);
     if (existsSync(filePath)) process.loadEnvFile(filePath);
   }

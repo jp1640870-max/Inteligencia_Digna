@@ -54,7 +54,7 @@ console.log(line("Bucket", env.MINIO_BUCKET || "attachments"));
 console.log("\nAplicación");
 console.log(line("URL local", "https://localhost:3000"));
 console.log(line("Admin email", env.ADMIN_EMAIL || "admin@digna.super"));
-console.log(line("Admin password", adminPassword || "(ver CREDENTIALS.md)"));
+console.log(line("Admin password", env.ADMIN_PASSWORD || adminPassword || "(ver CREDENTIALS.md)"));
 
 console.log("\nGoogle OAuth");
 console.log(line("Client ID", mask(env.GOOGLE_CLIENT_ID, 12)));

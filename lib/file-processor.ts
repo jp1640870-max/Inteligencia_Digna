@@ -1,16 +1,6 @@
 import * as mammoth from "mammoth";
 import * as ExcelJS from "xlsx";
-import { readExcelStructure } from "@/lib/editors/excel-editor";
-import { readWordStructure } from "@/lib/editors/word-editor";
-import { readPdfStructure } from "@/lib/editors/pdf-editor";
-import type { EditFormat, Pdf2JsonData } from "@/types";
-
-export type ExtractedFile = {
-  name: string;
-  type: string;
-  content: string;
-  size: number;
-};
+import type { Pdf2JsonData } from "@/types";
 
 function getExtension(filename: string): string {
   return filename.split(".").pop()?.toLowerCase() || "";
@@ -78,30 +68,5 @@ export async function extractText(
       return buffer.toString("utf8");
     default:
       return `[Archivo ${filename} no procesable. Solo se admite PDF, DOCX, XLSX, TXT, MD, CSV.]`;
-  }
-}
-
-export async function extractStructure(
-  buffer: Buffer,
-  filename: string
-): Promise<{ format: EditFormat; json: string }> {
-  const ext = filename.split(".").pop()?.toLowerCase() || "";
-
-  switch (ext) {
-    case "xlsx":
-    case "xls": {
-      const s = await readExcelStructure(buffer);
-      return { format: "xlsx", json: JSON.stringify(s) };
-    }
-    case "docx": {
-      const s = await readWordStructure(buffer);
-      return { format: "docx", json: JSON.stringify(s) };
-    }
-    case "pdf": {
-      const s = await readPdfStructure(buffer);
-      return { format: "pdf", json: JSON.stringify(s) };
-    }
-    default:
-      throw new Error(`Formato no soportado para estructura: .${ext}`);
   }
 }

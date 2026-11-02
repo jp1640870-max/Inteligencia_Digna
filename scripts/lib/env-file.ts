@@ -32,9 +32,9 @@ export function parseEnvFile(fileName: string): EnvMap {
   return result;
 }
 
-/** Variables de los archivos, con .env.local pisando a .env. */
+/** Variables del archivo .env. */
 export function readFileEnv(): EnvMap {
-  return { ...parseEnvFile(".env"), ...parseEnvFile(".env.local") };
+  return parseEnvFile(".env");
 }
 
 /** Variables efectivas: archivos primero y proceso después (gana el proceso). */

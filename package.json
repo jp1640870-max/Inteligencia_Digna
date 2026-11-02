@@ -19,21 +19,18 @@
     "env:check": "tsx scripts/env-check.ts",
     "env:check:strict": "tsx scripts/env-check.ts --strict",
     "env:show": "tsx scripts/show-credentials.ts",
-    "env:sync": "node scripts/sync-env.js",
     "smoke:db": "tsx scripts/db-smoke.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",
     "db:seed": "tsx scripts/db-seed.ts",
-    "db:import": "tsx scripts/db-import-sqlite.ts",
     "db:reindex": "tsx scripts/db-reindex-embeddings.ts",
     "db:create-admin": "tsx scripts/seed.ts",
     "storage:init": "tsx scripts/storage-init.ts",
     "db:query": "tsx scripts/db-query.ts",
-    "db:reset-password": "node --env-file=.env.local scripts/reset-password.js"
+    "db:reset-password": "node --env-file=.env scripts/reset-password.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1140.0",
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^12.11.1",
     "docx": "^9.7.1",
     "exceljs": "^4.4.0",
     "jsonwebtoken": "^9.0.3",
@@ -57,7 +54,6 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^26.6.2",
     "@types/pg": "^8.23.1",

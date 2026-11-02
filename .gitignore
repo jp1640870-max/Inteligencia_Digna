@@ -49,12 +49,10 @@ planIA.txt
 planHearts.txt
 dashboardplan.txxt
 
-# database & uploads
-data/app.db*
+# database & backups
 data/backups/
 data/Backups/
 *.dump
-uploads/
 generated/
 
 # despliegue

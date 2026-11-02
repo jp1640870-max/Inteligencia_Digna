@@ -65,7 +65,6 @@ El navegador nunca conoce `DATABASE_URL`, `MINIO_ENDPOINT` ni `OLLAMA_URL`. Esas
 │   ├── db-migrate.ts
 │   ├── db-seed.ts
 │   ├── db-smoke.ts
-│   ├── db-import-sqlite.ts
 │   ├── db-reindex-embeddings.ts
 │   ├── db-query.ts
 │   └── storage-init.ts
@@ -169,32 +168,6 @@ Las columnas de embeddings usan `vector(1024)`:
 Los índices HNSW permiten búsqueda coseno. El retrieval de RAG sigue aplicando el top-k y el umbral para no cambiar el comportamiento del producto durante la transición.
 
 La conexión usa un pool `pg` y consultas parametrizadas. Las operaciones que modifican varios registros usan transacciones. Las funciones de acceso son asíncronas porque PostgreSQL no es síncrono.
-
-### Importar la base actual
-
-```bash
-SQLITE_PATH=data/app.db npm run db:import
-```
-
-El importador:
-
-1. Lee SQLite en modo read-only.
-2. Mapea identificadores heredados a UUID.
-3. Importa usuarios, chats, mensajes, proyectos, KB y auditoría.
-4. Convierte timestamps a `TIMESTAMPTZ` y JSON a `JSONB`.
-5. Convierte embeddings JSON a vectores de 1024 dimensiones.
-6. Reporta y conserva los chunks RAG cuyo `chat_id` no existe; los importa con `chat_id NULL` para no perder el texto y permite reindexarlos o asociarlos posteriormente.
-7. No modifica `data/app.db`.
-
-Después se debe ejecutar:
-
-```bash
-npm run db:reindex
-```
-
-El comando recalcula los embeddings con el `OLLAMA_EMBEDDING_MODEL` actual y verifica la dimensión. La fuente SQLite permanece intacta hasta validar el corte.
-
-El importador no interpreta automáticamente `data/chats.json` ni `data/projects.json`; esos archivos quedan como archivo legacy y requieren una migración de producto específica.
 
 ## MinIO/S3
 

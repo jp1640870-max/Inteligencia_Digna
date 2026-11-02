@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 function loadEnvironment(): void {
-  for (const fileName of [".env", ".env.local"]) {
+  for (const fileName of [".env"]) {
     const filePath = resolve(process.cwd(), fileName);
     if (existsSync(filePath)) process.loadEnvFile(filePath);
   }

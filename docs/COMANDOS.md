@@ -31,15 +31,14 @@ node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
 
 Completa `JWT_SECRET`, `DATABASE_URL`, las credenciales de MinIO y los tags exactos de Ollama en `.env`. `.env` está ignorado por Git.
 
-Next.js también carga `.env.local`; mantén ambos sincronizados:
+Verifica la configuración:
 
 ```bash
-npm run env:sync
 npm run env:check
 npm run env:show
 ```
 
-`env:sync` copia `.env` sobre `.env.local` (guarda el anterior como `.env.local.bak`). `env:check` valida contraseñas, URLs y variables obligatorias; `npm run env:check:strict` convierte las advertencias en errores. `env:show` imprime las credenciales de servicio y lee la contraseña del admin desde `..\Inteligencia_Digna.local\CREDENTIALS.md`.
+`env:check` valida contraseñas, URLs y variables obligatorias; `npm run env:check:strict` convierte las advertencias en errores. `env:show` imprime las credenciales de servicio y la contraseña del admin (`ADMIN_PASSWORD` en `.env`, o `..\Inteligencia_Digna.local\CREDENTIALS.md` como respaldo).
 
 ## Levantar PostgreSQL, la aplicación y MinIO
 
@@ -130,7 +129,7 @@ El servidor de desarrollo acepta localhost, la LAN y los dominios de ngrok sin c
    ngrok config add-authtoken <token>
    ```
 
-2. Ponte el dominio fijo en `.env` y `.env.local` (sin `https://`):
+2. Ponte el dominio fijo en `.env` (sin `https://`):
 
    ```env
    NGROK_DOMAIN=mi-dominio.ngrok-free.dev
@@ -156,25 +155,9 @@ El servidor de desarrollo acepta localhost, la LAN y los dominios de ngrok sin c
    https://mi-dominio.ngrok-free.dev/api/auth/google/callback
    ```
 
-5. Completa `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` en `.env` y `.env.local`, y reinicia el dev server.
+5. Completa `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` en `.env`, y reinicia el dev server.
 
 El callback de ngrok aparece en la salida de `npm run dev` y en `npm run env:show`. El login con Google crea un rol `user` si el correo es nuevo; para probar un admin con Google, crea primero el usuario con ese correo usando `db:create-admin`.
-
-## Migrar datos desde SQLite
-
-El importador es explícito y no modifica `data/app.db`:
-
-```bash
-SQLITE_PATH=data/app.db npm run db:import
-```
-
-Después se deben reindexar los embeddings contra el modelo BGE-M3 instalado:
-
-```bash
-npm run db:reindex
-```
-
-El importador conserva la base SQLite como fuente de rollback. No se debe apuntar `DATABASE_URL` a producción sin snapshot y validación.
 
 ## Acceder directamente a la base
 

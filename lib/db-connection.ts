@@ -46,10 +46,3 @@ export async function withTransaction<T>(
     client.release();
   }
 }
-
-export async function closePool(): Promise<void> {
-  if (!sharedPool) return;
-  const pool = sharedPool;
-  sharedPool = null;
-  await pool.end();
-}

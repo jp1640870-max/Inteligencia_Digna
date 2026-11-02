@@ -159,32 +159,3 @@ export async function getChatsByProject(
     return { ...row, project_name: projectName, messages: [] };
   });
 }
-
-export async function getProjectsByChat(chatId: string, userId: string): Promise<ProjectRow[]> {
-  const result = await query(
-    `SELECT p.*
-     FROM projects p
-     JOIN project_chats pc ON p.id = pc.project_id
-     WHERE pc.chat_id = $1 AND p.user_id = $2`,
-    [chatId, userId],
-  );
-  return (result.rows as DbRow[]).map(normalizeProject);
-}
-
-export async function getChatsSinProyecto(
-  userId: string,
-): Promise<Array<{ id: string; title: string; messages: [] }>> {
-  const result = await query(
-    `SELECT c.*
-     FROM chats c
-     WHERE c.user_id = $1
-       AND NOT EXISTS (SELECT 1 FROM project_chats pc WHERE pc.chat_id = c.id)
-     ORDER BY c.updated_at DESC`,
-    [userId],
-  );
-  return (result.rows as DbRow[]).map((row) => ({
-    id: textValue(row.id),
-    title: textValue(row.title),
-    messages: [],
-  }));
-}

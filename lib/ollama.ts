@@ -260,7 +260,3 @@ export async function listOllamaModels(options?: { signal?: AbortSignal }): Prom
   const payload = (await response.json()) as OllamaTagResponse;
   return (payload.models || []).map((model) => model.name || model.model || "").filter(Boolean);
 }
-
-export function getOllamaBaseUrl(): string {
-  return baseUrl();
-}

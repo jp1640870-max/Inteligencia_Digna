@@ -16,7 +16,6 @@ import type {
   KbCategoryWithCounts,
   KbChunk,
   KbFile,
-  KbPrincipalRef,
   KbSource,
   KnowledgeEntryRow,
   MessageRow,
@@ -24,7 +23,6 @@ import type {
   PrincipalType,
   ProjectAdminRow,
   ProjectRow,
-  RagChunkRow,
   UserGroup,
   UserRow,
   UserWithCountsRow,
@@ -297,21 +295,6 @@ function normalizeKbChunk(row: DbRow): KbChunk {
   } as KbChunk;
 }
 
-function normalizeRagChunk(row: DbRow): RagChunkRow {
-  return {
-    ...row,
-    id: textValue(row.id),
-    user_id: nullableTextValue(row.user_id),
-    chat_id: nullableTextValue(row.chat_id),
-    project_id: nullableTextValue(row.project_id),
-    document_name: textValue(row.document_name),
-    chunk_index: numberValue(row.chunk_index),
-    content: textValue(row.content),
-    embedding: embeddingText(row.embedding),
-    created_at: textValue(row.created_at),
-  } as RagChunkRow;
-}
-
 function normalizeProject(row: DbRow): ProjectRow {
   return {
     ...row,
@@ -581,22 +564,6 @@ export async function storeChunk(chunk: {
   );
 }
 
-export async function getChunksByChat(chatId: string): Promise<RagChunkRow[]> {
-  const result = await query(
-    "SELECT id, user_id, chat_id, project_id, document_name, chunk_index, content, embedding::text AS embedding, created_at FROM rag_chunks WHERE chat_id = $1 ORDER BY chunk_index ASC",
-    [chatId],
-  );
-  return (result.rows as DbRow[]).map(normalizeRagChunk);
-}
-
-export async function getChunksByProject(projectId: string): Promise<RagChunkRow[]> {
-  const result = await query(
-    "SELECT id, user_id, chat_id, project_id, document_name, chunk_index, content, embedding::text AS embedding, created_at FROM rag_chunks WHERE project_id = $1 ORDER BY document_name, chunk_index ASC",
-    [projectId],
-  );
-  return (result.rows as DbRow[]).map(normalizeRagChunk);
-}
-
 export async function hasChunksForChat(chatId: string): Promise<boolean> {
   const result = await query("SELECT EXISTS (SELECT 1 FROM rag_chunks WHERE chat_id = $1) AS present", [chatId]);
   return result.rows[0]?.present === true;
@@ -623,16 +590,8 @@ export async function searchChunksByChat(
   }));
 }
 
-export async function deleteChunksByChat(chatId: string): Promise<void> {
-  await query("DELETE FROM rag_chunks WHERE chat_id = $1", [chatId]);
-}
-
 export async function deleteChunksByDocument(chatId: string, documentName: string): Promise<void> {
   await query("DELETE FROM rag_chunks WHERE chat_id = $1 AND document_name = $2", [chatId, documentName]);
-}
-
-export async function deleteChunksByProject(projectId: string): Promise<void> {
-  await query("DELETE FROM rag_chunks WHERE project_id = $1", [projectId]);
 }
 
 export async function getAllUsers(): Promise<UserWithCountsRow[]> {
@@ -768,14 +727,6 @@ export async function deleteUserById(userId: string): Promise<void> {
   });
 }
 
-/** Verifica si queda al menos un super_admin. Alimenta el aviso del panel. */
-export async function countSuperAdmins(): Promise<number> {
-  const result = await query<{ count: number }>(
-    "SELECT count(*)::int AS count FROM users WHERE role = 'super_admin'",
-  );
-  return result.rows[0]?.count ?? 0;
-}
-
 export async function getSystemStats(callerRole?: string): Promise<{
   totalUsers: number;
   totalChats: number;
@@ -819,22 +770,6 @@ export async function getSystemStats(callerRole?: string): Promise<{
     ]);
 
   return { totalUsers, totalChats, totalMessages, totalProjects, chatsToday, messagesToday, activeUsers };
-}
-
-export async function getChatsByUserRaw(userId: string): Promise<ChatRow[]> {
-  const result = await query(
-    "SELECT * FROM chats WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 10",
-    [userId],
-  );
-  return (result.rows as DbRow[]).map(normalizeChat);
-}
-
-export async function getProjectsByUserRaw(userId: string): Promise<ProjectRow[]> {
-  const result = await query(
-    "SELECT * FROM projects WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10",
-    [userId],
-  );
-  return (result.rows as DbRow[]).map(normalizeProject);
 }
 
 export async function getUserByIdFull(userId: string): Promise<{
@@ -914,8 +849,6 @@ export async function getUserByIdFull(userId: string): Promise<{
   };
 }
 
-export async function initHeartsTable(): Promise<void> { return; }
-
 export async function getAllHearts(): Promise<HeartWithOwnerRow[]> {
   const result = await query(
     `SELECT h.*, u.name AS user_name, u.email AS user_email
@@ -983,16 +916,6 @@ export async function deleteHeart(id: string): Promise<void> {
   await query("DELETE FROM hearts WHERE id = $1", [id]);
 }
 
-export async function getHeartsByUser(userId: string): Promise<HeartRow[]> {
-  const result = await query(
-    "SELECT * FROM hearts WHERE user_id = $1 ORDER BY updated_at DESC",
-    [userId],
-  );
-  return (result.rows as DbRow[]).map(normalizeHeart);
-}
-
-export async function initConfigTable(): Promise<void> { return; }
-
 export async function getAllConfig(): Promise<Array<ConfigRow & { updated_at: string }>> {
   const result = await query("SELECT key, value, description, updated_at FROM config ORDER BY key");
   return (result.rows as DbRow[]).map((row) => ({
@@ -1021,47 +944,6 @@ export async function setConfig(key: string, value: string, description?: string
 export async function deleteConfig(key: string): Promise<void> {
   await query("DELETE FROM config WHERE key = $1", [key]);
 }
-
-/**
- * Configuración por defecto.
- *
- * Solo entran aquí claves que algún código lee de verdad. Antes se sembraban
- * también `allow_registration`, `allow_guest_access`, `default_user_role` y
- * `maintenance_mode`, que se pintaban en el panel como si fueran interruptores
- * y no los leía nadie: el registro público estaba abierto y con el rol fijo
- * `user` por decisión del código, no por el valor de la bandera. Un control que
- * no hace nada en el panel es peor que no tenerlo, porque quien lo ve asume que
- * está activo.
- *
- * `max_chats_per_user` y `max_knowledge_files_per_heart` siguen aquí por
- * compatibilidad con instancias ya sembradas; su consumo se comprueba aparte.
- */
-export async function seedDefaultConfig(): Promise<void> {
-  const defaults: Record<string, { value: string; description: string }> = {
-    max_chats_per_user: { value: "999", description: "Máximo de chats por usuario" },
-    max_file_size_mb: { value: "20", description: "Tamaño máximo de archivos (MB)" },
-    max_knowledge_files_per_heart: { value: "3", description: "Archivos de conocimiento por Heart" },
-    ollama_context_length: { value: "32768", description: "Contexto del modelo (tokens)" },
-    ollama_num_predict: { value: "4096", description: "Tokens máximos de respuesta" },
-    ollama_temperature: { value: "0.3", description: "Temperatura por defecto del modelo" },
-    rate_limit_per_minute: { value: "30", description: "Rate limit por minuto" },
-    heart_memory_enabled: { value: "true", description: "Memoria persistente para Hearts" },
-    chat_summary_enabled: { value: "true", description: "Resúmenes automáticos de chat" },
-  };
-
-  await withTransaction(async (client: PoolClient) => {
-    for (const [key, config] of Object.entries(defaults)) {
-      await client.query(
-        `INSERT INTO config (key, value, description)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (key) DO NOTHING`,
-        [key, config.value, config.description],
-      );
-    }
-  });
-}
-
-export async function initKnowledgeTable(): Promise<void> { return; }
 
 export async function getKnowledgeEntryById(id: string): Promise<KnowledgeEntryRow | null> {
   const result = await query(
@@ -1134,8 +1016,6 @@ export async function updateKnowledgeEntry(
     [title, content, category, id],
   );
 }
-
-export async function initKbTables(): Promise<void> { return; }
 
 export async function getKbCategories(): Promise<KbCategoryWithCounts[]> {
   const result = await query(
@@ -1336,14 +1216,6 @@ export async function storeKbChunks(
   });
 }
 
-export async function getKbChunksByFile(fileId: string): Promise<KbChunk[]> {
-  const result = await query(
-    "SELECT id, file_id, category_id, chunk_index, content, embedding::text AS embedding, created_at FROM kb_chunks WHERE file_id = $1 ORDER BY chunk_index ASC",
-    [fileId],
-  );
-  return (result.rows as DbRow[]).map(normalizeKbChunk);
-}
-
 export async function countKbChunksByFile(fileId: string): Promise<number> {
   const result = await query("SELECT COUNT(*)::int AS c FROM kb_chunks WHERE file_id = $1", [fileId]);
   return countFromRow(result.rows[0]);
@@ -1385,10 +1257,6 @@ export async function searchKbChunks(
     filename: textValue(row.filename, "documento"),
     score: numberValue(row.score),
   }));
-}
-
-export async function migrateKnowledgeEntriesToKb(): Promise<{ migrated: number; failed: number }> {
-  return { migrated: 0, failed: 0 };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1532,16 +1400,6 @@ export async function removeAreaMember(areaId: string, userId: string): Promise<
   return (result.rowCount ?? 0) > 0;
 }
 
-export async function getAreaIdsForUser(userId: string): Promise<string[]> {
-  const result = await query(
-    `SELECT m.area_id FROM area_members m
-       JOIN areas a ON a.id = m.area_id
-      WHERE m.user_id = $1 AND a.is_active = TRUE`,
-    [userId],
-  );
-  return (result.rows as DbRow[]).map((row) => textValue(row.area_id));
-}
-
 export async function getAreaMemberIds(areaId: string): Promise<string[]> {
   const result = await query("SELECT user_id FROM area_members WHERE area_id = $1", [areaId]);
   return (result.rows as DbRow[]).map((row) => textValue(row.user_id));
@@ -1647,16 +1505,6 @@ export async function removeGroupMember(groupId: string, userId: string): Promis
   return (result.rowCount ?? 0) > 0;
 }
 
-export async function getGroupIdsForUser(userId: string): Promise<string[]> {
-  const result = await query(
-    `SELECT m.group_id FROM user_group_members m
-       JOIN user_groups g ON g.id = m.group_id
-      WHERE m.user_id = $1 AND g.is_active = TRUE`,
-    [userId],
-  );
-  return (result.rows as DbRow[]).map((row) => textValue(row.group_id));
-}
-
 export async function getGroupMemberIds(groupId: string): Promise<string[]> {
   const result = await query("SELECT user_id FROM user_group_members WHERE group_id = $1", [groupId]);
   return (result.rows as DbRow[]).map((row) => textValue(row.user_id));
@@ -1760,26 +1608,6 @@ export async function revokeKbFileAccessBulk(input: {
     [input.principalType, input.principalId, input.kbFileIds],
   );
   return result.rowCount ?? 0;
-}
-
-/** Principios que el usuario puede recibir lectura (áreas + grupos). */
-export async function getKbPrincipalsForUser(userId: string): Promise<KbPrincipalRef[]> {
-  const result = await query(
-    `SELECT 'area' AS type, a.id, a.name
-       FROM area_members m JOIN areas a ON a.id = m.area_id
-      WHERE m.user_id = $1 AND a.is_active = TRUE
-     UNION
-     SELECT 'group' AS type, g.id, g.name
-       FROM user_group_members m JOIN user_groups g ON g.id = m.group_id
-      WHERE m.user_id = $1 AND g.is_active = TRUE
-     ORDER BY type, name`,
-    [userId],
-  );
-  return (result.rows as DbRow[]).map((row) => ({
-    type: textValue(row.type) as PrincipalType,
-    id: textValue(row.id),
-    name: textValue(row.name),
-  }));
 }
 
 // ─── Resolución de acceso ──────────────────────────────────────────────────
@@ -2169,8 +1997,6 @@ export async function getAllChatsAdmin(search = ""): Promise<ChatAdminRow[]> {
   })) as ChatAdminRow[];
 }
 
-export async function initAuditTable(): Promise<void> { return; }
-
 export async function logAudit(
   userId: string | null,
   action: string,
@@ -2242,8 +2068,6 @@ export async function getAuditActions(): Promise<Array<{ action: string }>> {
   return (result.rows as DbRow[]).map((row) => ({ action: textValue(row.action) }));
 }
 
-export async function initAnnouncementsTable(): Promise<void> { return; }
-
 export async function getAnnouncementById(id: string): Promise<AnnouncementRow | null> {
   const result = await query(
     `SELECT a.*, CASE WHEN u.role = 'super_admin' THEN '—' ELSE u.name END AS created_by_name
@@ -2302,8 +2126,6 @@ export async function deleteAnnouncement(id: string): Promise<void> {
   await query("DELETE FROM announcements WHERE id = $1", [id]);
 }
 
-export async function initBackupsTable(): Promise<void> { return; }
-
 export async function createBackup(id: string, filename: string, createdBy: string): Promise<void> {
   await query("INSERT INTO backups (id, filename, created_by) VALUES ($1, $2, $3)", [
     id,
@@ -2330,11 +2152,6 @@ export async function getBackups(limit = 20): Promise<BackupRow[]> {
     [limit],
   );
   return (result.rows as DbRow[]).map(normalizeBackup);
-}
-
-export async function hasData(): Promise<boolean> {
-  const result = await query("SELECT COUNT(*)::int AS count FROM chats");
-  return countFromRow(result.rows[0], "count") > 0;
 }
 
 export async function createAttachment(data: {

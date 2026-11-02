@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readdir, stat } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { createBackup, updateBackupStatus } from "@/lib/db";
@@ -35,23 +35,5 @@ export async function runBackup(backupId: string, createdBy: string): Promise<st
   } catch (error) {
     await updateBackupStatus(backupId, "failed");
     throw error;
-  }
-}
-
-export async function getBackupFiles(): Promise<Array<{ filename: string; size: number; mtime: string }>> {
-  const backupDir = path.join(process.cwd(), "data", "backups");
-  try {
-    const files = await readdir(backupDir);
-    const entries = await Promise.all(
-      files
-        .filter((filename) => filename.endsWith(".dump"))
-        .map(async (filename) => {
-          const file = await stat(path.join(backupDir, filename));
-          return { filename, size: file.size, mtime: file.mtime.toISOString() };
-        }),
-    );
-    return entries.sort((left, right) => right.mtime.localeCompare(left.mtime));
-  } catch {
-    return [];
   }
 }

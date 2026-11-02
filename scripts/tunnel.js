@@ -8,7 +8,7 @@
  * Requiere un authtoken configurado una vez:
  *   ngrok config add-authtoken <token>
  *
- * El dominio fijo se toma de NGROK_DOMAIN en .env.local o .env. Sin dominio,
+ * El dominio fijo se toma de NGROK_DOMAIN en .env. Sin dominio,
  * ngrok asigna el dominio de desarrollo de la cuenta.
  */
 const { spawn, spawnSync } = require("child_process");
@@ -37,7 +37,6 @@ function readEnvValue(fileName, key) {
 }
 
 const domain = (
-  readEnvValue(".env.local", "NGROK_DOMAIN") ||
   readEnvValue(".env", "NGROK_DOMAIN") ||
   ""
 )

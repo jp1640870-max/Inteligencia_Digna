@@ -29,17 +29,16 @@ function readEnvValue(fileName, key) {
   return "";
 }
 
-// ─── 1. Validar que .env.local existe ───
-const envPath = path.join(process.cwd(), ".env.local");
+// ─── 1. Validar que .env existe ───
+const envPath = path.join(process.cwd(), ".env");
 if (!fs.existsSync(envPath)) {
-  console.error("\n❌ No se encuentra .env.local");
+  console.error("\n❌ No se encuentra .env");
   console.error("   Cópialo desde .env.example:");
-  console.error("   copy .env.example .env.local\n");
+  console.error("   copy .env.example .env\n");
   process.exit(1);
 }
 
 const ngrokDomain = (
-  readEnvValue(".env.local", "NGROK_DOMAIN") ||
   readEnvValue(".env", "NGROK_DOMAIN") ||
   ""
 )
@@ -72,7 +71,7 @@ const checkNgrok = setInterval(async () => {
       console.log(`  🔑 Callback:  ${url}/api/auth/google/callback`);
       if (ngrokDomain && host !== ngrokDomain) {
         console.warn(`  ⚠️  NGROK_DOMAIN=${ngrokDomain} no coincide con el túnel (${host}).`);
-        console.warn("     Actualiza NGROK_DOMAIN en .env/.env.local o reinicia el túnel.");
+        console.warn("     Actualiza NGROK_DOMAIN en .env o reinicia el túnel.");
       }
       console.log("");
       clearInterval(checkNgrok);

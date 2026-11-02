@@ -108,7 +108,6 @@ $ollamaUrl = $OllamaUrl.TrimEnd("/")
 
 $values = @{
     NODE_ENV = "production"
-    APP_URL = $PublicUrl
     NEXTAUTH_URL = $PublicUrl
     APP_BIND_ADDRESS = "0.0.0.0"
     APP_PORT = "3000"
@@ -138,13 +137,11 @@ $values = @{
     MINIO_CONSOLE_PORT = "9001"
     MINIO_ENDPOINT = "http://127.0.0.1:9000"
     MINIO_ENDPOINT_INTERNAL = "http://minio:9000"
-    MINIO_USE_SSL = "false"
     MINIO_ACCESS_KEY = $minioUser
     MINIO_SECRET_KEY = $servicePassword
     MINIO_BUCKET = "attachments"
     MINIO_REGION = "us-east-1"
     MINIO_FORCE_PATH_STYLE = "true"
-    SQLITE_PATH = "data/app.db"
     LOG_LEVEL = "info"
     OLLAMA_URL = $ollamaUrl
     OLLAMA_TIMEOUT_MS = "5000"
@@ -159,7 +156,6 @@ $values = @{
     OLLAMA_CHAT_KEEP_ALIVE = "-1"
     OLLAMA_AGENT_KEEP_ALIVE = "5m"
     OLLAMA_EMBEDDING_KEEP_ALIVE = "0"
-    EMBEDDING_DIMENSIONS = "1024"
     MAX_UPLOAD_MB = "20"
     SEARXNG_URL = "http://127.0.0.1:4000"
     PUBLIC_DOMAIN = $PublicDomain
@@ -168,7 +164,7 @@ $values = @{
 
 if ($DryRun) {
     Write-Host "DRY RUN: no se escribio nada." -ForegroundColor Cyan
-    Write-Host "  APP_URL / NEXTAUTH_URL: $PublicUrl"
+    Write-Host "  NEXTAUTH_URL:           $PublicUrl"
     Write-Host "  DEPLOY_BRANCH:          $Branch"
     Write-Host "  POSTGRES_PASSWORD:      <generado, $($servicePassword.Length) caracteres>"
     Write-Host "  JWT_SECRET:             <generado, $($jwtSecret.Length) caracteres>"

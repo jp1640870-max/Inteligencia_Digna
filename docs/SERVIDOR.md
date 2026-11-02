@@ -196,16 +196,7 @@ docker compose down -v
 
 El comando `down` normal conserva los volúmenes; `-v` los elimina.
 
-## Migrar los datos actuales
-
-El archivo `data/app.db` está ignorado por Git. Transfiéralo por un canal seguro a `data/app.db` en el servidor y ejecuta una sola vez:
-
-```bash
-docker compose run --rm --no-deps app npm run db:import
-docker compose run --rm --no-deps app npm run db:reindex
-```
-
-`db:import` es transaccional, pero no debe repetirse sobre la misma base porque la auditoría legacy no tiene una clave de idempotencia.
+### Crear un administrador
 
 Si se va a crear un administrador nuevo:
 

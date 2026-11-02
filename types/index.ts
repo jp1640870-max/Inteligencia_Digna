@@ -75,11 +75,6 @@ export function assignableRolesFor(actorRole: unknown): UserRole[] {
   return ASSIGNABLE_ROLES[actorRole] ?? [];
 }
 
-export function isAdminRole(role?: string): boolean {
-  if (!role) return false;
-  return ADMIN_ROLES.includes(role as UserRole);
-}
-
 export type User = {
   id: string;
   email: string;
@@ -93,12 +88,6 @@ export type Project = {
   instructions: string;
   created_at: string;
   chat_count?: number;
-};
-
-export type ProjectChat = {
-  project_id: string;
-  chat_id: string;
-  added_at: string;
 };
 
 export type ProyectoConChats = Project & {
@@ -140,18 +129,6 @@ export type ParagraphEdit = {
   paragraphIndex: number;
   action: "replaceText" | "deleteParagraph" | "insertAfter";
   newText?: string;
-};
-
-export type PdfTextEdit = {
-  pageNumber: number;
-  oldText: string;
-  newText: string;
-};
-
-export type EditInstruction = {
-  format: EditFormat;
-  description?: string;
-  changes: CellEdit[] | RowInsertEdit[] | ColInsertEdit[] | RowDeleteEdit[] | ColDeleteEdit[] | ParagraphEdit[] | PdfTextEdit[];
 };
 
 export type EditResult = {
@@ -317,17 +294,9 @@ export type KbAccessGrant = {
   created_at: string;
 };
 
-export type KbPrincipalRef = {
-  type: PrincipalType;
-  id: string;
-  name: string;
-};
-
 // ─── Filas de base de datos (contrato PostgreSQL ↔ dominio) ───
 // Las conversiones de tipos viven en lib/db.ts y lib/projects.ts; el resto
 // del código recibe tipos reales por inferencia.
-
-export type CountRow = { c: number; count: number };
 
 export type UserRow = {
   id: string;
@@ -387,18 +356,6 @@ export type MessageRow = {
   files: string | null;
   doc_data: string | null;
   kb_sources: string | null;
-  created_at: string;
-};
-
-export type RagChunkRow = {
-  id: string;
-  user_id: string | null;
-  chat_id: string | null;
-  project_id: string | null;
-  document_name: string;
-  chunk_index: number;
-  content: string;
-  embedding: string;
   created_at: string;
 };
 
