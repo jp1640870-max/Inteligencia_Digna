@@ -2,6 +2,146 @@
 
 Esta guía deja el servidor en un estado conocido después de `git pull`. Git transporta el código, las migraciones y la configuración de ejemplo; no transporta secretos, volúmenes Docker ni datos reales.
 
+## Windows Server (RDP) — flujo principal
+
+El servidor de producción es Windows Server con Docker en modo Linux. El servidor no edita código: clona el repositorio, hace `git pull --ff-only` y aplica migraciones. Los secretos viven en `.env`, fuera de Git.
+
+### Requisitos
+
+- Docker con contenedores Linux y Compose v2.
+- Git para Windows.
+- PowerShell 5.1 ejecutado como Administrador (firewall y ACL).
+- RDP al servidor.
+- Opcional: dominio DNS y puertos 80/443 para Caddy/TLS.
+
+### Primer despliegue
+
+```powershell
+New-Item -ItemType Directory -Force C:\apps | Out-Null
+cd C:\apps
+git clone https://github.com/jp1640870-max/Inteligencia_Digna.git
+cd .\Inteligencia_Digna
+git checkout experimental
+.\deploy\check-server.ps1
+.\deploy\bootstrap-server.ps1 -Branch experimental
+```
+
+`bootstrap-server.ps1`:
+
+- Genera `.env` con contraseñas aleatorias para PostgreSQL, MinIO y pgAdmin.
+- Pide la URL interna (por defecto `http://<ip>:3000`) y la contraseña del administrador.
+- Levanta PostgreSQL, aplica migraciones, arranca MinIO, crea el bucket, arranca la app y crea el super administrador.
+- Abre el puerto 3000 en el firewall si se ejecuta como Administrador.
+- Guarda las credenciales en `C:\ProgramData\InteligenciaDigna\CREDENTIALS.txt`.
+- No borra volúmenes ni datos existentes.
+- Se niega a sobrescribir `.env` salvo con `-Force` (eso regenera los secretos).
+- `-DryRun` muestra lo que haría sin escribir nada.
+
+Para ver qué haría sin tocar el servidor:
+
+```powershell
+.\deploy\bootstrap-server.ps1 -PublicUrl http://192.168.1.50:3000 -DryRun
+```
+
+Con Ollama real:
+
+```powershell
+.\deploy\bootstrap-server.ps1 -Branch experimental -OllamaUrl http://10.0.201.10:51234
+```
+
+Con dominio, TLS automático y Google OAuth:
+
+```powershell
+.\deploy\bootstrap-server.ps1 -Branch experimental `
+  -PublicDomain digna.midominio.com `
+  -EnableCaddy `
+  -GoogleClientId "....apps.googleusercontent.com" `
+  -GoogleClientSecret "..."
+```
+
+En ese caso `NEXTAUTH_URL` queda en `https://digna.midominio.com`, Caddy obtiene el certificado y el callback de Google es `https://digna.midominio.com/api/auth/google/callback`. El DNS debe apuntar al servidor y los puertos 80/443 deben estar abiertos. La app sigue escuchando en `0.0.0.0:3000`; si quieres cerrar el acceso directo, cambia `APP_BIND_ADDRESS=127.0.0.1` y elimina la regla de firewall 3000.
+
+Sin dominio, el primer despliegue usa HTTP interno. El login por email/contraseña funciona; Google OAuth necesita HTTPS (Caddy, un proxy TLS o un túnel).
+
+### Actualizaciones
+
+```powershell
+cd C:\apps\Inteligencia_Digna
+.\deploy\deploy.ps1
+```
+
+El script:
+
+1. Rechaza desplegar si hay cambios locales sin commitear (el servidor no edita código).
+2. Hace `git fetch` y `git pull --ff-only` de la rama configurada en `DEPLOY_BRANCH`.
+3. Hace backup de PostgreSQL y MinIO (salvo `-SkipBackup`).
+4. Construye la imagen, aplica migraciones y seed, y ejecuta `storage-init`.
+5. Valida el entorno dentro del contenedor (`npm run env:check`).
+6. Reinicia solo la app y comprueba salud.
+
+Para desplegar otra rama:
+
+```powershell
+.\deploy\deploy.ps1 -Branch experimental
+```
+
+Para saltar el backup en una ventana de mantenimiento controlada:
+
+```powershell
+.\deploy\deploy.ps1 -SkipBackup
+```
+
+### Backups y restauración
+
+```powershell
+.\deploy\backup.ps1
+.\deploy\restore.ps1 -PostgresDump .\deploy\backups\postgres-20261101T120000.dump
+.\deploy\restore.ps1 `
+  -PostgresDump .\deploy\backups\postgres-20261101T120000.dump `
+  -MinioArchive .\deploy\backups\minio-20261101T120000.tgz
+```
+
+- `backup.ps1` guarda `postgres-*.dump` y `minio-*.tgz` en `deploy\backups` y conserva los últimos 10 de cada tipo.
+- `restore.ps1` detiene la app, restaura con `pg_restore --clean`, opcionalmente reemplaza el volumen de MinIO y vuelve a arrancar. Exige escribir `RESTAURAR`.
+- Copia los backups fuera del servidor (NAS, OneDrive, etc.). El script no hace backup offsite.
+- Prueba una restauración en una instancia que no sea producción antes de confiar en ella.
+
+### pgAdmin y MinIO
+
+Ambos escuchan solo en `127.0.0.1`:
+
+- pgAdmin: `http://127.0.0.1:5050` (por RDP).
+- Consola MinIO: `http://127.0.0.1:9001` (por RDP).
+- PostgreSQL: `127.0.0.1:5433`.
+
+No los expongas a Internet sin TLS, firewall y autenticación adicional.
+
+### Diagnóstico
+
+```powershell
+.\deploy\check-server.ps1
+docker compose ps
+docker compose logs --tail=200 app
+docker compose logs --tail=200 postgres
+docker compose run --rm --no-deps app npm run env:check
+```
+
+Si `docker` no aparece, agrega `C:\Program Files\Docker\Docker\resources\bin` al `PATH`. Si el daemon no está en modo Linux, la app no arranca: cambia Docker a contenedores Linux.
+
+### Dominio y TLS con Caddy (opcional)
+
+El proxy vive en un compose aparte para que el compose principal no exija `PUBLIC_DOMAIN`:
+
+```powershell
+docker compose -f compose.yaml -f compose.proxy.yaml --profile proxy up -d caddy
+```
+
+Requiere `PUBLIC_DOMAIN` en `.env`, DNS apuntando al servidor y puertos 80/443 abiertos. Caddy obtiene y renueva el certificado. Si usas Caddy, `NEXTAUTH_URL` debe ser `https://<PUBLIC_DOMAIN>`.
+
+## Linux (alternativa)
+
+Las secciones siguientes describen el flujo equivalente con Docker Engine en Linux. Los scripts de `deploy/` son específicos de Windows; en Linux usa los comandos de esta guía.
+
 ## Requisitos
 
 - Docker Engine con Compose v2.

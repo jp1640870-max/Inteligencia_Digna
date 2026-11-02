@@ -3,11 +3,13 @@ import { NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { createUser, getUserByEmail, getUserByGoogleId, updateUserPicture, updateUserGoogleId } from "@/lib/db";
 import { signToken, isUserRole } from "@/lib/auth";
+import { getPublicOrigin } from "@/lib/public-url";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
 
 export async function GET(req: Request) {
+  const publicOrigin = getPublicOrigin(req);
   try {
     const { searchParams } = new URL(req.url);
     const code = searchParams.get("code");
@@ -16,16 +18,15 @@ export async function GET(req: Request) {
     const expectedState = cookieStore.get("google_oauth_state")?.value;
     const verifier = cookieStore.get("google_oauth_verifier")?.value;
 
-    if (!code) return NextResponse.redirect(new URL("/login?error=no_code", req.url));
+    if (!code) return NextResponse.redirect(new URL("/login?error=no_code", publicOrigin));
     if (!state || !expectedState || state !== expectedState || !verifier) {
-      return NextResponse.redirect(new URL("/login?error=invalid_state", req.url));
+      return NextResponse.redirect(new URL("/login?error=invalid_state", publicOrigin));
     }
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    const origin = process.env.NEXTAUTH_URL || new URL(req.url).origin;
-    const redirectUri = `${origin}/api/auth/google/callback`;
-    if (!clientId || !clientSecret) return NextResponse.redirect(new URL("/login?error=config_error", req.url));
+    const redirectUri = `${publicOrigin}/api/auth/google/callback`;
+    if (!clientId || !clientSecret) return NextResponse.redirect(new URL("/login?error=config_error", publicOrigin));
 
     const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
       method: "POST",
@@ -40,7 +41,7 @@ export async function GET(req: Request) {
       }),
     });
     const tokens = await tokenRes.json() as { access_token?: string };
-    if (!tokenRes.ok || !tokens.access_token) return NextResponse.redirect(new URL("/login?error=token_error", req.url));
+    if (!tokenRes.ok || !tokens.access_token) return NextResponse.redirect(new URL("/login?error=token_error", publicOrigin));
 
     const userRes = await fetch(GOOGLE_USERINFO_URL, {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
@@ -53,7 +54,7 @@ export async function GET(req: Request) {
       verified_email?: boolean;
     };
     if (!userRes.ok || !googleUser.id || !googleUser.email || googleUser.verified_email === false) {
-      return NextResponse.redirect(new URL("/login?error=email_required", req.url));
+      return NextResponse.redirect(new URL("/login?error=email_required", publicOrigin));
     }
 
     let user = await getUserByGoogleId(googleUser.id);
@@ -80,12 +81,11 @@ export async function GET(req: Request) {
       await updateUserPicture(user.id, googleUser.picture || null);
     }
 
-    if (!isUserRole(user.role)) return NextResponse.redirect(new URL("/login?error=server_error", req.url));
-    const baseUrl = process.env.NEXTAUTH_URL || new URL(req.url).origin;
-    const response = NextResponse.redirect(new URL("/", baseUrl));
+    if (!isUserRole(user.role)) return NextResponse.redirect(new URL("/login?error=server_error", publicOrigin));
+    const response = NextResponse.redirect(new URL("/", publicOrigin));
     response.cookies.set("token", signToken({ userId: user.id, email: user.email, role: user.role }), {
       httpOnly: true,
-      secure: baseUrl.startsWith("https"),
+      secure: publicOrigin.startsWith("https"),
       sameSite: "lax",
       maxAge: 7 * 24 * 60 * 60,
       path: "/",
@@ -95,6 +95,6 @@ export async function GET(req: Request) {
     return response;
   } catch (error) {
     console.error(error);
-    return NextResponse.redirect(new URL("/login?error=server_error", req.url));
+    return NextResponse.redirect(new URL("/login?error=server_error", publicOrigin));
   }
 }

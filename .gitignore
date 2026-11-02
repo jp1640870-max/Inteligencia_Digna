@@ -56,3 +56,9 @@ data/Backups/
 *.dump
 uploads/
 generated/
+
+# despliegue
+deploy/backups/
+deploy/deploy.log
+CREDENTIALS*.md
+CREDENTIALS*.txt

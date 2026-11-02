@@ -22,7 +22,17 @@ const networkIPs = Object.values(networkInterfaces())
   .filter(Boolean) as string[];
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: [...new Set(["localhost", ...networkIPs, "*.lvh.me", "*.ngrok-free.dev"])],
+  allowedDevOrigins: [
+    ...new Set([
+      "localhost",
+      ...networkIPs,
+      "*.lvh.me",
+      "*.ngrok-free.app",
+      "*.ngrok-free.dev",
+      "*.ngrok.app",
+      "*.ngrok.dev",
+    ]),
+  ],
   devIndicators: false,
   images: {
     remotePatterns: [{ protocol: "https", hostname: "**.googleusercontent.com" }],

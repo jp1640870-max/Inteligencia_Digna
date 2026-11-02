@@ -16,7 +16,30 @@ cp .env.example .env
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
+En PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Para generar una contraseña de servicio de 48 caracteres hex (PostgreSQL/MinIO/pgAdmin):
+
+```bash
+node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
+```
+
 Completa `JWT_SECRET`, `DATABASE_URL`, las credenciales de MinIO y los tags exactos de Ollama en `.env`. `.env` está ignorado por Git.
+
+Next.js también carga `.env.local`; mantén ambos sincronizados:
+
+```bash
+npm run env:sync
+npm run env:check
+npm run env:show
+```
+
+`env:sync` copia `.env` sobre `.env.local` (guarda el anterior como `.env.local.bak`). `env:check` valida contraseñas, URLs y variables obligatorias; `npm run env:check:strict` convierte las advertencias en errores. `env:show` imprime las credenciales de servicio y lee la contraseña del admin desde `..\Inteligencia_Digna.local\CREDENTIALS.md`.
 
 ## Levantar PostgreSQL, la aplicación y MinIO
 
@@ -97,6 +120,46 @@ El lanzador usa HTTPS experimental para el flujo OAuth local. Para iniciar Next.
 npm run dev:next
 ```
 
+### Google OAuth con ngrok
+
+El servidor de desarrollo acepta localhost, la LAN y los dominios de ngrok sin cambiar `NEXTAUTH_URL`. En producción solo se confía en `NEXTAUTH_URL`.
+
+1. Configura el authtoken una sola vez:
+
+   ```bash
+   ngrok config add-authtoken <token>
+   ```
+
+2. Ponte el dominio fijo en `.env` y `.env.local` (sin `https://`):
+
+   ```env
+   NGROK_DOMAIN=mi-dominio.ngrok-free.dev
+   ```
+
+3. Arranca Next y el túnel juntos:
+
+   ```bash
+   npm run dev:tunnel
+   ```
+
+   O en dos terminales:
+
+   ```bash
+   npm run dev
+   npm run tunnel
+   ```
+
+4. En Google Cloud Console, en el cliente OAuth de tipo **Web application**, agrega los redirect URI:
+
+   ```text
+   https://localhost:3000/api/auth/google/callback
+   https://mi-dominio.ngrok-free.dev/api/auth/google/callback
+   ```
+
+5. Completa `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` en `.env` y `.env.local`, y reinicia el dev server.
+
+El callback de ngrok aparece en la salida de `npm run dev` y en `npm run env:show`. El login con Google crea un rol `user` si el correo es nuevo; para probar un admin con Google, crea primero el usuario con ese correo usando `db:create-admin`.
+
 ## Migrar datos desde SQLite
 
 El importador es explícito y no modifica `data/app.db`:
@@ -122,6 +185,13 @@ Arranca el perfil `db-tools` y abre el navegador:
 ```bash
 docker compose --profile db-tools up -d pgadmin
 xdg-open http://127.0.0.1:5050
+```
+
+En Windows:
+
+```powershell
+docker compose --profile db-tools up -d pgadmin
+Start-Process http://127.0.0.1:5050
 ```
 
 1. Inicia sesión con `PGADMIN_EMAIL` y `PGADMIN_PASSWORD` de `.env`.
@@ -170,6 +240,7 @@ ORDER BY version;
 ```bash
 npm run lint
 npx tsc --noEmit
+npm run env:check
 npm test
 npm run smoke:db
 npm run build
@@ -177,9 +248,28 @@ npm run build
 
 `smoke:db` sólo consulta la base configurada; no crea ni modifica datos.
 
+`npm test` funciona en Windows y ejecuta los tests unitarios. `tests/kb-access-db.test.ts` requiere fixtures de una base limpia y queda excluido por defecto; cuando existan los fixtures, usa `npm run test:db`. En PowerShell, para el smoke live de Ollama: `$env:SMOKE_LIVE=1; npm test`.
+
+## Despliegue en Windows Server
+
+El flujo completo está en [`SERVIDOR.md`](./SERVIDOR.md). Resumen:
+
+```powershell
+.\deploy\check-server.ps1
+.\deploy\bootstrap-server.ps1 -Branch experimental
+.\deploy\deploy.ps1
+```
+
+- `bootstrap-server.ps1`: primera instalación (genera `.env`, migra, arranca, crea admin).
+- `deploy.ps1`: actualización con backup, `git pull --ff-only`, build, migraciones y health check.
+- `backup.ps1` / `restore.ps1`: respaldo y restauración.
+- `check-server.ps1`: diagnóstico de Docker, Git, disco, puertos y firewall.
+
 ## Respaldo
 
 El endpoint de backup usa `pg_dump` y almacena el archivo en `data/backups`. El archivo debe estar en un volumen persistente y fuera del repositorio. Para una instalación real, complétalo con PITR/WAL archiving del servidor PostgreSQL y backup separado de MinIO.
+
+En Windows Server, `.\deploy\backup.ps1` y `.\deploy\restore.ps1` automatizan PostgreSQL + MinIO y dejan los archivos en `deploy\backups` (ignorado por Git). Copia esos backups fuera del servidor; no sustituyen un backup offsite.
 
 ## Nota de seguridad
 

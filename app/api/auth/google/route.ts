@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
+import { getPublicOrigin } from "@/lib/public-url";
 
 function base64Url(value: Buffer): string {
   return value.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -9,7 +10,7 @@ export async function GET(req: Request) {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   if (!clientId) return NextResponse.json({ error: "Google OAuth no configurado" }, { status: 500 });
 
-  const origin = process.env.NEXTAUTH_URL || new URL(req.url).origin;
+  const origin = getPublicOrigin(req);
   const redirectUri = `${origin}/api/auth/google/callback`;
   const state = base64Url(randomBytes(32));
   const verifier = base64Url(randomBytes(48));

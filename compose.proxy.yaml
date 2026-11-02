@@ -1,0 +1,25 @@
+# Proxy opcional con TLS automático. Se combina con el compose principal:
+#   docker compose -f compose.yaml -f compose.proxy.yaml --profile proxy up -d caddy
+#
+# Requiere PUBLIC_DOMAIN en .env y DNS apuntando al servidor.
+services:
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["proxy"]
+    restart: unless-stopped
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?define PUBLIC_DOMAIN en .env para usar el perfil proxy}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+  caddy_config:

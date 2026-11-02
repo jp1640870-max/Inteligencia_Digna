@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { ensureBucket, getStorageConfig } from "../lib/storage";
 
 function loadEnvironment(): void {
   for (const fileName of [".env", ".env.local"]) {
@@ -11,6 +10,8 @@ function loadEnvironment(): void {
 
 async function main(): Promise<void> {
   loadEnvironment();
+  // Import dinámico: lib/storage lee variables de entorno al cargarse.
+  const { ensureBucket, getStorageConfig } = await import("../lib/storage");
   await ensureBucket();
   console.log(`Bucket listo: ${getStorageConfig().bucket}`);
 }

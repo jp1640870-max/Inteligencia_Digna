@@ -1,0 +1,6 @@
+# Caddy obtiene el certificado TLS automáticamente si PUBLIC_DOMAIN apunta
+# al servidor y los puertos 80/443 están abiertos.
+{$PUBLIC_DOMAIN} {
+	encode gzip
+	reverse_proxy app:3000
+}
