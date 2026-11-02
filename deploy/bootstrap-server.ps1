@@ -268,13 +268,18 @@ Write-Host "    Administrador creado" -ForegroundColor Green
 
 Write-Host "6/6 Firewall y salud..." -ForegroundColor Cyan
 if (Test-IsAdmin) {
-    $rule = Get-NetFirewallRule -DisplayName "Inteligencia Digna (3000)" -ErrorAction SilentlyContinue
-    if (-not $rule) {
-        New-NetFirewallRule -DisplayName "Inteligencia Digna (3000)" -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow | Out-Null
-        Write-Host "    Firewall: puerto 3000 abierto" -ForegroundColor Green
-    }
-    else {
-        Write-Host "    Firewall: regla existente" -ForegroundColor Green
+    $ports = @(3000)
+    if ($EnableCaddy) { $ports += 80; $ports += 443 }
+    foreach ($port in $ports) {
+        $displayName = "Inteligencia Digna ($port)"
+        $rule = Get-NetFirewallRule -DisplayName $displayName -ErrorAction SilentlyContinue
+        if (-not $rule) {
+            New-NetFirewallRule -DisplayName $displayName -Direction Inbound -Protocol TCP -LocalPort $port -Action Allow | Out-Null
+            Write-Host "    Firewall: puerto $port abierto" -ForegroundColor Green
+        }
+        else {
+            Write-Host "    Firewall: regla $port existente" -ForegroundColor Green
+        }
     }
 }
 

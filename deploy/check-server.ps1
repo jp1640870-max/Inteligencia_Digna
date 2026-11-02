@@ -118,12 +118,14 @@ Write-Host ""
 
 Write-Host "--- Firewall ---" -ForegroundColor Cyan
 if (Test-IsAdmin) {
-    $rule = Get-NetFirewallRule -DisplayName "Inteligencia Digna (3000)" -ErrorAction SilentlyContinue
-    if ($rule) {
-        Write-Host "Regla de firewall para 3000: existe"
-    }
-    else {
-        Write-Host "Regla de firewall para 3000: no existe (el bootstrap la crea)"
+    foreach ($port in @(3000, 80, 443)) {
+        $rule = Get-NetFirewallRule -DisplayName "Inteligencia Digna ($port)" -ErrorAction SilentlyContinue
+        if ($rule) {
+            Write-Host "Regla de firewall para ${port}: existe"
+        }
+        else {
+            Write-Host "Regla de firewall para ${port}: no existe (el bootstrap la crea si aplica)"
+        }
     }
 }
 else {

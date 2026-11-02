@@ -10,4 +10,8 @@ data
 uploads
 certificates
 *.log
+deploy/backups
+deploy/deploy.log
+CREDENTIALS*.md
+CREDENTIALS*.txt
 .DS_Store
