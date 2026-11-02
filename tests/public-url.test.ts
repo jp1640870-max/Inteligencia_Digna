@@ -64,6 +64,16 @@ test("dev: acepta IPs de la LAN", () => {
   });
 });
 
+test("dev: acepta IPs Tailscale/CGNAT", () => {
+  withEnv({ NODE_ENV: "development", NEXTAUTH_URL: "https://localhost:3000" }, () => {
+    const req = request("http://localhost:3000/api/auth/google", {
+      "x-forwarded-host": "100.65.0.1:3000",
+      "x-forwarded-proto": "https",
+    });
+    assert.equal(getPublicOrigin(req), "https://100.65.0.1:3000");
+  });
+});
+
 test("dev: usa el primer valor de x-forwarded-host", () => {
   withEnv({ NODE_ENV: "development", NEXTAUTH_URL: "https://localhost:3000" }, () => {
     const req = request("http://localhost:3000/api/auth/google", {
