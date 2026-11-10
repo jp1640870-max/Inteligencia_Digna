@@ -6,13 +6,34 @@ export type SearchResult = {
 
 export type Msg = {
   id?: number;
+  /** Identidad de cliente para mensajes aún no persistidos (evita keys duplicadas en React). */
+  localId?: string;
   role: "user" | "ai";
   text?: string;
   images?: string[];
   files?: { name: string }[];
   editResult?: EditResult;
+  /** Documento generado y almacenado (sin base64 en el mensaje). */
+  document?: GeneratedDocumentMeta;
+  /** Progreso temporal mientras se genera un documento. */
+  documentProgress?: DocumentProgress;
   searching?: boolean;
   sources?: SearchResult[];
+};
+
+export type DocumentProgressStage =
+  | "analyzing"
+  | "writing"
+  | "parsing"
+  | "rendering"
+  | "storing";
+
+export type DocumentProgress = {
+  stage: DocumentProgressStage;
+  /** Caracteres redactados hasta ahora (solo en `writing`). */
+  chars?: number;
+  /** Resumen detectado en el stream, para mostrarlo antes de terminar. */
+  summary?: string;
 };
 
 export type Chat = {
@@ -140,6 +161,12 @@ export type EditResult = {
   downloadUrl?: string;
   dataUri?: string;
   error?: string;
+  /** Documento persistido en storage (documentos generados). */
+  documentId?: string;
+  /** URL para previsualizar el PDF en un iframe. */
+  previewUrl?: string;
+  /** Páginas del PDF, cuando el motor pudo contarlas. */
+  pages?: number | null;
 };
 
 // Document generation types
@@ -162,6 +189,95 @@ export type DocGenStructure = {
   filename: string;
   sheets?: DocGenSheet[];
   content?: DocGenContentBlock[];
+};
+
+// ─── Documentos generados y almacenados ───
+//
+// El binario vive en MinIO/S3 (`documents/{userId}/{chatId}/...`) y en la fila
+// solo quedan metadatos y la clave del objeto. Así `GET /api/chat` no arrastra
+// un base64 por cada PDF del historial.
+
+export type GeneratedDocumentFormat = DocGenFormat;
+
+export type GeneratedDocumentStatus = "pending" | "ready" | "failed";
+
+export type GeneratedDocumentSource = "chat" | "export";
+
+export type GeneratedDocumentRow = {
+  id: string;
+  user_id: string;
+  chat_id: string | null;
+  message_id: number | null;
+  title: string;
+  filename: string;
+  format: GeneratedDocumentFormat;
+  mime_type: string;
+  size_bytes: number;
+  page_count: number | null;
+  version: string;
+  summary: string;
+  status: GeneratedDocumentStatus;
+  storage_provider: string;
+  bucket: string;
+  object_key: string;
+  /** Clave del DOCX fuente cuando el archivo principal es un PDF. */
+  docx_object_key: string | null;
+  /** Clave del sidecar de Markdown para documentos parciales (continuación). */
+  markdown_object_key: string | null;
+  source: GeneratedDocumentSource;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Metadatos que se adjuntan a un mensaje del chat. */
+export type GeneratedDocumentMeta = {
+  id: string;
+  title: string;
+  filename: string;
+  format: GeneratedDocumentFormat;
+  mime_type: string;
+  size_bytes: number;
+  page_count: number | null;
+  version: string;
+  summary: string;
+  source: GeneratedDocumentSource;
+  created_at: string;
+  downloadUrl: string;
+  previewUrl: string;
+  docxUrl?: string;
+  /** El contenido se ajustó al límite de páginas. */
+  truncated?: boolean;
+  /** Límite de páginas aplicado por el servidor. */
+  max_pages?: number;
+  /** El PDF siguió superando el límite después del recorte. */
+  page_limit_exceeded?: boolean;
+  /** El documento se detuvo por tiempo (timeout). Contiene contenido parcial. */
+  partial?: boolean;
+  /** La generación se detuvo al alcanzar el tiempo límite. */
+  timed_out?: boolean;
+};
+
+export type GeneratedDocumentInsert = {
+  user_id: string;
+  chat_id?: string | null;
+  message_id?: number | null;
+  title: string;
+  filename: string;
+  format: GeneratedDocumentFormat;
+  mime_type: string;
+  size_bytes: number;
+  page_count?: number | null;
+  version?: string;
+  summary?: string;
+  status?: GeneratedDocumentStatus;
+  storage_provider?: string;
+  bucket: string;
+  object_key: string;
+  docx_object_key?: string | null;
+  markdown_object_key?: string | null;
+  source?: GeneratedDocumentSource;
+  metadata?: Record<string, unknown>;
 };
 
 // ─── Knowledge Base ───

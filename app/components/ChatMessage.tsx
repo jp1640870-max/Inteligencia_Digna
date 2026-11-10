@@ -1,11 +1,31 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
-import { Download, ExternalLink, FileSpreadsheet, FileText, FileType2, Paperclip, Pencil, RefreshCw, Copy, Check } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Download,
+  ExternalLink,
+  Eye,
+  FileDown,
+  FileSpreadsheet,
+  FileText,
+  FileType2,
+  Loader2,
+  Paperclip,
+  Pencil,
+  RefreshCw,
+  X,
+} from "lucide-react";
 import CodeBlock from "./CodeBlock";
-import type { Msg, EditResult } from "@/types";
+import type {
+  DocumentProgress,
+  EditResult,
+  GeneratedDocumentMeta,
+  Msg,
+} from "@/types";
 
 type Props = {
   message: Msg;
@@ -13,14 +33,67 @@ type Props = {
   isLastAi?: boolean;
   onEdit?: (index: number, newText: string) => void;
   onRegenerate?: () => void;
+  onExportPdf?: () => Promise<void> | void;
   darkMode: boolean;
 };
 
-const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode }: Props) => {
+const formatBytes = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const progressLabel = (stage: DocumentProgress["stage"]): string => {
+  switch (stage) {
+    case "analyzing":
+      return "Analizando la solicitud…";
+    case "writing":
+      return "Redactando el documento…";
+    case "parsing":
+      return "Revisando el contenido…";
+    case "rendering":
+      return "Preparando el PDF…";
+    case "storing":
+      return "Guardando el archivo…";
+    default:
+      return "Generando documento…";
+  }
+};
+
+const progressPercent = (progress: DocumentProgress): number => {
+  switch (progress.stage) {
+    case "analyzing":
+      return 8;
+    case "writing":
+      return Math.min(80, 20 + Math.round(((progress.chars || 0) / 12000) * 60));
+    case "parsing":
+      return 85;
+    case "rendering":
+      return 92;
+    case "storing":
+      return 97;
+    default:
+      return 10;
+  }
+};
+
+const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, onExportPdf, darkMode }: Props) => {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.text || "");
   const [copied, setCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPreviewOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [previewOpen]);
 
   const colors = {
     aiBg: darkMode ? "bg-[#121824]" : "bg-gray-100",
@@ -59,6 +132,7 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
 
   const handleDownloadEditResult = async (editResult: EditResult) => {
     if (downloading) return;
+    setActionError(null);
     setDownloading(true);
     try {
       let url: string;
@@ -79,7 +153,7 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
       link.remove();
       URL.revokeObjectURL(url);
     } catch {
-      alert("No se pudo descargar el archivo");
+      setActionError("No se pudo descargar el archivo. Intenta de nuevo.");
     } finally {
       setDownloading(false);
     }
@@ -118,6 +192,135 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
             <Download size={14} className={downloading ? "animate-bounce" : ""} />
             Descargar {formatLabel}
           </button>
+        )}
+      </div>
+    );
+  };
+
+  const handleExportPdf = async () => {
+    if (!onExportPdf || exporting) return;
+    setActionError(null);
+    setExporting(true);
+    try {
+      await onExportPdf();
+    } catch (error) {
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo exportar el documento. Intenta de nuevo.",
+      );
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const renderDocumentProgress = (progress: DocumentProgress) => (
+    <div
+      className={`mt-1 rounded-xl border p-3 ${colors.editResultBorder} ${colors.editResultBg}`}
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex items-center gap-2">
+        <Loader2 size={16} className="shrink-0 animate-spin text-green-500" />
+        <span className="text-sm font-medium">{progressLabel(progress.stage)}</span>
+        <span className={`ml-auto text-xs ${colors.muted}`}>
+          {progressPercent(progress)}%
+        </span>
+      </div>
+      <p className={`mt-1 text-xs ${colors.muted}`}>
+        Documento de hasta 10 páginas. Esto puede tardar unos segundos.
+      </p>
+      {progress.summary && (
+        <p className={`mt-2 line-clamp-3 text-xs ${colors.text}`}>{progress.summary}</p>
+      )}
+      <div className={`mt-3 h-1.5 w-full overflow-hidden rounded-full ${darkMode ? "bg-[#1e293b]" : "bg-green-200"}`}>
+        <div
+          className="h-full rounded-full bg-green-500 transition-all duration-500"
+          style={{ width: `${progressPercent(progress)}%` }}
+        />
+      </div>
+    </div>
+  );
+
+  const renderDocumentCard = (doc: GeneratedDocumentMeta) => {
+    const formatIcon = doc.format === "xlsx"
+      ? <FileSpreadsheet size={18} />
+      : doc.format === "docx"
+        ? <FileText size={18} />
+        : <FileType2 size={18} />;
+    const formatLabel = doc.format === "xlsx" ? "Excel" : doc.format === "docx" ? "Word" : "PDF";
+    const generatedLabel = doc.format === "pdf"
+      ? "PDF generado"
+      : doc.format === "docx"
+        ? "Documento Word generado"
+        : "Hoja de cálculo generada";
+    const details = [
+      formatLabel,
+      doc.page_count ? `${doc.page_count} página${doc.page_count === 1 ? "" : "s"}` : null,
+      doc.size_bytes ? formatBytes(doc.size_bytes) : null,
+    ].filter(Boolean).join(" · ");
+
+    return (
+      <div
+        className={`mt-3 rounded-xl border p-3 ${colors.editResultBorder} ${colors.editResultBg}`}
+      >
+        <div className="flex items-start gap-3">
+          <div className={`rounded-lg p-2 ${darkMode ? "bg-green-500/10 text-green-400" : "bg-green-100 text-green-700"}`}>
+            {formatIcon}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold">{generatedLabel}</p>
+            <p className={`truncate text-sm ${colors.text}`}>{doc.title || doc.filename}</p>
+            <p className={`mt-0.5 truncate text-xs ${colors.muted}`}>
+              {doc.filename} · {details}
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {doc.format === "pdf" && (
+            <button
+              onClick={() => setPreviewOpen(true)}
+              className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+            >
+              <Eye size={14} />
+              Ver
+            </button>
+          )}
+          <a
+            href={doc.downloadUrl}
+            download={doc.filename}
+            className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+          >
+            <Download size={14} />
+            Descargar
+          </a>
+          {doc.docxUrl && (
+            <a
+              href={doc.docxUrl}
+              download
+              className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+            >
+              <FileText size={14} />
+              Word
+            </a>
+          )}
+        </div>
+        {(doc.truncated || doc.page_limit_exceeded || doc.partial) && (
+          <p
+            className={`mt-3 rounded-md px-2 py-1.5 text-xs ${
+              darkMode
+                ? "bg-amber-500/10 text-amber-300"
+                : "bg-amber-50 text-amber-800"
+            }`}
+          >
+            {doc.timed_out
+              ? `La generación se detuvo por tiempo. El documento contiene lo que se alcanzó a generar. Puedes pedir "continúa el documento" para terminar lo que falta.`
+              : doc.partial
+                ? `El documento está incompleto. Puedes pedir "continúa el documento" para agregar más contenido.`
+                : doc.page_limit_exceeded
+                  ? `El contenido superó el límite de ${doc.max_pages ?? 10} páginas. Se guardó una versión recortada; revisa el documento.`
+                  : `Contenido ajustado al límite de ${doc.max_pages ?? 10} páginas.`}
+          </p>
         )}
       </div>
     );
@@ -163,7 +366,9 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
                 message.role === "user" ? colors.userBg : colors.aiBg
               }`}
             >
-              {message.editResult ? (
+              {message.documentProgress ? (
+                renderDocumentProgress(message.documentProgress)
+              ) : message.editResult && !message.document ? (
                 renderEditResult(message.editResult)
               ) : (
                 <>
@@ -184,6 +389,7 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
                   >
                     {message.text || ""}
                   </ReactMarkdown>
+                  {message.document && renderDocumentCard(message.document)}
                   {message.sources && message.sources.length > 0 && (
                     <div className={`mt-4 pt-3 border-t ${darkMode ? "border-[#202938]" : "border-gray-300"}`}>
                       <p className={`text-xs font-semibold mb-2 ${colors.muted}`}>
@@ -210,7 +416,7 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
                     <div className={`flex flex-wrap gap-1.5 mt-2 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                       {message.files.map((f, idx) => (
                         <span
-                          key={idx}
+                          key={`file-${idx}`}
                           className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md ${colors.fileTagBg} ${colors.fileTagText}`}
                         >
                           <Paperclip size={12} className="shrink-0" />
@@ -220,15 +426,15 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
                     </div>
                   )}
                   {message.images?.map((img, idx) => (
-                    <Image key={idx} src={img} alt="Imagen adjunta al mensaje" width={320} height={160} className="mt-2 max-h-40 w-auto rounded-lg" />
+                    <Image key={`img-${idx}`} src={img} alt="Imagen adjunta al mensaje" width={320} height={160} className="mt-2 max-h-40 w-auto rounded-lg" />
                   ))}
                 </>
               )}
             </div>
 
-            {!message.editResult && (
+            {(!message.editResult || message.document) && (
               <div
-                className={`flex gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity ${
+                className={`flex flex-wrap gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity ${
                   message.role === "user" ? "justify-end" : "justify-start"
                 }`}
               >
@@ -244,13 +450,24 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
                     <Pencil size={14} />
                   </button>
                 )}
-                {message.role === "ai" && isLastAi && onRegenerate && (
+                {message.role === "ai" && isLastAi && onRegenerate && !message.document && !message.documentProgress && (
                   <button
                     onClick={onRegenerate}
                     className={`text-xs px-2 py-1 rounded transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
                     title="Regenerar respuesta"
                   >
                     <RefreshCw size={14} />
+                  </button>
+                )}
+                {message.role === "ai" && !message.document && !message.documentProgress && onExportPdf && (
+                  <button
+                    onClick={handleExportPdf}
+                    disabled={exporting}
+                    className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded transition disabled:opacity-60 ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+                    title="Exportar esta respuesta a PDF"
+                  >
+                    {exporting ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
+                    <span>Exportar PDF</span>
                   </button>
                 )}
                 <button
@@ -262,9 +479,82 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
                 </button>
               </div>
             )}
+
+            {actionError && (
+              <div
+                className={`mt-1 flex flex-wrap items-center gap-2 text-xs ${
+                  darkMode ? "text-red-400" : "text-red-600"
+                }`}
+                role="alert"
+              >
+                <span>{actionError}</span>
+                {onExportPdf && !message.document && !message.documentProgress && (
+                  <button
+                    onClick={handleExportPdf}
+                    disabled={exporting}
+                    className="underline underline-offset-2 hover:no-underline disabled:opacity-60"
+                  >
+                    Reintentar
+                  </button>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
+
+      {previewOpen && message.document && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 text-left sm:p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Vista previa de ${message.document.title || message.document.filename}`}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPreviewOpen(false);
+          }}
+        >
+          <div className={`flex h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl shadow-2xl ${darkMode ? "bg-[#0b1220]" : "bg-white"}`}>
+            <div className={`flex items-center gap-3 border-b px-4 py-3 ${darkMode ? "border-[#202938]" : "border-gray-200"}`}>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold">{message.document.title || "Documento"}</p>
+                <p className={`truncate text-xs ${colors.muted}`}>{message.document.filename}</p>
+              </div>
+              <button
+                onClick={() => setPreviewOpen(false)}
+                className={`rounded p-1.5 transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+                title="Cerrar vista previa"
+                aria-label="Cerrar vista previa"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <iframe
+              src={message.document.previewUrl}
+              title={`Vista previa de ${message.document.title || message.document.filename}`}
+              className="min-h-0 w-full flex-1 bg-white"
+            />
+            <div className={`flex flex-wrap gap-2 border-t px-4 py-3 ${darkMode ? "border-[#202938]" : "border-gray-200"}`}>
+              <a
+                href={message.document.downloadUrl}
+                download={message.document.filename}
+                className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+              >
+                <Download size={14} />
+                Descargar
+              </a>
+              <a
+                href={message.document.previewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+              >
+                <ExternalLink size={14} />
+                Abrir en pestaña
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

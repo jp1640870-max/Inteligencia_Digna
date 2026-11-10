@@ -2,7 +2,31 @@
 
 import { create } from "zustand";
 import { v4 as uuidv4 } from "uuid";
-import type { Msg, Chat, EditResult, SearchResult } from "@/types";
+import type {
+  Msg,
+  Chat,
+  DocumentProgressStage,
+  EditResult,
+  GeneratedDocumentMeta,
+  SearchResult,
+} from "@/types";
+
+type DocumentStreamEvent =
+  | {
+      type: "progress";
+      stage?: DocumentProgressStage;
+      chars?: number;
+      summary?: string;
+    }
+  | {
+      type: "document";
+      text?: string;
+      document: GeneratedDocumentMeta;
+      editResult?: EditResult;
+      target?: "previous-ai";
+      targetMessageId?: number;
+    }
+  | { type: "error"; text?: string };
 
 export type FileItem = {
   file: File;
@@ -86,6 +110,8 @@ interface ChatState {
   handleStop: () => void;
   handleRegenerate: (currentProjectId?: string | null) => Promise<void>;
   handleEditMessage: (index: number, newText: string, projectId?: string | null) => Promise<void>;
+  /** Exporta una respuesta existente a PDF sin llamar al modelo. */
+  exportMessageAsPdf: (index: number) => Promise<void>;
 
   // Actions — files
   handlePaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
@@ -137,7 +163,49 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
       const data = await res.json();
-      set({ chats: Array.isArray(data) ? data : [] });
+      const chats: Chat[] = Array.isArray(data) ? data : [];
+      const current = chats.find((chat) => chat.id === get().chatId);
+      if (!current) {
+        set({ chats });
+        return;
+      }
+
+      set((state) => {
+        // Los mensajes de la BD son la fuente de verdad (id, documento, orden),
+        // pero no guardan las fuentes web ni los adjuntos locales. Se conservan
+        // esos extras emparejando por rol y texto para que "Exportar a PDF"
+        // tenga un id con el que enlazar el archivo.
+        const buckets = new Map<string, Msg[]>();
+        for (const msg of state.messages) {
+          const key = `${msg.role}\u0000${(msg.text || "").trim()}`;
+          const bucket = buckets.get(key);
+          if (bucket) bucket.push(msg);
+          else buckets.set(key, [msg]);
+        }
+
+        const merged = current.messages.map((saved) => {
+          const key = `${saved.role}\u0000${(saved.text || "").trim()}`;
+          const match = buckets.get(key)?.shift();
+          if (!match) return saved;
+          return {
+            ...saved,
+            ...(match.sources ? { sources: match.sources } : {}),
+            ...(match.files ? { files: match.files } : {}),
+            ...(match.images ? { images: match.images } : {}),
+            ...(!saved.document && match.document ? { document: match.document } : {}),
+            ...(!saved.editResult && match.editResult ? { editResult: match.editResult } : {}),
+            ...(match.documentProgress ? { documentProgress: match.documentProgress } : {}),
+          };
+        });
+
+        // Si la BD todavía no tiene los mensajes (fallo de persistencia), no
+        // se borra la conversación visible.
+        const messages =
+          current.messages.length === 0 && state.messages.length > 0
+            ? state.messages
+            : merged;
+        return { chats, messages };
+      });
     } catch {
       set({ chats: [] });
     }
@@ -246,6 +314,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   handleEditFlow: async (file, instruction, projectId) => {
     set({ editLoading: true });
 
+    // Ids locales estables para los mensajes optimistas de este flujo.
+    const userLocalId = uuidv4();
+    const aiLocalId = uuidv4();
+
     const formData = new FormData();
     formData.append("file", file);
     formData.append("instruction", instruction);
@@ -276,8 +348,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         set((s) => ({
           messages: [
             ...s.messages,
-            { role: "user", text: `✏️ Editar archivo: ${file.name}\n\n${instruction}`, files: [{ name: file.name }] },
-            { role: "ai", text: "", editResult },
+            { role: "user", localId: userLocalId, text: `✏️ Editar archivo: ${file.name}\n\n${instruction}`, files: [{ name: file.name }] },
+            { role: "ai", localId: aiLocalId, text: "", editResult },
           ],
         }));
       } else {
@@ -285,8 +357,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         set((s) => ({
           messages: [
             ...s.messages,
-            { role: "user", text: `✏️ Editar archivo: ${file.name}\n\n${instruction}`, files: [{ name: file.name }] },
-            { role: "ai", text: data.error || "No se pudo editar el documento" },
+            { role: "user", localId: userLocalId, text: `✏️ Editar archivo: ${file.name}\n\n${instruction}`, files: [{ name: file.name }] },
+            { role: "ai", localId: aiLocalId, text: data.error || "No se pudo editar el documento" },
           ],
         }));
       }
@@ -294,8 +366,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((s) => ({
         messages: [
           ...s.messages,
-          { role: "user", text: `✏️ Editar archivo: ${file.name}\n\n${instruction}`, files: [{ name: file.name }] },
-          { role: "ai", text: "Error de conexión al editar el documento" },
+          { role: "user", localId: userLocalId, text: `✏️ Editar archivo: ${file.name}\n\n${instruction}`, files: [{ name: file.name }] },
+          { role: "ai", localId: aiLocalId, text: "Error de conexión al editar el documento" },
         ],
       }));
     } finally {
@@ -323,6 +395,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ abortController: controller });
 
     let accumulated = "";
+    const aiLocalId = uuidv4();
 
     try {
       const res = await fetch("/api/chat/regenerate", {
@@ -340,7 +413,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (!res.ok || !res.body) {
         const errData = await res.json().catch(() => ({}));
         set((s) => ({
-          messages: [...s.messages, { role: "ai", text: errData.error || "Error al regenerar" }],
+          messages: [...s.messages, { role: "ai", localId: aiLocalId, text: errData.error || "Error al regenerar" }],
         }));
         return;
       }
@@ -348,7 +421,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
 
-      set((s) => ({ messages: [...s.messages, { role: "ai", text: "", searching: false }] }));
+      set((s) => ({ messages: [...s.messages, { role: "ai", localId: aiLocalId, text: "", searching: false }] }));
 
       while (true) {
         const { done, value } = await reader.read();
@@ -358,7 +431,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const copy = [...s.messages];
           const last = copy[copy.length - 1];
           if (last?.role === "ai") {
-            copy[copy.length - 1] = { role: "ai", text: accumulated };
+            copy[copy.length - 1] = { ...last, role: "ai", text: accumulated };
           }
           return { messages: copy };
         });
@@ -446,11 +519,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     set({ input: "", images: [], files: [] });
 
+    const userLocalId = uuidv4();
+    const aiLocalId = uuidv4();
+
     set((s) => {
       let newMsgs = [
         ...s.messages,
-        { role: "user" as const, text: visibleText, images: extraImages, files: fileNames },
-        { role: "ai" as const, text: "" },
+        { role: "user" as const, localId: userLocalId, text: visibleText, images: extraImages, files: fileNames },
+        { role: "ai" as const, localId: aiLocalId, text: "" },
       ];
       if (editFromIndex !== undefined) {
         newMsgs = newMsgs.slice(editFromIndex);
@@ -474,7 +550,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
 
-      const contentType = res.headers.get("Content-Type") || "";
+      const contentType = (res.headers.get("Content-Type") || "").toLowerCase();
 
       if (contentType.includes("application/json")) {
         const data = await res.json();
@@ -492,7 +568,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const copy = [...s.messages];
             const last = copy[copy.length - 1];
             if (last?.role === "ai") {
-              copy[copy.length - 1] = { role: "ai", text: data.text, editResult };
+              copy[copy.length - 1] = {
+                ...last,
+                role: "ai",
+                text: data.text,
+                editResult,
+                ...(data.document ? { document: data.document } : {}),
+              };
             }
             return { messages: copy };
           });
@@ -501,12 +583,119 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const copy = [...s.messages];
             const last = copy[copy.length - 1];
             if (last?.role === "ai") {
-              copy[copy.length - 1] = { role: "ai", text: data.text || "" };
+              copy[copy.length - 1] = { ...last, role: "ai", text: data.text || "" };
             }
             return { messages: copy };
           });
         }
-        get().loadChats();
+        return;
+      }
+
+      if (contentType.includes("application/x-ndjson")) {
+        if (!res.body) throw new Error("Sin cuerpo de respuesta");
+
+        const applyEvent = (event: DocumentStreamEvent) => {
+          set((s) => {
+            const copy = [...s.messages];
+            const last = copy[copy.length - 1];
+            if (!last || last.role !== "ai") return { messages: copy };
+
+            if (event.type === "progress") {
+              const previousSummary = last.documentProgress?.summary;
+              const summary = event.summary || previousSummary;
+              copy[copy.length - 1] = {
+                ...last,
+                documentProgress: {
+                  stage: event.stage || "writing",
+                  ...(typeof event.chars === "number" ? { chars: event.chars } : {}),
+                  ...(summary ? { summary } : {}),
+                },
+              };
+              return { messages: copy };
+            }
+
+            if (event.type === "document") {
+              let targetIndex = -1;
+              if (event.target === "previous-ai") {
+                if (event.targetMessageId !== undefined) {
+                  targetIndex = copy.findIndex(
+                    (item) => item.id === event.targetMessageId,
+                  );
+                }
+                if (targetIndex < 0) {
+                  // Respaldo para respuestas recién transmitidas sin id: la
+                  // tarjeta va a la respuesta anterior, no a la confirmación.
+                  for (let i = copy.length - 2; i >= 0; i--) {
+                    if (copy[i].role === "ai") {
+                      targetIndex = i;
+                      break;
+                    }
+                  }
+                }
+              }
+
+              if (targetIndex >= 0) {
+                copy[targetIndex] = {
+                  ...copy[targetIndex],
+                  document: event.document,
+                  editResult: event.editResult,
+                  documentProgress: undefined,
+                };
+                copy[copy.length - 1] = {
+                  ...last,
+                  text: event.text ?? last.text,
+                  documentProgress: undefined,
+                };
+              } else {
+                copy[copy.length - 1] = {
+                  ...last,
+                  text: event.text ?? last.text,
+                  document: event.document,
+                  editResult: event.editResult,
+                  documentProgress: undefined,
+                };
+              }
+              return { messages: copy };
+            }
+
+            copy[copy.length - 1] = {
+              ...last,
+              text: event.text || "No se pudo generar el documento.",
+              documentProgress: undefined,
+            };
+            return { messages: copy };
+          });
+        };
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        const processLine = (line: string) => {
+          const trimmed = line.trim();
+          if (!trimmed) return;
+          try {
+            applyEvent(JSON.parse(trimmed) as DocumentStreamEvent);
+          } catch {
+            /* línea incompleta o evento desconocido */
+          }
+        };
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let newline = buffer.indexOf("\n");
+          while (newline >= 0) {
+            const line = buffer.slice(0, newline);
+            buffer = buffer.slice(newline + 1);
+            processLine(line);
+            newline = buffer.indexOf("\n");
+          }
+        }
+        buffer += decoder.decode();
+        processLine(buffer);
+
+        set({ loading: false, searching: false });
         return;
       }
 
@@ -562,8 +751,82 @@ export const useChatStore = create<ChatState>((set, get) => ({
         console.error("Error al enviar mensaje:", err);
       }
     } finally {
+      // Si el stream de documento se corta (aborto, red o error no emitido),
+      // no debe quedar una tarjeta de progreso girando para siempre.
+      set((s) => {
+        const copy = [...s.messages];
+        const last = copy[copy.length - 1];
+        if (last?.role === "ai" && last.documentProgress) {
+          copy[copy.length - 1] = {
+            ...last,
+            documentProgress: undefined,
+            text: last.text || "No se pudo completar la generación.",
+          };
+        }
+        return { messages: copy };
+      });
       set({ abortController: null, loading: false, searching: false });
       get().loadChats();
     }
+  },
+
+  exportMessageAsPdf: async (index) => {
+    const state = get();
+    const message = state.messages[index];
+    if (!message || message.role !== "ai") return;
+
+    const payload: Record<string, unknown> = { chatId: state.chatId };
+    if (message.id !== undefined) {
+      payload.messageId = message.id;
+    } else {
+      payload.text = message.text || "";
+    }
+    if (message.document?.summary) payload.summary = message.document.summary;
+
+    const res = await fetch("/api/documents/from-message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      document?: GeneratedDocumentMeta;
+      editResult?: EditResult;
+    };
+
+    if (!res.ok || !data.document) {
+      throw new Error(data.error || "No se pudo exportar el documento.");
+    }
+
+    set((s) => {
+      const copy = [...s.messages];
+      let targetIndex = index;
+      if (message.localId || message.id !== undefined) {
+        const found = copy.findIndex(
+          (item) =>
+            (message.localId !== undefined && item.localId === message.localId) ||
+            (message.id !== undefined && item.id === message.id),
+        );
+        if (found >= 0) targetIndex = found;
+      }
+
+      const target = copy[targetIndex];
+      if (!target || target.role !== "ai") return { messages: copy };
+      copy[targetIndex] = {
+        ...target,
+        document: data.document,
+        editResult: data.editResult,
+        documentProgress: undefined,
+      };
+      return { messages: copy };
+    });
+
+    get().loadChats();
   },
 }));

@@ -6,6 +6,21 @@ export type InferenceMessage = {
   images?: string[];
 };
 
+export type ChatDoneInfo = {
+  /** Motivo reportado por Ollama: "stop", "length", etc. */
+  doneReason?: string;
+};
+
+export class OllamaTimeoutError extends Error {
+  readonly kind: "idle" | "total";
+
+  constructor(message: string, kind: "idle" | "total") {
+    super(message);
+    this.name = "TimeoutError";
+    this.kind = kind;
+  }
+}
+
 export type ChatOptions = {
   temperature?: number;
   max_tokens?: number;
@@ -13,11 +28,19 @@ export type ChatOptions = {
   num_ctx?: number;
   keep_alive?: string | number;
   think?: boolean;
+  /** Timeout total para llamadas no-streaming (ms). No se envía a Ollama. */
+  timeoutMs?: number;
+  /** Timeout de inactividad para streaming: se reinicia con cada token (ms). No se envía a Ollama. */
+  idleTimeoutMs?: number;
+  /** Se llama una sola vez al terminar el stream. No se envía a Ollama. */
+  onDone?: (info: ChatDoneInfo) => void;
   [key: string]: unknown;
 };
 
 type OllamaChatResponse = {
   message?: { content?: string | null };
+  done?: boolean;
+  done_reason?: string;
   error?: string;
 };
 
@@ -84,7 +107,18 @@ function chatOptions(model: string, options?: ChatOptions): {
   keepAlive?: string | number;
 } {
   const input = options || {};
-  const { max_tokens, num_predict, num_ctx, temperature, keep_alive, ...rest } = input;
+  const {
+    max_tokens,
+    num_predict,
+    num_ctx,
+    temperature,
+    keep_alive,
+    timeoutMs,
+    idleTimeoutMs,
+    think,
+    ...rest
+  } = input;
+  delete rest.onDone;
   const bodyOptions: Record<string, unknown> = { ...rest };
   const defaultContext = model === getAgentModel()
     ? numberSetting(env.OLLAMA_AGENT_CONTEXT_LENGTH, 49152)
@@ -126,6 +160,97 @@ async function responseError(response: Response): Promise<Error> {
   return new Error(`Ollama respondió con código ${response.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`);
 }
 
+/**
+ * Crea un AbortController que se aborta por inactividad (se reinicia con cada
+ * token recibido) y, opcionalmente, por tiempo total.
+ *
+ * Devuelve una señal que se puede pasar a `fetch` y un par de funciones para
+ * reiniciar/detener el temporizador de inactividad alrededor de cada lectura
+ * del stream.
+ */
+function createStreamGuard(params: {
+  idleMs: number;
+  totalMs?: number;
+  signal?: AbortSignal;
+}): {
+  signal: AbortSignal;
+  startIdle: () => void;
+  stopIdle: () => void;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let totalTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const abort = (kind: "idle" | "total") => {
+    const message =
+      kind === "idle"
+        ? `Ollama no envió datos durante ${params.idleMs} ms`
+        : `Ollama excedió el tiempo total de ${params.totalMs} ms`;
+    controller.abort(new OllamaTimeoutError(message, kind));
+  };
+
+  const startIdle = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => abort("idle"), params.idleMs);
+  };
+
+  const stopIdle = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = undefined;
+    }
+  };
+
+  const onRequestAbort = () => controller.abort(params.signal?.reason);
+  if (params.signal?.aborted) onRequestAbort();
+  else params.signal?.addEventListener("abort", onRequestAbort, { once: true });
+
+  if (params.totalMs && params.totalMs > 0) {
+    totalTimer = setTimeout(() => abort("total"), params.totalMs);
+  }
+
+  return {
+    signal: controller.signal,
+    startIdle,
+    stopIdle,
+    dispose: () => {
+      stopIdle();
+      if (totalTimer) {
+        clearTimeout(totalTimer);
+        totalTimer = undefined;
+      }
+      params.signal?.removeEventListener("abort", onRequestAbort);
+    },
+  };
+}
+
+/**
+ * Lee un chunk del stream respetando la señal de abort. Si la señal se aborta
+ * mientras se espera `reader.read()`, se cancela el lector y se lanza el
+ * motivo de la señal (por ejemplo `OllamaTimeoutError`).
+ */
+async function readWithGuard(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): Promise<{ done: boolean; value?: Uint8Array }> {
+  if (signal.aborted) throw signal.reason;
+
+  const onAbort = () => {
+    reader.cancel().catch(() => undefined);
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+
+  try {
+    return await reader.read();
+  } catch (error) {
+    if (signal.aborted) throw signal.reason;
+    throw error;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
 export async function ollamaChat(
   model: string,
   messages: InferenceMessage[],
@@ -164,57 +289,103 @@ export async function* ollamaChatStream(
   const requestSignal = settings.signal;
   delete settings.signal;
   const configured = chatOptions(model, settings);
-  const response = await fetch(`${baseUrl()}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      messages: toOllamaMessages(messages),
-      stream: true,
-      options: configured.bodyOptions,
-      ...(configured.keepAlive !== undefined ? { keep_alive: configured.keepAlive } : {}),
-      think: options?.think ?? false,
-    }),
-    signal: timeoutSignal(numberSetting(env.OLLAMA_TIMEOUT_MS, 120000), requestSignal),
-  });
 
-  if (!response.ok) throw await responseError(response);
-  if (!response.body) throw new Error("Ollama no devolvió un cuerpo de streaming");
+  const idleMs =
+    options?.idleTimeoutMs ??
+    numberSetting(env.OLLAMA_STREAM_IDLE_TIMEOUT_MS, numberSetting(env.OLLAMA_TIMEOUT_MS, 120_000));
+  const totalMs = options?.timeoutMs;
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
+  const guard = createStreamGuard({ idleMs, totalMs, signal: requestSignal });
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
-  const processLine = (line: string): { content?: string; done: boolean } => {
-    const value = line.trim();
-    if (!value) return { done: false };
-    let event: OllamaChatResponse & { done?: boolean };
-    try {
-      event = JSON.parse(value) as OllamaChatResponse & { done?: boolean };
-    } catch {
-      throw new Error("Ollama devolvió un NDJSON inválido");
-    }
-    if (event.error) throw new Error(`Ollama: ${event.error}`);
-    return { content: event.message?.content || undefined, done: event.done === true };
-  };
+  try {
+    guard.startIdle();
+    const response = await fetch(`${baseUrl()}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: toOllamaMessages(messages),
+        stream: true,
+        options: configured.bodyOptions,
+        ...(configured.keepAlive !== undefined ? { keep_alive: configured.keepAlive } : {}),
+        think: options?.think ?? false,
+      }),
+      signal: guard.signal,
+    });
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      if (buffer.trim()) {
-        const event = processLine(buffer);
-        if (event.content) yield event.content;
+    guard.stopIdle();
+
+    if (!response.ok) throw await responseError(response);
+    if (!response.body) throw new Error("Ollama no devolvió un cuerpo de streaming");
+
+    reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let notified = false;
+
+    const notifyDone = (doneReason?: string) => {
+      if (notified) return;
+      notified = true;
+      options?.onDone?.({ doneReason });
+    };
+
+    const processLine = (line: string): { content?: string; done: boolean; doneReason?: string } => {
+      const value = line.trim();
+      if (!value) return { done: false };
+      let event: OllamaChatResponse;
+      try {
+        event = JSON.parse(value) as OllamaChatResponse;
+      } catch {
+        throw new Error("Ollama devolvió un NDJSON inválido");
       }
-      return;
-    }
+      if (event.error) throw new Error(`Ollama: ${event.error}`);
+      return {
+        content: event.message?.content || undefined,
+        done: event.done === true,
+        doneReason: event.done_reason,
+      };
+    };
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-    for (const line of lines) {
-      const event = processLine(line);
-      if (event.content) yield event.content;
-      if (event.done) return;
+    while (true) {
+      if (guard.signal.aborted) throw guard.signal.reason;
+      guard.startIdle();
+      const { done, value } = await readWithGuard(reader!, guard.signal);
+      guard.stopIdle();
+      if (guard.signal.aborted) throw guard.signal.reason;
+      if (done) {
+        if (buffer.trim()) {
+          const event = processLine(buffer);
+          if (event.content) yield event.content;
+          if (event.done) {
+            notifyDone(event.doneReason);
+            return;
+          }
+        }
+        notifyDone();
+        return;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        const event = processLine(line);
+        if (event.content) yield event.content;
+        if (event.done) {
+          notifyDone(event.doneReason);
+          return;
+        }
+      }
+    }
+  } finally {
+    guard.dispose();
+    if (reader) {
+      try {
+        reader.releaseLock();
+      } catch {
+        /* el lector ya pudo haberse liberado */
+      }
     }
   }
 }

@@ -1,0 +1,36 @@
+En progreso:
+
+Mejora de generación PDF con previzualización.
+
+Fase	 Trabajo	                                   Estimación
+0	     LibreOffice + Docker + conversor	           0.5–1 día Implementado.
+1	     Pipeline + Markdown→DOCX	                   2–3 días
+2	     MinIO + migración + endpoints	               1–2 días
+3	     UI estado/card/preview	                       1–2 días
+4	     Detección + export + robustez	               1 día
+5	     Tests + E2E	                               1 día
+**Total**-------------------------------------------**~7–10 días**
+_____________________________________________________________________________________________________________________________________________________________________________________
+_____________________________________________________________________________________________________________________________________________________________________________________
+
+Punto-------------------Decisión--------------------------------------------------------------Implicación
+____________________________________________________________________________________________________________________________________________________________________________
+Retry	                Continuar si hay parcial; “desde cero/hazlo de nuevo” regenera	      `resolveDocumentIntent` con `mode: "new" | "retry" | "continue"` y `forceReset`
+Documento	            Actualizar la misma fila	                                          Nueva función `updateGeneratedDocument`, misma tarjeta, versión 1.0 → 1.1
+Sidecar             	Solo parciales	                                                      `sourceMarkdown` solo se sube si `partial === true`
+Timeout total	        5 min	                                                              `DOC_OLLAMA_TIMEOUT_MS=300000`
+“Breve”             	2 páginas	                                                          `DEFAULT_BRIEF_MAX_PAGES = 2` en código
+Botón “Continuar”	    Después	                                                               Primera versión solo por lenguaje natural
+Parcial en el límite	Error claro, no técnico	                                              “El documento ya llegó al máximo de N páginas…”
+Sidecar faltante	    Regenerar desde cero + warning	                                       El usuario no ve el warning; recibe un documento nuevo
+Default breve	        2 páginas	                                                           Igual que el punto 5
+
+
+# Orden de implementación
+1. Timeout + parcial + longitud.
+2. Migración, tipos, DB y storage.
+3. Intención de retry/continuación.
+4. Pipeline de continuación.
+5. Ruta + evento `target: "previous-ai"`.
+6. UI + docs + deploy.
+7. `npm test`, `npm run lint` y prueba manual.

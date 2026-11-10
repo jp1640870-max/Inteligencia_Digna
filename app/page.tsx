@@ -11,6 +11,7 @@ import ProjectsListView from "./components/ProjectsListView";
 import RenameChatModal from "./components/modals/RenameChatModal";
 import AddToProjectModal from "./components/modals/AddToProjectModal";
 import { useChatStore } from "@/lib/stores/chat-store";
+import { messageKey } from "@/lib/message-key";
 import { useProjectStore } from "@/lib/stores/project-store";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { useAuthStore } from "@/lib/stores/auth-store";
@@ -38,6 +39,7 @@ export default function Home() {
   const handleStop = useChatStore((s) => s.handleStop);
   const handleRegenerate = useChatStore((s) => s.handleRegenerate);
   const handleEditMessage = useChatStore((s) => s.handleEditMessage);
+  const exportMessageAsPdf = useChatStore((s) => s.exportMessageAsPdf);
   const handlePaste = useChatStore((s) => s.handlePaste);
   const handleFilesSelected = useChatStore((s) => s.handleFilesSelected);
   const handleEditFileToggle = useChatStore((s) => s.handleEditFileToggle);
@@ -254,7 +256,7 @@ export default function Home() {
           <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-6 max-w-2xl mx-auto w-full">
             {messages.map((m, i) => (
               <ChatMessage
-                key={m.id ?? i}
+                key={messageKey(m, i)}
                 message={m}
                 index={i}
                 isLastAi={m.role === "ai" && i === messages.length - 1 && messages.length >= 2}
@@ -264,6 +266,7 @@ export default function Home() {
                     ? () => handleRegenerate(currentProjectId)
                     : undefined
                 }
+                onExportPdf={m.role === "ai" && !loading ? () => exportMessageAsPdf(i) : undefined}
                 darkMode={darkMode}
               />
             ))}

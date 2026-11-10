@@ -23,6 +23,16 @@ RUN npm run build
 
 FROM node:22-bookworm-slim AS runner
 
+# LibreOffice headless convierte DOCX → PDF conservando tablas, listas y paginación.
+# Se instala antes de copiar la app para que esta capa quede cacheada.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    libreoffice-writer \
+    fonts-liberation \
+    fonts-dejavu-core \
+    ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 ENV NODE_ENV=production

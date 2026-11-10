@@ -1,4 +1,5 @@
 import { query, withTransaction } from "./db-connection";
+import { toGeneratedDocumentMeta } from "./generated-document";
 import type { PoolClient } from "pg";
 import type {
   AnnouncementRow,
@@ -9,6 +10,11 @@ import type {
   ChatRow,
   ChatWithOwnerRow,
   ConfigRow,
+  GeneratedDocumentFormat,
+  GeneratedDocumentInsert,
+  GeneratedDocumentRow,
+  GeneratedDocumentSource,
+  GeneratedDocumentStatus,
   HeartRow,
   HeartWithOwnerRow,
   KbAccessGrant,
@@ -178,6 +184,43 @@ function normalizeMessageRow(row: DbRow): MessageRow {
     kb_sources: jsonText(row.kb_sources),
     created_at: textValue(row.created_at),
   } as MessageRow;
+}
+
+function normalizeGeneratedDocument(row: DbRow): GeneratedDocumentRow {
+  const metadata = parseJson(row.metadata);
+  return {
+    id: textValue(row.id),
+    user_id: textValue(row.user_id),
+    chat_id: nullableTextValue(row.chat_id),
+    message_id:
+      row.message_id === null || row.message_id === undefined
+        ? null
+        : numberValue(row.message_id),
+    title: textValue(row.title),
+    filename: textValue(row.filename),
+    format: textValue(row.format, "pdf") as GeneratedDocumentRow["format"],
+    mime_type: textValue(row.mime_type, "application/octet-stream"),
+    size_bytes: numberValue(row.size_bytes),
+    page_count:
+      row.page_count === null || row.page_count === undefined
+        ? null
+        : numberValue(row.page_count),
+    version: textValue(row.version, "1.0"),
+    summary: textValue(row.summary),
+    status: textValue(row.status, "ready") as GeneratedDocumentRow["status"],
+    storage_provider: textValue(row.storage_provider, "minio"),
+    bucket: textValue(row.bucket),
+    object_key: textValue(row.object_key),
+    docx_object_key: nullableTextValue(row.docx_object_key),
+    markdown_object_key: nullableTextValue(row.markdown_object_key),
+    source: textValue(row.source, "chat") as GeneratedDocumentRow["source"],
+    metadata:
+      metadata && typeof metadata === "object" && !Array.isArray(metadata)
+        ? (metadata as Record<string, unknown>)
+        : {},
+    created_at: textValue(row.created_at),
+    updated_at: textValue(row.updated_at),
+  };
 }
 
 function messageFromRow(row: DbRow): Msg {
@@ -490,14 +533,92 @@ export async function deleteChat(id: string): Promise<void> {
   await query("DELETE FROM chats WHERE id = $1", [id]);
 }
 
+/**
+ * Adjunta los documentos generados a sus mensajes.
+ *
+ * Los binarios viven en storage y la fila solo guarda metadatos. Se toma el
+ * documento listo más reciente por mensaje para que un reintento no muestre
+ * dos tarjetas.
+ */
+async function attachGeneratedDocuments(messages: Msg[]): Promise<Msg[]> {
+  const ids = messages
+    .map((message) => message.id)
+    .filter((id): id is number => typeof id === "number" && Number.isFinite(id));
+  if (ids.length === 0) return messages;
+
+  const result = await query(
+    `SELECT * FROM generated_documents
+      WHERE status = 'ready' AND message_id = ANY($1::bigint[])
+      ORDER BY created_at DESC, id DESC`,
+    [ids],
+  );
+
+  const latest = new Map<number, GeneratedDocumentRow>();
+  for (const raw of result.rows as DbRow[]) {
+    const document = normalizeGeneratedDocument(raw);
+    if (document.message_id === null || latest.has(document.message_id)) continue;
+    latest.set(document.message_id, document);
+  }
+
+  for (const message of messages) {
+    if (message.id === undefined) continue;
+    const document = latest.get(message.id);
+    if (!document) continue;
+
+    const meta = toGeneratedDocumentMeta(document);
+    message.document = meta;
+    if (!message.editResult) {
+      message.editResult = {
+        success: true,
+        format: document.format,
+        filename: document.filename,
+        originalName: document.filename,
+        changesCount: 0,
+        downloadUrl: meta.downloadUrl,
+        documentId: document.id,
+        previewUrl: meta.previewUrl,
+        pages: document.page_count,
+      };
+    }
+  }
+
+  return messages;
+}
+
 export async function getMessagesByChat(chatId: string): Promise<Msg[]> {
   const result = await query(
     "SELECT * FROM messages WHERE chat_id = $1 ORDER BY id ASC",
     [chatId],
   );
-  return (result.rows as DbRow[]).map(messageFromRow);
+  const messages = (result.rows as DbRow[]).map(messageFromRow);
+  return attachGeneratedDocuments(messages);
 }
 
+/** Devuelve el mensaje solo si pertenece a un chat del usuario. */
+export async function getMessageForUser(
+  id: number,
+  userId: string,
+): Promise<{ id: number; chat_id: string; role: string; content: string; created_at: string } | null> {
+  const result = await query(
+    `SELECT m.id, m.chat_id, m.role, m.content, m.created_at
+       FROM messages m
+       JOIN chats c ON c.id = m.chat_id
+      WHERE m.id = $1 AND c.user_id = $2
+      LIMIT 1`,
+    [id, userId],
+  );
+  const row = result.rows[0] as DbRow | undefined;
+  if (!row) return null;
+  return {
+    id: numberValue(row.id),
+    chat_id: textValue(row.chat_id),
+    role: textValue(row.role),
+    content: textValue(row.content),
+    created_at: textValue(row.created_at),
+  };
+}
+
+/** Inserta un mensaje y devuelve su id para poder enlazar documentos. */
 export async function addMessage(
   chatId: string,
   role: string,
@@ -505,11 +626,12 @@ export async function addMessage(
   images?: string[],
   docData?: string,
   kbSources?: KbSource[],
-): Promise<void> {
-  await withTransaction(async (client: PoolClient) => {
-    await client.query(
+): Promise<number> {
+  return withTransaction(async (client: PoolClient) => {
+    const inserted = await client.query<{ id: number }>(
       `INSERT INTO messages (chat_id, role, content, images, doc_data, kb_sources)
-       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)`,
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)
+       RETURNING id`,
       [
         chatId,
         role,
@@ -520,8 +642,165 @@ export async function addMessage(
       ],
     );
     await client.query("UPDATE chats SET updated_at = NOW() WHERE id = $1", [chatId]);
+    return numberValue(inserted.rows[0]?.id);
   });
 }
+
+export async function updateMessageContent(id: number, content: string): Promise<void> {
+  await query("UPDATE messages SET content = $1 WHERE id = $2", [content, id]);
+}
+
+// ─── Documentos generados ───────────────────────────────────────────────────
+
+export async function createGeneratedDocument(
+  data: GeneratedDocumentInsert,
+): Promise<GeneratedDocumentRow> {
+  const result = await query(
+    `INSERT INTO generated_documents
+       (user_id, chat_id, message_id, title, filename, format, mime_type, size_bytes,
+        page_count, version, summary, status, storage_provider, bucket, object_key,
+        docx_object_key, markdown_object_key, source, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb)
+     RETURNING *`,
+    [
+      data.user_id,
+      data.chat_id ?? null,
+      data.message_id ?? null,
+      data.title,
+      data.filename,
+      data.format,
+      data.mime_type,
+      data.size_bytes,
+      data.page_count ?? null,
+      data.version || "1.0",
+      data.summary || "",
+      data.status || "ready",
+      data.storage_provider || "minio",
+      data.bucket,
+      data.object_key,
+      data.docx_object_key ?? null,
+      data.markdown_object_key ?? null,
+      data.source || "chat",
+      JSON.stringify(data.metadata || {}),
+    ],
+  );
+  return normalizeGeneratedDocument(result.rows[0] as DbRow);
+}
+
+export async function getGeneratedDocumentById(id: string): Promise<GeneratedDocumentRow | null> {
+  const result = await query("SELECT * FROM generated_documents WHERE id = $1 LIMIT 1", [id]);
+  const row = result.rows[0] as DbRow | undefined;
+  return row ? normalizeGeneratedDocument(row) : null;
+}
+
+export async function getGeneratedDocumentByMessageId(
+  messageId: number,
+): Promise<GeneratedDocumentRow | null> {
+  const result = await query(
+    `SELECT * FROM generated_documents
+      WHERE message_id = $1 AND status = 'ready'
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    [messageId],
+  );
+  const row = result.rows[0] as DbRow | undefined;
+  return row ? normalizeGeneratedDocument(row) : null;
+}
+
+export type GeneratedDocumentUpdateInput = {
+  title?: string;
+  filename?: string;
+  format?: GeneratedDocumentFormat;
+  mime_type?: string;
+  size_bytes?: number;
+  page_count?: number | null;
+  version?: string;
+  summary?: string;
+  status?: GeneratedDocumentStatus;
+  bucket?: string;
+  object_key?: string;
+  docx_object_key?: string | null;
+  markdown_object_key?: string | null;
+  source?: GeneratedDocumentSource;
+  metadata?: Record<string, unknown>;
+};
+
+/**
+ * Devuelve el último documento parcial del chat del usuario.
+ * Un documento es parcial si tiene `markdown_object_key` y su metadata
+ * indica `partial = true`.
+ */
+export async function getLatestPartialDocumentForChat(
+  chatId: string,
+  userId: string,
+): Promise<GeneratedDocumentRow | null> {
+  const result = await query(
+    `SELECT * FROM generated_documents
+      WHERE chat_id = $1 AND user_id = $2 AND status = 'ready'
+        AND markdown_object_key IS NOT NULL
+        AND (metadata->>'partial')::boolean = true
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    [chatId, userId],
+  );
+  const row = result.rows[0] as DbRow | undefined;
+  return row ? normalizeGeneratedDocument(row) : null;
+}
+
+/**
+ * Actualiza la misma fila de un documento generado.
+ * Se usa para versionar un documento parcial (versión 1.0 -> 1.1 -> 1.2)
+ * sin crear una nueva fila ni una nueva tarjeta en el chat.
+ */
+export async function updateGeneratedDocument(
+  id: string,
+  data: GeneratedDocumentUpdateInput,
+): Promise<GeneratedDocumentRow | null> {
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  let paramIndex = 1;
+
+  const add = (column: string, value: unknown) => {
+    if (value === undefined) return;
+    sets.push(`${column} = $${paramIndex}`);
+    values.push(value);
+    paramIndex += 1;
+  };
+
+  add("title", data.title);
+  add("filename", data.filename);
+  add("format", data.format);
+  add("mime_type", data.mime_type);
+  add("size_bytes", data.size_bytes);
+  add("page_count", data.page_count);
+  add("version", data.version);
+  add("summary", data.summary);
+  add("status", data.status);
+  add("bucket", data.bucket);
+  add("object_key", data.object_key);
+  add("docx_object_key", data.docx_object_key);
+  add("markdown_object_key", data.markdown_object_key);
+  add("source", data.source);
+  add("metadata", data.metadata ? JSON.stringify(data.metadata) : undefined);
+  add("updated_at", new Date().toISOString());
+
+  if (sets.length === 0) {
+    return getGeneratedDocumentById(id);
+  }
+
+  values.push(id);
+  const result = await query(
+    `UPDATE generated_documents
+      SET ${sets.join(", ")}
+      WHERE id = $${paramIndex}
+      RETURNING *`,
+    values,
+  );
+  const row = result.rows[0] as DbRow | undefined;
+  return row ? normalizeGeneratedDocument(row) : null;
+}
+
+
 
 export async function truncateMessagesToCount(chatId: string, keepCount: number): Promise<void> {
   await withTransaction(async (client: PoolClient) => {
