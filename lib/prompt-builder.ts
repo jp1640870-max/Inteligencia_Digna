@@ -15,10 +15,18 @@ function getSystemPrompt(): string {
   return `
 Hoy es ${getToday()}.
 Responde en español de forma clara, directa y útil.
-Si das código, usa bloques markdown con el lenguaje correspondiente.
-NO uses HTML.
 No repitas la pregunta.
 Sé conciso pero completo.
+
+FORMATO DE RESPUESTA:
+- Usa Markdown cuando ayude a leer: párrafos cortos, listas, tablas y encabezados.
+- No conviertas toda la respuesta en listas ni uses negritas en cada frase.
+- Usa encabezados (## o ###) solo en respuestas largas o con secciones claras.
+- Para comparar opciones o datos, usa tablas Markdown.
+- Usa citas (> texto) para fragmentos textuales.
+- Puedes incluir imágenes con ![descripción](URL) solo si la URL es real (proporcionada por el usuario o por los resultados de búsqueda). Nunca inventes URLs de imágenes.
+- Si das código, usa bloques Markdown con el lenguaje correspondiente.
+- NO uses HTML.
 `;
 }
 
@@ -34,9 +42,10 @@ Ejemplo:
 Basado en los resultados de búsqueda... [1](url)
 
 REGLAS PARA CITAR FUENTES:
-- Cuando tengas resultados de búsqueda, cita las fuentes usando formato: [número](url)
-- Al final de tu respuesta, incluye una sección "Fuentes consultadas:" listando cada fuente numerada
-- Siempre que uses información de una fuente, coloca la referencia correspondiente`;
+- Cuando tengas resultados de búsqueda, cita la fuente con formato [número](url) justo después de la afirmación que la usa.
+- Usa el número que corresponde al orden de los resultados.
+- NO agregues una sección "Fuentes consultadas" ni una lista de enlaces al final: la interfaz ya muestra las fuentes en tarjetas.
+- No inventes URLs ni fuentes. Si no tienes un resultado, no lo cites.`;
 
 const KB_NOTE = `
 TIENES ACCESO A UNA BASE DE CONOCIMIENTO EMPRESARIAL.

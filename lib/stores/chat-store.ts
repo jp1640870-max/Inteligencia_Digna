@@ -171,10 +171,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       set((state) => {
-        // Los mensajes de la BD son la fuente de verdad (id, documento, orden),
-        // pero no guardan las fuentes web ni los adjuntos locales. Se conservan
-        // esos extras emparejando por rol y texto para que "Exportar a PDF"
-        // tenga un id con el que enlazar el archivo.
+        // Los mensajes de la BD son la fuente de verdad (id, documento, orden)
+        // y ya incluyen las fuentes web. Se conservan los adjuntos locales y
+        // los estados temporales de progreso emparejando por rol y texto para
+        // que "Exportar a PDF" tenga un id con el que enlazar el archivo.
         const buckets = new Map<string, Msg[]>();
         for (const msg of state.messages) {
           const key = `${msg.role}\u0000${(msg.text || "").trim()}`;

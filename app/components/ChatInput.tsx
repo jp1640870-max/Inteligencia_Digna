@@ -2,7 +2,7 @@
 
 import { useRef, useEffect } from "react";
 import Image from "next/image";
-import { ArrowUp, FileEdit, Paperclip, Search, Wand2 } from "lucide-react";
+import { ArrowUp, FileEdit, Paperclip, Search, Wand2, X } from "lucide-react";
 
 type FilePreview = {
   name: string;
@@ -14,6 +14,7 @@ type Props = {
   images: string[];
   files: FilePreview[];
   loading: boolean;
+  darkMode: boolean;
   onInputChange: (val: string) => void;
   onSend: () => void;
   onStop?: () => void;
@@ -39,6 +40,7 @@ const ChatInput = ({
   images,
   files,
   loading,
+  darkMode,
   onInputChange,
   onSend,
   onStop,
@@ -64,7 +66,7 @@ const ChatInput = ({
     const el = textareaRef.current;
     if (el) {
       el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+      el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
     }
   }, [input]);
 
@@ -79,211 +81,233 @@ const ChatInput = ({
     }
   };
 
+  const canSend = input.trim().length > 0 || images.length > 0 || files.length > 0;
+
   return (
-    <div className="p-4 border-t border-[#1f2632] max-w-2xl mx-auto w-full">
-      {images.length > 0 && (
-        <div className="flex gap-2 mb-2 flex-wrap">
-          {images.map((img, i) => (
-            <div key={i} className="relative">
-              <Image src={img} alt="Vista previa de imagen adjunta" width={64} height={64} className="h-16 w-auto rounded" />
-              <button
-                onClick={() => onRemoveImage(i)}
-                className="absolute top-0 right-0 bg-red-500 text-xs px-1 rounded"
-              >
-                ✕
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {files.length > 0 && (
-        <div className="flex gap-2 mb-2 flex-wrap">
-          {files.map((f, i) => (
-            <div
-              key={i}
-              className="bg-[#1e293b] px-3 py-1.5 rounded-xl text-sm flex items-center gap-2"
-            >
-              <span>📄 {f.name}</span>
-              <button
-                onClick={() => onRemoveFile(i)}
-                className="text-red-400 hover:text-red-300"
-              >
-                ✕
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Hidden file inputs */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".pdf,.docx,.xlsx,.xls,.txt,.md,.csv,.png,.jpg,.jpeg,.gif"
-        multiple
-        className="hidden"
-        onChange={(e) => {
-          if (e.target.files) {
-            if (e.target.files.length === 1) {
-              handleFileSelect(e.target.files);
-            } else {
-              onFilesSelected(e.target.files);
-            }
-          }
-          e.target.value = "";
-        }}
-      />
-      <input
-        ref={editFileInputRef}
-        type="file"
-        accept=".xlsx,.xls,.docx,.pdf"
-        className="hidden"
-        onChange={(e) => {
-          if (e.target.files?.[0]) onEditFileSelected?.(e.target.files[0]);
-          e.target.value = "";
-        }}
-      />
-
-      {/* Toolbar */}
-      <div className="flex items-center gap-1 mb-2">
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className="p-1.5 rounded-lg hover:bg-[#1e293b] transition text-gray-400 hover:text-gray-200"
-          title="Adjuntar archivo"
-        >
-          <Paperclip size={18} />
-        </button>
-        {!isEditMode && (
-          <button
-            type="button"
-            onClick={() => editFileInputRef.current?.click()}
-            className="p-1.5 rounded-lg hover:bg-[#1e293b] transition text-gray-400 hover:text-gray-200"
-            title="Editar archivo"
-          >
-            <FileEdit size={18} />
-          </button>
+    <div
+      className={`chat-composer-wrap ${darkMode ? "chat-theme-dark" : "chat-theme-light"}`}
+    >
+      <div className="chat-composer-inner">
+        {images.length > 0 && (
+          <div className="chat-attachment-row">
+            {images.map((img, index) => (
+              <div key={index} className="chat-attach-image-wrap">
+                <Image
+                  src={img}
+                  alt="Vista previa de imagen adjunta"
+                  width={64}
+                  height={64}
+                  className="chat-attach-image"
+                />
+                <button
+                  type="button"
+                  onClick={() => onRemoveImage(index)}
+                  className="chat-attach-remove"
+                  title="Quitar imagen"
+                  aria-label="Quitar imagen"
+                >
+                  <X size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
         )}
-      </div>
 
-      {/* File type choice popover */}
-      {typeChoiceFile && (
-        <div className="mb-2 bg-[#1a2332] rounded-xl border border-green-600/30 p-3">
-          <p className="text-sm text-gray-300 mb-2">
-            📄 <span className="font-medium">{typeChoiceFile.name}</span>
-          </p>
-          <p className="text-xs text-gray-500 mb-3">¿Qué quieres hacer con este archivo?</p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => onTypeChoiceAction?.(typeChoiceFile, "analyze")}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1e293b] hover:bg-[#2a3a4f] text-sm text-gray-200 transition"
-            >
-              <Search size={14} />
-              Analizar
-            </button>
-            <button
-              type="button"
-              onClick={() => onTypeChoiceAction?.(typeChoiceFile, "edit")}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-700 hover:bg-green-600 text-sm text-white transition"
-            >
-              <Wand2 size={14} />
-              Editar
-            </button>
-            <button
-              type="button"
-              onClick={onDismissTypeChoice}
-              className="px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-sm text-gray-300 transition ml-auto"
-            >
-              Cancelar
-            </button>
+        {files.length > 0 && (
+          <div className="chat-attachment-row">
+            {files.map((file, index) => (
+              <div key={index} className="chat-attach-chip">
+                <Paperclip size={13} aria-hidden="true" />
+                <span>{file.name}</span>
+                <button
+                  type="button"
+                  onClick={() => onRemoveFile(index)}
+                  className="chat-attach-chip-remove"
+                  title="Quitar archivo"
+                  aria-label="Quitar archivo"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
           </div>
-        </div>
-      )}
+        )}
 
-      {isEditMode ? (
-        <div className="bg-[#1a2332] rounded-xl border border-green-600/30">
-          <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[#1f2632]">
-            <FileEdit size={14} className="text-green-400" />
-            <span className="text-xs text-green-400 font-medium">Modo edición de documento</span>
-            <button
-              type="button"
-              onClick={onEditFile}
-              className="ml-auto text-xs text-gray-500 hover:text-gray-300"
-            >
-              Cancelar
-            </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.docx,.xlsx,.xls,.txt,.md,.csv,.png,.jpg,.jpeg,.gif"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            if (event.target.files) {
+              if (event.target.files.length === 1) {
+                handleFileSelect(event.target.files);
+              } else {
+                onFilesSelected(event.target.files);
+              }
+            }
+            event.target.value = "";
+          }}
+        />
+        <input
+          ref={editFileInputRef}
+          type="file"
+          accept=".xlsx,.xls,.docx,.pdf"
+          className="hidden"
+          onChange={(event) => {
+            if (event.target.files?.[0]) onEditFileSelected?.(event.target.files[0]);
+            event.target.value = "";
+          }}
+        />
+
+        {typeChoiceFile && (
+          <div className="chat-type-choice">
+            <p className="chat-type-choice-title">
+              <Paperclip size={14} aria-hidden="true" />
+              <span>{typeChoiceFile.name}</span>
+            </p>
+            <p className="chat-type-choice-note">¿Qué quieres hacer con este archivo?</p>
+            <div className="chat-type-actions">
+              <button
+                type="button"
+                onClick={() => onTypeChoiceAction?.(typeChoiceFile, "analyze")}
+                className="chat-type-btn"
+              >
+                <Search size={14} />
+                Analizar
+              </button>
+              <button
+                type="button"
+                onClick={() => onTypeChoiceAction?.(typeChoiceFile, "edit")}
+                className="chat-type-btn chat-type-btn-primary"
+              >
+                <Wand2 size={14} />
+                Editar
+              </button>
+              <button
+                type="button"
+                onClick={onDismissTypeChoice}
+                className="chat-type-btn chat-type-btn-ghost"
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
-          <div className="flex gap-2 p-2">
+        )}
+
+        {isEditMode ? (
+          <div className="chat-composer chat-composer-edit">
+            <div className="chat-edit-header">
+              <FileEdit size={14} aria-hidden="true" />
+              <span>Modo edición de documento</span>
+              <button type="button" onClick={onEditFile} className="chat-edit-cancel-link">
+                Cancelar
+              </button>
+            </div>
+            <div className="chat-edit-compose-row">
+              <textarea
+                value={editInstruction || ""}
+                onChange={(event) => onEditInstructionChange?.(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    onSend();
+                  }
+                }}
+                placeholder="Describe los cambios que quieres hacer al archivo..."
+                className="chat-edit-input"
+                aria-label="Instrucciones para editar el documento"
+              />
+              <button
+                type="button"
+                onClick={onSend}
+                disabled={loading || !editInstruction?.trim()}
+                className="chat-send-btn"
+                title="Aplicar cambios"
+                aria-label="Aplicar cambios"
+              >
+                {loading ? <span className="chat-send-spinner" /> : <ArrowUp size={18} />}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              onSend();
+            }}
+            className="chat-composer"
+          >
+            <div className="chat-composer-tools">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="chat-action-btn"
+                title="Adjuntar archivo"
+                aria-label="Adjuntar archivo"
+              >
+                <Paperclip size={18} />
+              </button>
+              {!isEditMode && (
+                <button
+                  type="button"
+                  onClick={() => editFileInputRef.current?.click()}
+                  className="chat-action-btn"
+                  title="Editar archivo"
+                  aria-label="Editar archivo"
+                >
+                  <FileEdit size={18} />
+                </button>
+              )}
+            </div>
+
             <textarea
-              value={editInstruction || ""}
-              onChange={(e) => onEditInstructionChange?.(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
+              ref={textareaRef}
+              value={input}
+              onChange={(event) => onInputChange(event.target.value)}
+              onPaste={onPaste}
+              placeholder="Escribe un mensaje..."
+              className="chat-composer-textarea"
+              aria-label="Mensaje"
+              rows={1}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
                   onSend();
                 }
               }}
-              placeholder="Describe los cambios que quieres hacer al archivo..."
-              className="flex-1 bg-transparent text-white placeholder-gray-500 resize-none outline-none text-sm leading-relaxed max-h-[120px] min-h-[60px]"
             />
-            <button
-              type="button"
-              onClick={onSend}
-              disabled={loading || !editInstruction?.trim()}
-              className="self-end p-1.5 rounded-lg bg-green-600 hover:bg-green-500 disabled:bg-gray-600 transition shrink-0"
-              title="Aplicar cambios"
-            >
-              <ArrowUp size={18} />
-            </button>
-          </div>
-        </div>
-      ) : (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            onSend();
-          }}
-          className="flex items-end gap-2 bg-[#121824] rounded-xl px-3 py-2 border border-[#1f2632] focus-within:border-gray-600 transition-colors"
-        >
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => onInputChange(e.target.value)}
-            onPaste={onPaste}
-            placeholder="Escribe un mensaje..."
-            className="flex-1 bg-transparent text-white placeholder-gray-500 resize-none outline-none text-sm leading-relaxed max-h-[200px]"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                onSend();
-              }
-            }}
-          />
 
-          {loading ? (
-            <button
-              type="button"
-              onClick={onStop}
-              className="p-1.5 rounded-lg bg-red-600 hover:bg-red-500 transition shrink-0"
-              title="Detener"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                <rect x="6" y="6" width="12" height="12" rx="1" />
-              </svg>
-            </button>
-          ) : (
-            <button
-              type="submit"
-              disabled={!input.trim()}
-              className="p-1.5 rounded-lg bg-green-600 hover:bg-green-500 disabled:bg-gray-600 transition shrink-0"
-            >
-              <ArrowUp size={18} />
-            </button>
-          )}
-        </form>
-      )}
+            {loading ? (
+              <button
+                type="button"
+                onClick={onStop}
+                className="chat-send-btn chat-stop-btn"
+                title="Detener"
+                aria-label="Detener respuesta"
+              >
+                <span className="chat-stop-icon" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!canSend}
+                className="chat-send-btn"
+                title="Enviar mensaje"
+                aria-label="Enviar mensaje"
+              >
+                <ArrowUp size={18} />
+              </button>
+            )}
+          </form>
+        )}
+
+        <div className="chat-composer-hint">
+          <span>Inteligencia Digna puede cometer errores. Verifica la información importante.</span>
+          <span>Enter para enviar · Shift + Enter para salto de línea</span>
+        </div>
+      </div>
     </div>
   );
 };

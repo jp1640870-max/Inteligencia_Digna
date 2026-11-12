@@ -472,6 +472,7 @@ export type MessageRow = {
   files: string | null;
   doc_data: string | null;
   kb_sources: string | null;
+  web_sources: string | null;
   created_at: string;
 };
 

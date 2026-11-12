@@ -29,6 +29,7 @@ import type {
   PrincipalType,
   ProjectAdminRow,
   ProjectRow,
+  SearchResult,
   UserGroup,
   UserRow,
   UserWithCountsRow,
@@ -182,6 +183,7 @@ function normalizeMessageRow(row: DbRow): MessageRow {
     files: jsonText(row.files),
     doc_data: jsonText(row.doc_data),
     kb_sources: jsonText(row.kb_sources),
+    web_sources: jsonText(row.web_sources),
     created_at: textValue(row.created_at),
   } as MessageRow;
 }
@@ -226,6 +228,7 @@ function normalizeGeneratedDocument(row: DbRow): GeneratedDocumentRow {
 function messageFromRow(row: DbRow): Msg {
   const normalized = normalizeMessageRow(row);
   const parsedImages = parseJson(normalized.images);
+  const parsedSources = parseJson(normalized.web_sources);
   const role: Msg["role"] = normalized.role === "assistant" ? "ai" : "user";
   const message: Msg = {
     id: normalized.id,
@@ -233,6 +236,19 @@ function messageFromRow(row: DbRow): Msg {
     text: normalized.content,
     images: Array.isArray(parsedImages) && parsedImages.length > 0 ? (parsedImages as string[]) : undefined,
   };
+
+  if (Array.isArray(parsedSources)) {
+    const sources = parsedSources.filter((source): source is SearchResult => {
+      if (!source || typeof source !== "object") return false;
+      const item = source as Record<string, unknown>;
+      return (
+        typeof item.title === "string" &&
+        typeof item.url === "string" &&
+        typeof item.snippet === "string"
+      );
+    });
+    if (sources.length > 0) message.sources = sources;
+  }
 
   if (normalized.doc_data) {
     try {
@@ -626,11 +642,12 @@ export async function addMessage(
   images?: string[],
   docData?: string,
   kbSources?: KbSource[],
+  webSources?: SearchResult[],
 ): Promise<number> {
   return withTransaction(async (client: PoolClient) => {
     const inserted = await client.query<{ id: number }>(
-      `INSERT INTO messages (chat_id, role, content, images, doc_data, kb_sources)
-       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)
+      `INSERT INTO messages (chat_id, role, content, images, doc_data, kb_sources, web_sources)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb)
        RETURNING id`,
       [
         chatId,
@@ -639,6 +656,7 @@ export async function addMessage(
         JSON.stringify(images || []),
         docData || null,
         kbSources && kbSources.length > 0 ? JSON.stringify(kbSources) : null,
+        webSources && webSources.length > 0 ? JSON.stringify(webSources) : null,
       ],
     );
     await client.query("UPDATE chats SET updated_at = NOW() WHERE id = $1", [chatId]);

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import Image from "next/image";
-import { PanelLeft, Search } from "lucide-react";
+import { ArrowDown, PanelLeft, Search } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import ChatMessage from "./components/ChatMessage";
 import ChatInput from "./components/ChatInput";
@@ -16,6 +16,12 @@ import { useProjectStore } from "@/lib/stores/project-store";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import AnnouncementBanner from "./components/announcements/AnnouncementBanner";
+
+const SUGGESTIONS = [
+  "Resume un documento que te comparta",
+  "Compara opciones y arma una tabla",
+  "Busca información actualizada en la web",
+];
 
 export default function Home() {
   // ─── Stores ───
@@ -57,6 +63,7 @@ export default function Home() {
   const view = useUIStore((s) => s.view);
   const setView = useUIStore((s) => s.setView);
   const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
+  const setSidebarCollapsed = useUIStore((s) => s.setSidebarCollapsed);
   const setShowUserMenu = useUIStore((s) => s.setShowUserMenu);
   const showUserMenu = useUIStore((s) => s.showUserMenu);
   const renameChatId = useUIStore((s) => s.renameChatId);
@@ -100,21 +107,6 @@ export default function Home() {
     if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, autoScroll]);
 
-  // ─── Refs for sending ───
-  const currentProjectIdRef = useRef(currentProjectId);
-  useEffect(() => {
-    currentProjectIdRef.current = currentProjectId;
-  });
-
-  // ─── Colors ───
-  const colors = {
-    bg: darkMode ? "bg-[#030812]" : "bg-white",
-    card: darkMode ? "bg-[#121824]" : "bg-white",
-    text: darkMode ? "text-white" : "text-gray-900",
-    muted: darkMode ? "text-gray-400" : "text-gray-500",
-    border: darkMode ? "border-[#202938]" : "border-gray-300",
-  };
-
   // ─── Handlers ───
   const handleSend = () => {
     if (isEditMode) {
@@ -154,10 +146,17 @@ export default function Home() {
     if (editable.length > 0) setTypeChoiceFile(editable[0]);
   };
 
+  const handleScrollToBottom = () => {
+    setAutoScroll(true);
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  };
+
   return (
     <main
-      className={`h-screen flex ${colors.bg} ${colors.text} overflow-hidden`}
-      onDragOver={(e) => { e.preventDefault(); }}
+      className={`h-screen flex chat-app ${darkMode ? "chat-theme-dark" : "chat-theme-light"}`}
+      onDragOver={(e) => {
+        e.preventDefault();
+      }}
       onDrop={handleDrop}
     >
       <Sidebar />
@@ -188,50 +187,72 @@ export default function Home() {
 
       {/* ─── Chat View ─── */}
       {view.type === "chat" && (
-        <div className="flex-1 flex flex-col min-w-0">
-          {/* Announcements banner */}
+        <div className="chat-view">
           <AnnouncementBanner />
 
-          {/* Header */}
-          <div className="flex items-center gap-3 px-4 pt-3">
+          <header className="chat-topbar">
             <button
-              onClick={() => setSidebarOpen(true)}
-              className={`lg:hidden p-2 rounded-xl hover:bg-[#1e293b] transition ${colors.card}`}
+              onClick={() => {
+                // En móvil el menú siempre abre como drawer expandido; el rail
+                // colapsado es exclusivo de escritorio.
+                setSidebarCollapsed(false);
+                setSidebarOpen(true);
+              }}
+              className="chat-icon-btn chat-menu-btn"
               title="Menú"
+              aria-label="Abrir menú"
             >
               <PanelLeft size={20} />
             </button>
-            <div className="text-center flex-1">
-              {currentProjectId && (
-                <span className="text-xs text-green-400 block">Proyecto activo</span>
-              )}
-              <h1 className="text-2xl lg:text-4xl font-bold text-green-400">
-                Inteligencia Digna
-              </h1>
-              <p className={`text-sm ${colors.muted}`}>by Salud Digna</p>
+
+            <div className="chat-brand-inline">
+              <span className="chat-brand-mark" aria-hidden="true">
+                ID
+              </span>
+              <div>
+                <div className="chat-brand-title">Inteligencia Digna</div>
+                <div className="chat-brand-kicker">by Salud Digna</div>
+              </div>
             </div>
 
-            {/* User menu */}
+            {currentProjectId && <span className="chat-project-pill">Proyecto activo</span>}
+
+            <div className="chat-topbar-spacer" />
+
+            <span className="chat-status-pill">
+              <span className="chat-status-dot" />
+              Asistente en línea
+            </span>
+
             {user ? (
               <div className="relative">
                 <button
-                  onClick={(e) => { e.stopPropagation(); setShowUserMenu(!showUserMenu); }}
-                  className="w-9 h-9 rounded-full overflow-hidden border-2 border-green-500 hover:opacity-80 transition"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowUserMenu(!showUserMenu);
+                  }}
+                  className="chat-user-avatar"
+                  aria-label="Perfil de usuario"
+                  title={user.name || user.email}
                 >
                   {user.picture ? (
-                    <Image src={user.picture} alt="Foto de perfil" width={36} height={36} className="object-cover" />
+                    <Image
+                      src={user.picture}
+                      alt="Foto de perfil"
+                      width={36}
+                      height={36}
+                      className="object-cover"
+                    />
                   ) : (
-                    <div className="w-full h-full bg-green-600 flex items-center justify-center text-sm font-bold text-white">
-                      {(user.name || user.email)[0].toUpperCase()}
-                    </div>
+                    <span>{(user.name || user.email)[0].toUpperCase()}</span>
                   )}
                 </button>
                 {showUserMenu && (
-                  <div className="absolute right-0 mt-2 w-56 bg-[#121824] border border-[#202938] rounded-xl p-2 shadow-xl z-50" onClick={(e) => e.stopPropagation()}>
-                    <p className="px-3 py-1 text-sm text-white font-medium truncate">{user.name || user.email}</p>
-                    <p className="px-3 py-1 text-xs text-gray-400 truncate">{user.email}</p>
-                    <hr className="border-[#202938] my-1" />
-                    <a href="/api/auth/logout" className="block w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-[#1e293b] rounded-lg">
+                  <div className="chat-user-menu" onClick={(e) => e.stopPropagation()}>
+                    <p className="chat-user-menu-name">{user.name || user.email}</p>
+                    <p className="chat-user-menu-email">{user.email}</p>
+                    <div className="chat-user-menu-sep" />
+                    <a href="/api/auth/logout" className="chat-user-menu-logout">
                       Cerrar sesión
                     </a>
                   </div>
@@ -240,64 +261,93 @@ export default function Home() {
             ) : (
               <div className="w-10 lg:hidden" />
             )}
-          </div>
+          </header>
 
-          {/* Empty state */}
-          {messages.length === 0 && (
-            <div className="flex-1 flex items-center justify-center">
-              <div className={`p-6 rounded-2xl text-center mx-4 ${colors.card}`}>
-                <h2>¡Hola! Soy Inteligencia Digna</h2>
-                <p className={`mt-2 ${colors.muted}`}>¿En qué puedo ayudarte hoy?</p>
-              </div>
+          <div ref={scrollRef} onScroll={handleScroll} className="chat-scroll">
+            <div className="chat-messages">
+              {messages.length === 0 ? (
+                <div className="chat-empty">
+                  <div className="chat-empty-mark" aria-hidden="true">
+                    ID
+                  </div>
+                  <h2>¿En qué puedo ayudarte hoy?</h2>
+                  <p>
+                    Pregunta, compara, analiza archivos o pide que genere un documento.
+                  </p>
+                  <div className="chat-suggestions">
+                    {SUGGESTIONS.map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        type="button"
+                        onClick={() => setInput(suggestion)}
+                        className="chat-suggestion"
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                messages.map((m, i) => {
+                  const isLastMessage = i === messages.length - 1;
+                  const isLastAi = m.role === "ai" && isLastMessage && messages.length >= 2;
+
+                  return (
+                    <ChatMessage
+                      key={messageKey(m, i)}
+                      message={m}
+                      index={i}
+                      isLastAi={isLastAi}
+                      streaming={loading && !searching && isLastAi}
+                      onEdit={
+                        m.role === "user"
+                          ? (index, text) => handleEditMessage(index, text, currentProjectId)
+                          : undefined
+                      }
+                      onRegenerate={isLastAi ? () => handleRegenerate(currentProjectId) : undefined}
+                      onExportPdf={
+                        m.role === "ai" && !loading ? () => exportMessageAsPdf(i) : undefined
+                      }
+                      darkMode={darkMode}
+                    />
+                  );
+                })
+              )}
+
+              {searching && (
+                <div className="chat-searching">
+                  <Search size={16} className="chat-searching-icon" aria-hidden="true" />
+                  <span>Buscando en la web…</span>
+                  <span className="chat-search-dots" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                </div>
+              )}
+
+              <div ref={bottomRef} />
             </div>
-          )}
-
-          {/* Messages */}
-          <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-6 max-w-2xl mx-auto w-full">
-            {messages.map((m, i) => (
-              <ChatMessage
-                key={messageKey(m, i)}
-                message={m}
-                index={i}
-                isLastAi={m.role === "ai" && i === messages.length - 1 && messages.length >= 2}
-                onEdit={m.role === "user" ? (index, text) => handleEditMessage(index, text, currentProjectId) : undefined}
-                onRegenerate={
-                  m.role === "ai" && i === messages.length - 1 && messages.length >= 2
-                    ? () => handleRegenerate(currentProjectId)
-                    : undefined
-                }
-                onExportPdf={m.role === "ai" && !loading ? () => exportMessageAsPdf(i) : undefined}
-                darkMode={darkMode}
-              />
-            ))}
-
-            {searching && (
-              <div className="flex items-center gap-2 mb-4 ml-1 text-green-400">
-                <Search size={16} className="animate-pulse" />
-                <span className="text-sm font-medium">Buscando en la web...</span>
-                <span className="flex gap-0.5">
-                  <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                  <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                  <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                </span>
-              </div>
-            )}
-
-            {loading && !searching && (
-              <div className="flex items-center gap-1.5 mb-4 ml-1">
-                <video src="/typing.mp4" autoPlay loop muted playsInline className="h-8" />
-              </div>
-            )}
-
-            <div ref={bottomRef} />
           </div>
 
-          {/* Chat Input */}
+          <button
+            type="button"
+            onClick={handleScrollToBottom}
+            className={`chat-scroll-bottom ${!autoScroll && messages.length > 0 ? "is-visible" : ""}`}
+            aria-label="Ir al final de la conversación"
+            aria-hidden={autoScroll || messages.length === 0}
+            tabIndex={autoScroll || messages.length === 0 ? -1 : 0}
+            title="Ir al final"
+          >
+            <ArrowDown size={16} />
+          </button>
+
           <ChatInput
             input={input}
             images={images}
             files={files.map((f) => ({ name: f.name, size: f.size }))}
             loading={loading || editLoading}
+            darkMode={darkMode}
             onInputChange={setInput}
             onSend={handleSend}
             onStop={handleStop}
@@ -321,18 +371,6 @@ export default function Home() {
       {/* ─── Modals ─── */}
       {renameChatId && <RenameChatModal />}
       {showAddToProjectChatId && <AddToProjectModal />}
-
-      <style jsx>{`
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: ${darkMode ? "#030812" : "#f1f5f9"}; }
-        ::-webkit-scrollbar-thumb { background: ${darkMode ? "#1e293b" : "#cbd5e1"}; border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: ${darkMode ? "#334155" : "#94a3b8"}; }
-        @keyframes bounce {
-          0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
-          40% { opacity: 1; transform: translateY(-4px); }
-        }
-        .animate-bounce { animation: bounce 1.2s infinite; }
-      `}</style>
     </main>
   );
 }

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import ReactMarkdown from "react-markdown";
 import {
   Check,
   Copy,
@@ -19,7 +18,8 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
-import CodeBlock from "./CodeBlock";
+import MarkdownMessage from "./MarkdownMessage";
+import MessageSources from "./MessageSources";
 import type {
   DocumentProgress,
   EditResult,
@@ -31,6 +31,7 @@ type Props = {
   message: Msg;
   index: number;
   isLastAi?: boolean;
+  streaming?: boolean;
   onEdit?: (index: number, newText: string) => void;
   onRegenerate?: () => void;
   onExportPdf?: () => Promise<void> | void;
@@ -77,7 +78,24 @@ const progressPercent = (progress: DocumentProgress): number => {
   }
 };
 
-const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, onExportPdf, darkMode }: Props) => {
+const TypingDots = () => (
+  <div className="chat-typing" role="status" aria-label="Escribiendo respuesta">
+    <span />
+    <span />
+    <span />
+  </div>
+);
+
+const ChatMessage = ({
+  message,
+  index,
+  isLastAi,
+  streaming = false,
+  onEdit,
+  onRegenerate,
+  onExportPdf,
+  darkMode,
+}: Props) => {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.text || "");
   const [copied, setCopied] = useState(false);
@@ -85,6 +103,9 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, onExportP
   const [exporting, setExporting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+
+  const isUser = message.role === "user";
+  const sourceIdPrefix = `msg-${message.id ?? message.localId ?? index}`;
 
   useEffect(() => {
     if (!previewOpen) return;
@@ -95,29 +116,14 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, onExportP
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [previewOpen]);
 
-  const colors = {
-    aiBg: darkMode ? "bg-[#121824]" : "bg-gray-100",
-    userBg: "bg-green-600",
-    text: darkMode ? "text-white" : "text-gray-900",
-    muted: darkMode ? "text-gray-400" : "text-gray-500",
-    fileTagBg: darkMode ? "bg-black/30" : "bg-gray-200",
-    fileTagText: darkMode ? "text-gray-300" : "text-gray-700",
-    buttonBg: darkMode ? "bg-[#1e293b]" : "bg-gray-200",
-    buttonHover: darkMode ? "hover:bg-[#2a3a4f]" : "hover:bg-gray-300",
-    buttonText: darkMode ? "text-gray-400" : "text-gray-600",
-    buttonHoverText: darkMode ? "hover:text-white" : "hover:text-gray-900",
-    textareaBg: darkMode ? "bg-[#1e293b]" : "bg-gray-200",
-    textareaText: darkMode ? "text-white" : "text-gray-900",
-    cancelBtn: darkMode ? "bg-[#1e293b] hover:bg-[#2a3a4f]" : "bg-gray-200 hover:bg-gray-300",
-    saveBtn: "bg-green-600 hover:bg-green-500",
-    editResultBg: darkMode ? "bg-[#0f1a1a]" : "bg-green-50",
-    editResultBorder: darkMode ? "border-green-800/40" : "border-green-300",
-  };
-
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(message.text || "");
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    try {
+      await navigator.clipboard.writeText(message.text || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setActionError("No se pudo copiar el mensaje.");
+    }
   };
 
   const handleSaveEdit = () => {
@@ -160,36 +166,37 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, onExportP
   };
 
   const renderEditResult = (editResult: EditResult) => {
-    const formatIcon = editResult.format === "xlsx"
-      ? <FileSpreadsheet size={16} />
-      : editResult.format === "docx"
-        ? <FileText size={16} />
-        : <FileType2 size={16} />;
+    const formatIcon =
+      editResult.format === "xlsx" ? (
+        <FileSpreadsheet size={16} />
+      ) : editResult.format === "docx" ? (
+        <FileText size={16} />
+      ) : (
+        <FileType2 size={16} />
+      );
 
-    const formatLabel = editResult.format === "xlsx" ? "Excel"
-      : editResult.format === "docx" ? "Word"
-        : "PDF";
+    const formatLabel =
+      editResult.format === "xlsx" ? "Excel" : editResult.format === "docx" ? "Word" : "PDF";
 
     return (
-      <div className={`mt-3 rounded-lg border ${colors.editResultBorder} ${colors.editResultBg} p-3`}>
-        <div className="flex items-center gap-2 mb-2">
+      <div className="chat-edit-result">
+        <div className="chat-edit-result-head">
           {formatIcon}
-          <span className="text-sm font-medium">
-            {editResult.success ? "✅ Documento modificado" : "❌ Error al modificar"}
-          </span>
+          <span>{editResult.success ? "Documento modificado" : "Error al modificar"}</span>
         </div>
-        <p className="text-xs text-gray-500 mb-2">
+        <p className="chat-edit-result-detail">
           {editResult.changesCount > 0
             ? `${editResult.changesCount} cambio(s) aplicado(s) a ${editResult.originalName}`
             : editResult.error || "No se realizaron cambios"}
         </p>
-        {(editResult.success && (editResult.downloadUrl || editResult.dataUri)) && (
+        {editResult.success && (editResult.downloadUrl || editResult.dataUri) && (
           <button
+            type="button"
             onClick={() => handleDownloadEditResult(editResult)}
             disabled={downloading}
-            className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs transition ${colors.buttonBg} ${colors.buttonHover}`}
+            className="chat-doc-button"
           >
-            <Download size={14} className={downloading ? "animate-bounce" : ""} />
+            <Download size={14} className={downloading ? "animate-spin" : ""} />
             Descargar {formatLabel}
           </button>
         )}
@@ -214,105 +221,83 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, onExportP
     }
   };
 
-  const renderDocumentProgress = (progress: DocumentProgress) => (
-    <div
-      className={`mt-1 rounded-xl border p-3 ${colors.editResultBorder} ${colors.editResultBg}`}
-      role="status"
-      aria-live="polite"
-    >
-      <div className="flex items-center gap-2">
-        <Loader2 size={16} className="shrink-0 animate-spin text-green-500" />
-        <span className="text-sm font-medium">{progressLabel(progress.stage)}</span>
-        <span className={`ml-auto text-xs ${colors.muted}`}>
-          {progressPercent(progress)}%
-        </span>
+  const renderDocumentProgress = (progress: DocumentProgress) => {
+    const percent = progressPercent(progress);
+    return (
+      <div className="chat-progress" role="status" aria-live="polite">
+        <div className="chat-progress-head">
+          <Loader2 size={16} className="animate-spin" />
+          <span>{progressLabel(progress.stage)}</span>
+          <span className="chat-progress-percent">{percent}%</span>
+        </div>
+        <p className="chat-progress-note">
+          Documento de hasta 10 páginas. Esto puede tardar unos segundos.
+        </p>
+        {progress.summary && <p className="chat-progress-summary">{progress.summary}</p>}
+        <div className="chat-progress-bar">
+          <div className="chat-progress-fill" style={{ width: `${percent}%` }} />
+        </div>
       </div>
-      <p className={`mt-1 text-xs ${colors.muted}`}>
-        Documento de hasta 10 páginas. Esto puede tardar unos segundos.
-      </p>
-      {progress.summary && (
-        <p className={`mt-2 line-clamp-3 text-xs ${colors.text}`}>{progress.summary}</p>
-      )}
-      <div className={`mt-3 h-1.5 w-full overflow-hidden rounded-full ${darkMode ? "bg-[#1e293b]" : "bg-green-200"}`}>
-        <div
-          className="h-full rounded-full bg-green-500 transition-all duration-500"
-          style={{ width: `${progressPercent(progress)}%` }}
-        />
-      </div>
-    </div>
-  );
+    );
+  };
 
   const renderDocumentCard = (doc: GeneratedDocumentMeta) => {
-    const formatIcon = doc.format === "xlsx"
-      ? <FileSpreadsheet size={18} />
-      : doc.format === "docx"
-        ? <FileText size={18} />
-        : <FileType2 size={18} />;
-    const formatLabel = doc.format === "xlsx" ? "Excel" : doc.format === "docx" ? "Word" : "PDF";
-    const generatedLabel = doc.format === "pdf"
-      ? "PDF generado"
-      : doc.format === "docx"
-        ? "Documento Word generado"
-        : "Hoja de cálculo generada";
+    const formatIcon =
+      doc.format === "xlsx" ? (
+        <FileSpreadsheet size={18} />
+      ) : doc.format === "docx" ? (
+        <FileText size={18} />
+      ) : (
+        <FileType2 size={18} />
+      );
+    const formatLabel =
+      doc.format === "xlsx" ? "Excel" : doc.format === "docx" ? "Word" : "PDF";
+    const generatedLabel =
+      doc.format === "pdf"
+        ? "PDF generado"
+        : doc.format === "docx"
+          ? "Documento Word generado"
+          : "Hoja de cálculo generada";
     const details = [
       formatLabel,
       doc.page_count ? `${doc.page_count} página${doc.page_count === 1 ? "" : "s"}` : null,
       doc.size_bytes ? formatBytes(doc.size_bytes) : null,
-    ].filter(Boolean).join(" · ");
+    ]
+      .filter(Boolean)
+      .join(" · ");
 
     return (
-      <div
-        className={`mt-3 rounded-xl border p-3 ${colors.editResultBorder} ${colors.editResultBg}`}
-      >
-        <div className="flex items-start gap-3">
-          <div className={`rounded-lg p-2 ${darkMode ? "bg-green-500/10 text-green-400" : "bg-green-100 text-green-700"}`}>
-            {formatIcon}
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold">{generatedLabel}</p>
-            <p className={`truncate text-sm ${colors.text}`}>{doc.title || doc.filename}</p>
-            <p className={`mt-0.5 truncate text-xs ${colors.muted}`}>
+      <div className="chat-doc-card">
+        <div className="chat-doc-top">
+          <div className="chat-doc-icon">{formatIcon}</div>
+          <div className="chat-doc-info">
+            <p className="chat-doc-title">{generatedLabel}</p>
+            <p className="chat-doc-name">{doc.title || doc.filename}</p>
+            <p className="chat-doc-detail">
               {doc.filename} · {details}
             </p>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="chat-doc-actions">
           {doc.format === "pdf" && (
-            <button
-              onClick={() => setPreviewOpen(true)}
-              className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
-            >
+            <button type="button" onClick={() => setPreviewOpen(true)} className="chat-doc-button">
               <Eye size={14} />
               Ver
             </button>
           )}
-          <a
-            href={doc.downloadUrl}
-            download={doc.filename}
-            className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
-          >
+          <a href={doc.downloadUrl} download={doc.filename} className="chat-doc-button">
             <Download size={14} />
             Descargar
           </a>
           {doc.docxUrl && (
-            <a
-              href={doc.docxUrl}
-              download
-              className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
-            >
+            <a href={doc.docxUrl} download className="chat-doc-button">
               <FileText size={14} />
               Word
             </a>
           )}
         </div>
         {(doc.truncated || doc.page_limit_exceeded || doc.partial) && (
-          <p
-            className={`mt-3 rounded-md px-2 py-1.5 text-xs ${
-              darkMode
-                ? "bg-amber-500/10 text-amber-300"
-                : "bg-amber-50 text-amber-800"
-            }`}
-          >
+          <p className="chat-doc-warning">
             {doc.timed_out
               ? `La generación se detuvo por tiempo. El documento contiene lo que se alcanzó a generar. Puedes pedir "continúa el documento" para terminar lo que falta.`
               : doc.partial
@@ -326,174 +311,195 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, onExportP
     );
   };
 
+  const renderAttachments = () => (
+    <>
+      {message.files && message.files.length > 0 && (
+        <div className="chat-attachments">
+          {message.files.map((file, idx) => (
+            <span key={`file-${idx}`} className="chat-file-chip">
+              <Paperclip size={12} aria-hidden="true" />
+              {file.name}
+            </span>
+          ))}
+        </div>
+      )}
+      {message.images && message.images.length > 0 && (
+        <div className="chat-message-images">
+          {message.images.map((img, idx) => (
+            <Image
+              key={`img-${idx}`}
+              src={img}
+              alt="Imagen adjunta al mensaje"
+              width={320}
+              height={200}
+              className="chat-message-image"
+            />
+          ))}
+        </div>
+      )}
+    </>
+  );
+
+  const renderContent = () => {
+    if (message.documentProgress) return renderDocumentProgress(message.documentProgress);
+    if (message.editResult && !message.document) return renderEditResult(message.editResult);
+
+    if (isUser) {
+      return (
+        <div className="chat-user-bubble">
+          {message.text && (
+            <MarkdownMessage
+              text={message.text}
+              sourceIdPrefix={sourceIdPrefix}
+              darkMode={darkMode}
+              compact
+            />
+          )}
+          {renderAttachments()}
+        </div>
+      );
+    }
+
+    return (
+      <div className="chat-assistant-body">
+        {message.text ? (
+          <MarkdownMessage
+            text={message.text}
+            sources={message.sources}
+            sourceIdPrefix={sourceIdPrefix}
+            darkMode={darkMode}
+            showCursor={streaming}
+          />
+        ) : streaming ? (
+          <TypingDots />
+        ) : null}
+
+        {message.document && renderDocumentCard(message.document)}
+
+        {message.sources && message.sources.length > 0 && (
+          <MessageSources sources={message.sources} idPrefix={sourceIdPrefix} />
+        )}
+
+        {renderAttachments()}
+      </div>
+    );
+  };
+
+  const showActions =
+    !editing &&
+    !streaming &&
+    !message.documentProgress &&
+    (!message.editResult || Boolean(message.document));
+
   return (
-    <div className={`group mb-4 ${message.role === "user" ? "text-right" : ""}`}>
-      <div className={`relative inline-block max-w-[85%] ${message.role === "user" ? "" : "text-left"}`}>
+    <article
+      className={`chat-message ${isUser ? "chat-message-user" : "chat-message-ai"} ${
+        darkMode ? "chat-theme-dark" : "chat-theme-light"
+      }`}
+    >
+      {!isUser && (
+        <div className="chat-avatar" aria-hidden="true">
+          ID
+        </div>
+      )}
+
+      <div className="chat-message-content">
+        {!isUser && (
+          <div className="chat-assistant-meta">
+            <span className="chat-assistant-name">Inteligencia Digna</span>
+            <span className="chat-ai-badge">IA</span>
+            {streaming && <span className="chat-assistant-status">escribiendo…</span>}
+          </div>
+        )}
+
         {editing ? (
-          <div className={`p-3 rounded-xl ${colors.aiBg}`}>
+          <div className="chat-edit-box">
             <textarea
               value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-              className={`w-full p-2 rounded-lg resize-none min-h-[80px] outline-none ${colors.textareaBg} ${colors.textareaText}`}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
+              onChange={(event) => setEditValue(event.target.value)}
+              className="chat-edit-textarea"
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
                   handleSaveEdit();
                 }
-                if (e.key === "Escape") handleCancelEdit();
+                if (event.key === "Escape") handleCancelEdit();
               }}
               autoFocus
+              aria-label="Editar mensaje"
             />
-            <div className="flex gap-2 mt-2 justify-end">
-              <button
-                onClick={handleCancelEdit}
-                className={`px-3 py-1 rounded-lg text-sm transition ${colors.cancelBtn}`}
-              >
+            <div className="chat-edit-actions">
+              <button type="button" onClick={handleCancelEdit} className="chat-edit-cancel">
                 Cancelar
               </button>
-              <button
-                onClick={handleSaveEdit}
-                className={`px-3 py-1 rounded-lg text-sm transition ${colors.saveBtn}`}
-              >
+              <button type="button" onClick={handleSaveEdit} className="chat-edit-save">
                 Guardar
               </button>
             </div>
           </div>
         ) : (
           <>
-            <div
-              className={`p-3 rounded-xl ${
-                message.role === "user" ? colors.userBg : colors.aiBg
-              }`}
-            >
-              {message.documentProgress ? (
-                renderDocumentProgress(message.documentProgress)
-              ) : message.editResult && !message.document ? (
-                renderEditResult(message.editResult)
-              ) : (
-                <>
-                  <ReactMarkdown
-                    components={{
-                      code: CodeBlock,
-                      a: ({ href, children }) => (
-                        <a
-                          href={href}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-green-400 hover:text-green-300 underline decoration-green-400/30 hover:decoration-green-400 transition-all"
-                        >
-                          {children}
-                        </a>
-                      ),
-                    }}
-                  >
-                    {message.text || ""}
-                  </ReactMarkdown>
-                  {message.document && renderDocumentCard(message.document)}
-                  {message.sources && message.sources.length > 0 && (
-                    <div className={`mt-4 pt-3 border-t ${darkMode ? "border-[#202938]" : "border-gray-300"}`}>
-                      <p className={`text-xs font-semibold mb-2 ${colors.muted}`}>
-                        Fuentes consultadas:
-                      </p>
-                      <div className="space-y-1.5">
-                        {message.sources.map((src, i) => (
-                          <a
-                            key={i}
-                            href={src.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className={`group flex items-center gap-2 rounded-lg px-3 py-2 text-xs transition-all ${colors.fileTagBg} ${colors.fileTagText} hover:bg-green-600/20 hover:text-green-400 hover:border-green-500/30 border border-transparent`}
-                          >
-                            <ExternalLink size={12} className="shrink-0 text-green-500 opacity-0 group-hover:opacity-100 transition-opacity" />
-                            <span className="font-medium text-green-500 shrink-0">[{i + 1}]</span>
-                            <span className="truncate">{src.title}</span>
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {message.files && message.files.length > 0 && (
-                    <div className={`flex flex-wrap gap-1.5 mt-2 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                      {message.files.map((f, idx) => (
-                        <span
-                          key={`file-${idx}`}
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md ${colors.fileTagBg} ${colors.fileTagText}`}
-                        >
-                          <Paperclip size={12} className="shrink-0" />
-                          {f.name}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  {message.images?.map((img, idx) => (
-                    <Image key={`img-${idx}`} src={img} alt="Imagen adjunta al mensaje" width={320} height={160} className="mt-2 max-h-40 w-auto rounded-lg" />
-                  ))}
-                </>
-              )}
-            </div>
+            {renderContent()}
 
-            {(!message.editResult || message.document) && (
-              <div
-                className={`flex flex-wrap gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity ${
-                  message.role === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
-                {message.role === "user" && onEdit && (
+            {showActions && (
+              <div className="chat-actions">
+                {isUser && onEdit && (
                   <button
+                    type="button"
                     onClick={() => {
                       setEditValue(message.text || "");
                       setEditing(true);
                     }}
-                    className={`text-xs px-2 py-1 rounded transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+                    className="chat-action-btn"
                     title="Editar mensaje"
+                    aria-label="Editar mensaje"
                   >
-                    <Pencil size={14} />
+                    <Pencil size={15} />
                   </button>
                 )}
-                {message.role === "ai" && isLastAi && onRegenerate && !message.document && !message.documentProgress && (
+
+                {!isUser && isLastAi && onRegenerate && !message.document && (
                   <button
+                    type="button"
                     onClick={onRegenerate}
-                    className={`text-xs px-2 py-1 rounded transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+                    className="chat-action-btn"
                     title="Regenerar respuesta"
+                    aria-label="Regenerar respuesta"
                   >
-                    <RefreshCw size={14} />
+                    <RefreshCw size={15} />
                   </button>
                 )}
-                {message.role === "ai" && !message.document && !message.documentProgress && onExportPdf && (
+
+                {!isUser && onExportPdf && !message.document && (
                   <button
+                    type="button"
                     onClick={handleExportPdf}
                     disabled={exporting}
-                    className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded transition disabled:opacity-60 ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
-                    title="Exportar esta respuesta a PDF"
+                    className="chat-action-btn"
+                    title="Exportar a PDF"
+                    aria-label="Exportar a PDF"
                   >
-                    {exporting ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
-                    <span>Exportar PDF</span>
+                    {exporting ? <Loader2 size={15} className="animate-spin" /> : <FileDown size={15} />}
                   </button>
                 )}
+
                 <button
+                  type="button"
                   onClick={handleCopy}
-                  className={`text-xs px-2 py-1 rounded transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+                  className="chat-action-btn"
                   title="Copiar mensaje"
+                  aria-label="Copiar mensaje"
                 >
-                  {copied ? <Check size={14} /> : <Copy size={14} />}
+                  {copied ? <Check size={15} /> : <Copy size={15} />}
                 </button>
               </div>
             )}
 
             {actionError && (
-              <div
-                className={`mt-1 flex flex-wrap items-center gap-2 text-xs ${
-                  darkMode ? "text-red-400" : "text-red-600"
-                }`}
-                role="alert"
-              >
+              <div className="chat-action-error" role="alert">
                 <span>{actionError}</span>
-                {onExportPdf && !message.document && !message.documentProgress && (
-                  <button
-                    onClick={handleExportPdf}
-                    disabled={exporting}
-                    className="underline underline-offset-2 hover:no-underline disabled:opacity-60"
-                  >
+                {onExportPdf && !message.document && !isUser && (
+                  <button type="button" onClick={handleExportPdf} disabled={exporting}>
                     Reintentar
                   </button>
                 )}
@@ -505,7 +511,7 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, onExportP
 
       {previewOpen && message.document && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 text-left sm:p-6"
+          className="chat-modal-backdrop"
           role="dialog"
           aria-modal="true"
           aria-label={`Vista previa de ${message.document.title || message.document.filename}`}
@@ -513,15 +519,16 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, onExportP
             if (event.target === event.currentTarget) setPreviewOpen(false);
           }}
         >
-          <div className={`flex h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl shadow-2xl ${darkMode ? "bg-[#0b1220]" : "bg-white"}`}>
-            <div className={`flex items-center gap-3 border-b px-4 py-3 ${darkMode ? "border-[#202938]" : "border-gray-200"}`}>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold">{message.document.title || "Documento"}</p>
-                <p className={`truncate text-xs ${colors.muted}`}>{message.document.filename}</p>
+          <div className="chat-modal">
+            <div className="chat-modal-head">
+              <div className="chat-modal-title-wrap">
+                <p className="chat-modal-title">{message.document.title || "Documento"}</p>
+                <p className="chat-modal-subtitle">{message.document.filename}</p>
               </div>
               <button
+                type="button"
                 onClick={() => setPreviewOpen(false)}
-                className={`rounded p-1.5 transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+                className="chat-action-btn"
                 title="Cerrar vista previa"
                 aria-label="Cerrar vista previa"
               >
@@ -531,13 +538,13 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, onExportP
             <iframe
               src={message.document.previewUrl}
               title={`Vista previa de ${message.document.title || message.document.filename}`}
-              className="min-h-0 w-full flex-1 bg-white"
+              className="chat-modal-iframe"
             />
-            <div className={`flex flex-wrap gap-2 border-t px-4 py-3 ${darkMode ? "border-[#202938]" : "border-gray-200"}`}>
+            <div className="chat-modal-actions">
               <a
                 href={message.document.downloadUrl}
                 download={message.document.filename}
-                className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+                className="chat-doc-button"
               >
                 <Download size={14} />
                 Descargar
@@ -546,7 +553,7 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, onExportP
                 href={message.document.previewUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs transition ${colors.buttonBg} ${colors.buttonHover} ${colors.buttonText} ${colors.buttonHoverText}`}
+                className="chat-doc-button"
               >
                 <ExternalLink size={14} />
                 Abrir en pestaña
@@ -555,7 +562,7 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, onExportP
           </div>
         </div>
       )}
-    </div>
+    </article>
   );
 };
 

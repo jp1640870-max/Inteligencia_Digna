@@ -405,6 +405,7 @@ async function doStream(
   chatId: string,
   onFullReply: (reply: string) => void,
   kbSources?: KbSource[],
+  webSources?: SearchResult[],
   signal?: AbortSignal,
 ): Promise<void> {
   let fullReply = "";
@@ -457,7 +458,17 @@ async function doStream(
   } finally {
     fullReply = fullReply.trim();
     if (fullReply && fullReply !== "No se pudo responder.") {
-      try { await addMessage(chatId, "assistant", fullReply, undefined, undefined, kbSources); } catch {}
+      try {
+        await addMessage(
+          chatId,
+          "assistant",
+          fullReply,
+          undefined,
+          undefined,
+          kbSources,
+          webSources,
+        );
+      } catch {}
       console.log("💾 DB guardado:", fullReply.length, "chars");
     }
     onFullReply(fullReply);
@@ -923,7 +934,17 @@ ${project.instructions}`;
     const { readable, writable } = new TransformStream();
     const writer = writable.getWriter();
 
-    void doStream(model, chatMessages, writer, encoder, chatId, () => {}, kbSources, req.signal);
+    void doStream(
+      model,
+      chatMessages,
+      writer,
+      encoder,
+      chatId,
+      () => {},
+      kbSources,
+      searchSources,
+      req.signal,
+    );
 
     // Wrap readable in an outer stream that appends sources at the end
     const bodyStream = new ReadableStream({

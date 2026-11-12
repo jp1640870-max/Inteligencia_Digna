@@ -1,57 +1,57 @@
-//Este archivo es un componente de React, un bloque de código con resaltado de sintaxis 
-// y funcionalidad de copia al portapapeles.
-
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
+import { Check, Copy } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 type CodeBlockProps = {
-  inline?: boolean;
-  className?: string;
-  children?: ReactNode;
+  code: string;
+  language?: string;
 };
 
-const CodeBlock = ({ inline, className, children }: CodeBlockProps) => {
-  const match = /language-(\w+)/.exec(className || "");
-  const code = String(children).trim();
+const CodeBlock = ({ code, language }: CodeBlockProps) => {
   const [copied, setCopied] = useState(false);
+  const normalizedLanguage = language?.toLowerCase() || "text";
 
-  const copy = () => {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard no disponible */
+    }
   };
 
-  if (inline) {
-    return (
-      <code className="bg-[#1e293b] px-1.5 py-0.5 rounded text-green-300">
-        {code}
-      </code>
-    );
-  }
-
   return (
-    <div className="relative mt-4 rounded-xl overflow-hidden border border-[#1f2632]">
-      <div className="flex justify-between items-center px-3 py-1 bg-[#0d1117]">
-        <span className="text-xs text-gray-400">
-          {match?.[1] || "code"}
-        </span>
+    <div className="chat-code-block">
+      <div className="chat-code-head">
+        <span className="chat-code-lang">{normalizedLanguage}</span>
         <button
+          type="button"
           onClick={copy}
-          className={`text-xs px-2 py-1 rounded transition ${
-            copied ? "bg-green-500" : "bg-[#1f2937] hover:bg-[#374151]"
-          }`}
+          className={`chat-code-copy ${copied ? "is-copied" : ""}`}
+          aria-label={copied ? "Código copiado" : "Copiar código"}
         >
-          {copied ? "Copiado ✅" : "Copiar"}
+          {copied ? <Check size={13} /> : <Copy size={13} />}
+          <span>{copied ? "Copiado" : "Copiar"}</span>
         </button>
       </div>
       <SyntaxHighlighter
         style={vscDarkPlus}
-        language={match?.[1] || "javascript"}
+        language={normalizedLanguage}
         PreTag="div"
-        customStyle={{ margin: 0, padding: "16px", background: "#0d1117" }}
+        customStyle={{
+          margin: 0,
+          padding: "14px 16px",
+          background: "#0a1018",
+          fontSize: "13px",
+          lineHeight: 1.6,
+        }}
+        codeTagProps={{
+          style: { fontFamily: "var(--font-geist-mono), ui-monospace, monospace" },
+        }}
       >
         {code}
       </SyntaxHighlighter>

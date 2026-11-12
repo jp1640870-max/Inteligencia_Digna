@@ -186,6 +186,7 @@ export default function Sidebar() {
   const handleDoubleClickProject = (projectId: string) => {
     setExpandedProjectId(null);
     setView({ type: "project", id: projectId });
+    setSidebarOpen(false);
   };
 
   const handleOpenChat = (chat: { id: string; title: string; messages: Msg[] }) => {
@@ -197,6 +198,7 @@ export default function Sidebar() {
     setView({ type: "chat" });
     setCurrentProjectId(projectId);
     openChat(chat);
+    setSidebarOpen(false);
     window.history.replaceState(null, "", `/?projectId=${projectId}`);
   };
 
@@ -249,7 +251,20 @@ export default function Sidebar() {
         <div className="flex-1 flex justify-center">
           <NextImage src="/LogoSaludDigna.svg" className="w-24 h-24" alt="Logo" width={96} height={96} />
         </div>
-        <button onClick={toggleCollapse} className={`p-1.5 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition shrink-0`} title="Colapsar sidebar">
+        <button
+          onClick={() => setSidebarOpen(false)}
+          className={`lg:hidden p-1.5 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition shrink-0`}
+          title="Cerrar menú"
+          aria-label="Cerrar menú"
+        >
+          <X size={18} />
+        </button>
+        <button
+          onClick={toggleCollapse}
+          className={`hidden lg:flex p-1.5 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition shrink-0`}
+          title="Colapsar sidebar"
+          aria-label="Colapsar sidebar"
+        >
           <PanelLeftClose size={18} />
         </button>
       </div>
@@ -468,7 +483,7 @@ export default function Sidebar() {
 
   return (
     <>
-      {sidebarOpen && !collapsed && !sidebarHidden && (
+      {sidebarOpen && !sidebarHidden && (
         <div className={`fixed inset-0 ${colors.overlay} z-30 lg:hidden`} onClick={() => setSidebarOpen(false)} />
       )}
 
