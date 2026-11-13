@@ -147,32 +147,32 @@ export default function ProjectDetailView({ projectId, onBack, onOpenChat, onPro
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <p className="text-gray-400">Cargando...</p>
+      <div className="flex flex-1 items-center justify-center">
+        <p className="text-[var(--chat-muted)]">Cargando...</p>
       </div>
     );
   }
 
   if (!project) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <p className="text-gray-400">Proyecto no encontrado</p>
+      <div className="flex flex-1 items-center justify-center">
+        <p className="text-[var(--chat-muted)]">Proyecto no encontrado</p>
       </div>
     );
   }
 
   return (
     <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-      <div className="max-w-4xl mx-auto p-6 lg:p-8 w-full">
+      <div className="max-w-4xl mx-auto w-full px-6 pb-6 pt-16 lg:px-8 lg:pb-8 lg:pt-20">
         <button
           onClick={onBack}
-          className="inline-flex items-center gap-2 text-gray-400 hover:text-white transition-colors mb-6"
+          className="mb-6 inline-flex items-center gap-2 text-[var(--chat-muted)] transition-colors hover:text-[var(--chat-text)]"
         >
-          <ArrowLeft size={18} />
+          <ArrowLeft size={18} strokeWidth={1.8} />
           Volver a proyectos
         </button>
 
-        <div className="flex items-start justify-between mb-8">
+        <div className="mb-8 flex items-start justify-between gap-4">
           <div className="flex-1">
             {editingName ? (
               <div className="flex items-center gap-2">
@@ -181,64 +181,64 @@ export default function ProjectDetailView({ projectId, onBack, onOpenChat, onPro
                   onChange={(e) => setEditName(e.target.value)}
                   onBlur={handleRename}
                   onKeyDown={(e) => { if (e.key === "Enter") handleRename(); if (e.key === "Escape") setEditingName(false) }}
-                  className="text-3xl font-bold bg-[#121824] border border-green-500 rounded-xl px-3 py-2 outline-none w-full max-w-md text-white"
+                  className="surface-field w-full max-w-md rounded-xl px-3 py-2 text-3xl font-bold outline-none"
                   autoFocus
                 />
               </div>
             ) : (
               <h1
-                className="text-3xl font-bold text-green-400 flex items-center gap-3 cursor-pointer hover:text-green-300 transition-colors"
+                className="flex cursor-pointer items-center gap-3 text-3xl font-bold text-green-400 transition-colors hover:text-green-300"
                 onClick={() => setEditingName(true)}
               >
                 <Folder size={28} />
                 {project.name}
               </h1>
             )}
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="mt-1 text-sm text-[var(--chat-muted)]">
               {project.chats.length} {(project.chats.length as number) === 1 ? "chat" : "chats"}
             </p>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <button
               onClick={() => setShowNewChat(true)}
-              className="bg-green-500 hover:bg-green-600 px-4 py-2 rounded-xl flex items-center gap-2 text-sm transition-colors"
+              className="accent-button flex items-center gap-2 rounded-xl px-4 py-2 text-sm transition-colors"
             >
               <Plus size={16} /> Nuevo chat
             </button>
             <button
               onClick={openAddChatModal}
-              className="bg-[#121824] border border-[#202938] hover:bg-[#1e293b] px-4 py-2 rounded-xl flex items-center gap-2 text-sm transition-colors"
+              className="modal-secondary-button flex items-center gap-2 rounded-xl px-4 py-2 text-sm transition-colors"
             >
               <Plus size={16} /> Agregar chat
             </button>
             <button
               onClick={() => setShowDeleteModal(true)}
-              className="bg-red-500/10 border border-red-500 text-red-400 hover:bg-red-500/20 px-4 py-2 rounded-xl flex items-center gap-2 text-sm transition-colors"
+              className="danger-soft-button flex items-center gap-2 rounded-xl px-4 py-2 text-sm transition-colors"
             >
               <Trash2 size={16} /> Eliminar
             </button>
           </div>
         </div>
 
-        <div className="bg-[#121824] border border-[#202938] rounded-2xl p-6 mb-8">
-          <label className="block text-sm font-medium text-gray-300 mb-2">
+        <div className="surface-card mb-8 rounded-2xl p-6">
+          <label className="mb-2 block text-sm font-medium text-[var(--chat-text)]">
             Instrucciones del proyecto (contexto compartido)
           </label>
-          <p className="text-xs text-gray-500 mb-3">
+          <p className="mb-3 text-xs text-[var(--chat-muted)]">
             Este texto se inyectará como contexto del sistema en todos los chats de este proyecto.
           </p>
           <textarea
             value={editInstructions}
             onChange={(e) => setEditInstructions(e.target.value)}
             rows={5}
-            className="w-full bg-[#030812] border border-[#202938] rounded-xl px-4 py-3 text-white outline-none focus:border-green-500 transition-colors resize-y text-sm"
+            className="surface-field w-full resize-y rounded-xl px-4 py-3 text-sm outline-none transition-colors"
             placeholder="Escribe las instrucciones o contexto compartido para los chats de este proyecto..."
           />
           <button
             onClick={handleSaveInstructions}
             disabled={savingInstructions}
-            className="mt-3 bg-green-500 hover:bg-green-600 disabled:opacity-50 px-4 py-2 rounded-xl flex items-center gap-2 text-sm transition-colors"
+            className="accent-button mt-3 flex items-center gap-2 rounded-xl px-4 py-2 text-sm transition-colors"
           >
             <Save size={16} />
             {savingInstructions ? "Guardando..." : "Guardar instrucciones"}
@@ -246,13 +246,13 @@ export default function ProjectDetailView({ projectId, onBack, onOpenChat, onPro
         </div>
 
         <div>
-          <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+          <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold">
             <MessageSquare size={20} />
             Chats del proyecto
           </h2>
 
           {project.chats.length === 0 ? (
-            <p className="text-gray-500 text-sm">
+            <p className="text-sm text-[var(--chat-muted)]">
               No hay chats en este proyecto. Agrega un chat existente o crea uno nuevo.
             </p>
           ) : (
@@ -261,16 +261,16 @@ export default function ProjectDetailView({ projectId, onBack, onOpenChat, onPro
                 <div key={chat.id} className="group flex items-center gap-2">
                   <button
                     onClick={() => onOpenChat(chat, project.id)}
-                    className="flex-1 flex items-center gap-3 bg-[#121824] border border-[#202938] hover:border-green-500/50 rounded-xl px-4 py-3 transition-colors text-left"
+                    className="surface-card flex flex-1 items-center gap-3 rounded-xl px-4 py-3 text-left transition-colors hover:border-[var(--chat-accent-border)]"
                   >
-                    <MessageSquare size={16} className="text-gray-400 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate text-white">{chat.title}</p>
+                    <MessageSquare size={16} className="shrink-0 text-[var(--chat-muted)]" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-[var(--chat-text)]">{chat.title}</p>
                     </div>
                   </button>
                   <button
                     onClick={() => setDeleteChatTarget(chat)}
-                    className="opacity-0 group-hover:opacity-100 p-2 text-gray-400 hover:text-red-400 transition-all"
+                    className="p-2 text-[var(--chat-muted)] opacity-0 transition-all hover:text-red-400 group-hover:opacity-100"
                     title="Quitar del proyecto"
                   >
                     <X size={16} />
@@ -284,22 +284,22 @@ export default function ProjectDetailView({ projectId, onBack, onOpenChat, onPro
 
       {/* Delete project modal */}
       {showDeleteModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowDeleteModal(false)}>
-          <div className="bg-[#121824] border border-[#202938] rounded-2xl p-6 w-96" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold mb-2 text-white">Eliminar proyecto</h3>
-            <p className="text-sm text-gray-400 mb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowDeleteModal(false)}>
+          <div className="surface-modal w-full max-w-96 rounded-2xl p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-2 text-lg font-semibold text-[var(--chat-text)]">Eliminar proyecto</h3>
+            <p className="mb-4 text-sm text-[var(--chat-muted)]">
               ¿Estás seguro de eliminar <strong>&quot;{project.name}&quot;</strong>? Los chats asociados volverán a estar disponibles en la lista general.
             </p>
             <div className="space-y-2">
               <button
                 onClick={handleDelete}
-                className="w-full py-3 px-4 rounded-xl bg-red-500/10 border border-red-500 text-sm text-red-400 hover:bg-red-500/20 transition-colors"
+                className="danger-soft-button w-full rounded-xl px-4 py-3 text-sm transition-colors"
               >
                 Sí, eliminar proyecto
               </button>
               <button
                 onClick={() => setShowDeleteModal(false)}
-                className="w-full py-2 text-sm text-gray-500 hover:underline"
+                className="w-full py-2 text-sm text-[var(--chat-muted)] hover:underline"
               >
                 Cancelar
               </button>
@@ -310,30 +310,30 @@ export default function ProjectDetailView({ projectId, onBack, onOpenChat, onPro
 
       {/* Delete chat modal */}
       {deleteChatTarget && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setDeleteChatTarget(null)}>
-          <div className="bg-[#121824] border border-[#202938] rounded-2xl p-6 w-96" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold mb-2 text-white">&quot;{deleteChatTarget.title}&quot;</h3>
-            <p className="text-sm text-gray-400 mb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setDeleteChatTarget(null)}>
+          <div className="surface-modal w-full max-w-96 rounded-2xl p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-2 text-lg font-semibold text-[var(--chat-text)]">&quot;{deleteChatTarget.title}&quot;</h3>
+            <p className="mb-4 text-sm text-[var(--chat-muted)]">
               ¿Qué deseas hacer con este chat?
             </p>
             <div className="space-y-2">
               <button
                 onClick={() => handleRemoveChat(deleteChatTarget.id)}
-                className="w-full py-3 px-4 rounded-xl bg-[#030812] border border-[#202938] text-sm hover:bg-[#1e293b] transition-colors text-left"
+                className="surface-field w-full rounded-xl px-4 py-3 text-left text-sm transition-colors hover:bg-[var(--sidebar-hover)]"
               >
                 Quitar del proyecto
-                <span className="block text-xs text-gray-500">El chat vuelve a estar disponible</span>
+                <span className="block text-xs text-[var(--chat-muted)]">El chat vuelve a estar disponible</span>
               </button>
               <button
                 onClick={() => handleDeleteChatPermanent(deleteChatTarget.id)}
-                className="w-full py-3 px-4 rounded-xl bg-red-500/10 border border-red-500 text-sm text-red-400 hover:bg-red-500/20 transition-colors text-left"
+                className="danger-soft-button w-full rounded-xl px-4 py-3 text-left text-sm transition-colors"
               >
                 Eliminar conversación permanentemente
-                <span className="block text-xs text-red-500/70">Se borrarán todos los mensajes</span>
+                <span className="block text-xs text-[var(--chat-danger)] opacity-70">Se borrarán todos los mensajes</span>
               </button>
               <button
                 onClick={() => setDeleteChatTarget(null)}
-                className="w-full py-2 text-sm text-gray-500 hover:underline"
+                className="w-full py-2 text-sm text-[var(--chat-muted)] hover:underline"
               >
                 Cancelar
               </button>
@@ -344,46 +344,46 @@ export default function ProjectDetailView({ projectId, onBack, onOpenChat, onPro
 
       {/* Add chat modal */}
       {showAddChatModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowAddChatModal(false)}>
-          <div className="bg-[#121824] border border-[#202938] rounded-2xl p-6 w-96 max-h-[70vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold mb-4 text-white">Agregar chat existente</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowAddChatModal(false)}>
+          <div className="surface-modal max-h-[70vh] w-full max-w-96 overflow-y-auto rounded-2xl p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-4 text-lg font-semibold text-[var(--chat-text)]">Agregar chat existente</h3>
             {availableChats.length === 0 ? (
-              <p className="text-sm text-gray-500">No hay chats disponibles para agregar</p>
+              <p className="text-sm text-[var(--chat-muted)]">No hay chats disponibles para agregar</p>
             ) : (
               <div className="space-y-1">
                 {availableChats.map((chat) => (
                   <button
                     key={chat.id}
                     onClick={() => handleAddChat(chat.id)}
-                    className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-[#1e293b] transition-colors text-white"
+                    className="w-full rounded-lg px-3 py-2 text-left text-sm text-[var(--chat-text)] transition-colors hover:bg-[var(--sidebar-hover)]"
                   >
                     {chat.title}
                   </button>
                 ))}
               </div>
             )}
-            <button onClick={() => setShowAddChatModal(false)} className="mt-4 text-sm text-gray-500 hover:underline">Cancelar</button>
+            <button onClick={() => setShowAddChatModal(false)} className="mt-4 text-sm text-[var(--chat-muted)] hover:underline">Cancelar</button>
           </div>
         </div>
       )}
 
       {/* New chat modal */}
       {showNewChat && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowNewChat(false)}>
-          <div className="bg-[#121824] border border-[#202938] rounded-2xl p-6 w-96" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold mb-4 text-white">Nuevo chat en &quot;{project.name}&quot;</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowNewChat(false)}>
+          <div className="surface-modal w-full max-w-96 rounded-2xl p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-4 text-lg font-semibold text-[var(--chat-text)]">Nuevo chat en &quot;{project.name}&quot;</h3>
             <input
               type="text"
               placeholder="Título del chat (opcional)"
               value={newChatTitle}
               onChange={(e) => setNewChatTitle(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") handleNewChat(); if (e.key === "Escape") setShowNewChat(false) }}
-              className="w-full bg-[#030812] border border-[#202938] rounded-xl px-4 py-3 text-white outline-none focus:border-green-500 transition-colors mb-4"
+              className="surface-field mb-4 w-full rounded-xl px-4 py-3 outline-none transition-colors"
               autoFocus
             />
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setShowNewChat(false)} className="px-4 py-2 rounded-xl bg-gray-700 hover:bg-gray-600 text-sm">Cancelar</button>
-              <button onClick={handleNewChat} className="px-4 py-2 rounded-xl bg-green-500 hover:bg-green-600 text-sm">Crear</button>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowNewChat(false)} className="modal-secondary-button rounded-xl px-4 py-2 text-sm">Cancelar</button>
+              <button onClick={handleNewChat} className="accent-button rounded-xl px-4 py-2 text-sm">Crear</button>
             </div>
           </div>
         </div>

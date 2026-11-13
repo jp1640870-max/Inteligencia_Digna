@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import Image from "next/image";
-import { ArrowDown, PanelLeft, Search } from "lucide-react";
+import { ArrowDown, Search } from "lucide-react";
 import Sidebar from "./components/Sidebar";
+import ViewSwitcher from "./components/ViewSwitcher";
 import ChatMessage from "./components/ChatMessage";
 import ChatInput from "./components/ChatInput";
 import ProjectDetailView from "./components/ProjectDetailView";
@@ -62,14 +63,9 @@ export default function Home() {
   const darkMode = useUIStore((s) => s.darkMode);
   const view = useUIStore((s) => s.view);
   const setView = useUIStore((s) => s.setView);
-  const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
-  const setSidebarCollapsed = useUIStore((s) => s.setSidebarCollapsed);
-  const setShowUserMenu = useUIStore((s) => s.setShowUserMenu);
-  const showUserMenu = useUIStore((s) => s.showUserMenu);
   const renameChatId = useUIStore((s) => s.renameChatId);
   const showAddToProjectChatId = useUIStore((s) => s.showAddToProjectChatId);
 
-  const user = useAuthStore((s) => s.user);
   const loadUser = useAuthStore((s) => s.loadUser);
 
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -87,13 +83,6 @@ export default function Home() {
       useProjectStore.getState().setCurrentProjectId(projectId);
     }
   }, [loadChats, loadProjects, loadUser]);
-
-  // ─── Close user menu on outside click ───
-  useEffect(() => {
-    const close = () => setShowUserMenu(false);
-    if (showUserMenu) document.addEventListener("click", close);
-    return () => document.removeEventListener("click", close);
-  }, [showUserMenu, setShowUserMenu]);
 
   // ─── Auto-scroll ───
   const handleScroll = useCallback(() => {
@@ -152,21 +141,23 @@ export default function Home() {
   };
 
   return (
-    <main
-      className={`h-screen flex chat-app ${darkMode ? "chat-theme-dark" : "chat-theme-light"}`}
-      onDragOver={(e) => {
-        e.preventDefault();
-      }}
-      onDrop={handleDrop}
-    >
-      <Sidebar />
+    <div className={`app-aurora ${darkMode ? "chat-theme-dark" : "chat-theme-light"}`}>
+      <main
+        className="app-window chat-app flex"
+        onDragOver={(e) => {
+          e.preventDefault();
+        }}
+        onDrop={handleDrop}
+      >
+        <Sidebar />
 
-      {/* ─── Projects List View ─── */}
+      <div className="app-surface relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <ViewSwitcher />
+
+        {/* ─── Projects List View ─── */}
       {view.type === "projects" && (
         <ProjectsListView
-          darkMode={darkMode}
           onOpenProject={(id) => setView({ type: "project", id })}
-          onBack={() => setView({ type: "chat" })}
           onProjectChanged={() => loadProjects()}
         />
       )}
@@ -175,7 +166,7 @@ export default function Home() {
       {view.type === "project" && (
         <ProjectDetailView
           projectId={view.id}
-          onBack={() => setView({ type: "chat" })}
+          onBack={() => setView({ type: "projects" })}
           onOpenChat={(chat, projectId) => {
             setView({ type: "chat" });
             useProjectStore.getState().setCurrentProjectId(projectId);
@@ -190,85 +181,18 @@ export default function Home() {
         <div className="chat-view">
           <AnnouncementBanner />
 
-          <header className="chat-topbar">
-            <button
-              onClick={() => {
-                // En móvil el menú siempre abre como drawer expandido; el rail
-                // colapsado es exclusivo de escritorio.
-                setSidebarCollapsed(false);
-                setSidebarOpen(true);
-              }}
-              className="chat-icon-btn chat-menu-btn"
-              title="Menú"
-              aria-label="Abrir menú"
-            >
-              <PanelLeft size={20} />
-            </button>
-
-            <div className="chat-brand-inline">
-              <span className="chat-brand-mark" aria-hidden="true">
-                ID
-              </span>
-              <div>
-                <div className="chat-brand-title">Inteligencia Digna</div>
-                <div className="chat-brand-kicker">by Salud Digna</div>
-              </div>
-            </div>
-
-            {currentProjectId && <span className="chat-project-pill">Proyecto activo</span>}
-
-            <div className="chat-topbar-spacer" />
-
-            <span className="chat-status-pill">
-              <span className="chat-status-dot" />
-              Asistente en línea
-            </span>
-
-            {user ? (
-              <div className="relative">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowUserMenu(!showUserMenu);
-                  }}
-                  className="chat-user-avatar"
-                  aria-label="Perfil de usuario"
-                  title={user.name || user.email}
-                >
-                  {user.picture ? (
-                    <Image
-                      src={user.picture}
-                      alt="Foto de perfil"
-                      width={36}
-                      height={36}
-                      className="object-cover"
-                    />
-                  ) : (
-                    <span>{(user.name || user.email)[0].toUpperCase()}</span>
-                  )}
-                </button>
-                {showUserMenu && (
-                  <div className="chat-user-menu" onClick={(e) => e.stopPropagation()}>
-                    <p className="chat-user-menu-name">{user.name || user.email}</p>
-                    <p className="chat-user-menu-email">{user.email}</p>
-                    <div className="chat-user-menu-sep" />
-                    <a href="/api/auth/logout" className="chat-user-menu-logout">
-                      Cerrar sesión
-                    </a>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="w-10 lg:hidden" />
-            )}
-          </header>
-
           <div ref={scrollRef} onScroll={handleScroll} className="chat-scroll">
             <div className="chat-messages">
               {messages.length === 0 ? (
                 <div className="chat-empty">
                   <div className="chat-empty-mark" aria-hidden="true">
-                    ID
+                    <Image
+                      src="/logo.png"
+                      alt=""
+                      width={52}
+                      height={48}
+                      className="h-full w-full object-contain"
+                    />
                   </div>
                   <h2>¿En qué puedo ayudarte hoy?</h2>
                   <p>
@@ -367,10 +291,12 @@ export default function Home() {
           />
         </div>
       )}
+      </div>
 
-      {/* ─── Modals ─── */}
-      {renameChatId && <RenameChatModal />}
-      {showAddToProjectChatId && <AddToProjectModal />}
-    </main>
+        {/* ─── Modals ─── */}
+        {renameChatId && <RenameChatModal />}
+        {showAddToProjectChatId && <AddToProjectModal />}
+      </main>
+    </div>
   );
 }

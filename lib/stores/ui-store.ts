@@ -7,13 +7,6 @@ type ViewState =
   | { type: "projects" }
   | { type: "project"; id: string };
 
-type UserInfo = {
-  id: string;
-  email: string;
-  name: string | null;
-  picture: string | null;
-};
-
 export type FileItem = {
   file: File;
   name: string;
@@ -26,9 +19,7 @@ interface UIState {
   sidebarOpen: boolean;
   sidebarCollapsed: boolean;
   view: ViewState;
-  showUserMenu: boolean;
   search: string;
-  user: UserInfo | null;
 
   // Modals
   renameChatId: string | null;
@@ -49,9 +40,7 @@ interface UIState {
   setSidebarCollapsed: (v: boolean) => void;
   toggleCollapse: () => void;
   setView: (v: ViewState) => void;
-  setShowUserMenu: (v: boolean) => void;
   setSearch: (v: string) => void;
-  setUser: (u: UserInfo | null) => void;
   setDragging: (v: boolean) => void;
 
   // Actions — Modals
@@ -71,9 +60,7 @@ export const useUIStore = create<UIState>((set) => ({
   sidebarOpen: false,
   sidebarCollapsed: false,
   view: { type: "chat" },
-  showUserMenu: false,
   search: "",
-  user: null,
   renameChatId: null,
   renameValue: "",
   showAddToProjectChatId: null,
@@ -90,9 +77,7 @@ export const useUIStore = create<UIState>((set) => ({
   setSidebarCollapsed: (v) => set({ sidebarCollapsed: v }),
   toggleCollapse: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setView: (v) => set({ view: v }),
-  setShowUserMenu: (v) => set({ showUserMenu: v }),
   setSearch: (v) => set({ search: v }),
-  setUser: (u) => set({ user: u }),
   setDragging: (v) => set({ dragging: v }),
 
   // ─── Actions Modals ───

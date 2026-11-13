@@ -399,7 +399,13 @@ const ChatMessage = ({
     >
       {!isUser && (
         <div className="chat-avatar" aria-hidden="true">
-          ID
+          <Image
+            src="/logo.png"
+            alt=""
+            width={32}
+            height={30}
+            className="h-full w-full object-contain"
+          />
         </div>
       )}
 

@@ -19,6 +19,7 @@ import {
   Plus,
   X,
   Settings,
+  LogOut,
 } from "lucide-react";
 import Link from "next/link";
 import { useChatStore } from "@/lib/stores/chat-store";
@@ -27,10 +28,25 @@ import { useUIStore } from "@/lib/stores/ui-store";
 import { useAuthStore, ADMIN_VISIBLE_ROLES } from "@/lib/stores/auth-store";
 import type { Chat, Msg } from "@/types";
 
-const SIDEBAR_DEFAULT_WIDTH = 280;
-const SIDEBAR_MIN_WIDTH = 180;
-const SIDEBAR_MAX_WIDTH = 500;
+const SIDEBAR_DEFAULT_WIDTH = 202;
+const SIDEBAR_MIN_WIDTH = 184;
+const SIDEBAR_MAX_WIDTH = 360;
 const SIDEBAR_HIDE_THRESHOLD = 50;
+const SIDEBAR_RESPONSIVE_MIN = 196;
+const SIDEBAR_RESPONSIVE_MAX = 216;
+const SIDEBAR_RESPONSIVE_RATIO = 0.14;
+
+function getResponsiveSidebarWidth() {
+  if (typeof window === "undefined") return SIDEBAR_DEFAULT_WIDTH;
+
+  return Math.min(
+    SIDEBAR_RESPONSIVE_MAX,
+    Math.max(
+      SIDEBAR_RESPONSIVE_MIN,
+      Math.round(window.innerWidth * SIDEBAR_RESPONSIVE_RATIO)
+    )
+  );
+}
 
 export default function Sidebar() {
   // ─── Stores ───
@@ -45,6 +61,7 @@ export default function Sidebar() {
   const projects = useProjectStore((s) => s.projects);
   const projectChats = useProjectStore((s) => s.projectChats);
   const expandedProjectId = useProjectStore((s) => s.expandedProjectId);
+  const currentProjectId = useProjectStore((s) => s.currentProjectId);
   const projectSearch = useUIStore((s) => s.projectSearch);
   const loadProjectChats = useProjectStore((s) => s.loadProjectChats);
   const setExpandedProjectId = useProjectStore((s) => s.setExpandedProjectId);
@@ -60,10 +77,12 @@ export default function Sidebar() {
   const darkMode = useUIStore((s) => s.darkMode);
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const collapsed = useUIStore((s) => s.sidebarCollapsed);
+  const view = useUIStore((s) => s.view);
   const search = useUIStore((s) => s.search);
   const setSearch = useUIStore((s) => s.setSearch);
   const toggleDarkMode = useUIStore((s) => s.toggleDarkMode);
   const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
+  const setSidebarCollapsed = useUIStore((s) => s.setSidebarCollapsed);
   const toggleCollapse = useUIStore((s) => s.toggleCollapse);
   const openRenameModal = useUIStore((s) => s.openRenameModal);
   const openAddToProjectModal = useUIStore((s) => s.openAddToProjectModal);
@@ -80,6 +99,7 @@ export default function Sidebar() {
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const analyzeInputRef = useRef<HTMLInputElement>(null);
   const [searchPopoverOpen, setSearchPopoverOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [popoverSearch, setPopoverSearch] = useState("");
   const popoverRef = useRef<HTMLDivElement>(null);
   const searchBtnRef = useRef<HTMLButtonElement>(null);
@@ -87,6 +107,7 @@ export default function Sidebar() {
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
+  const hasCustomWidth = useRef(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -125,13 +146,26 @@ export default function Sidebar() {
   // ─── Resize ───
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
+    hasCustomWidth.current = true;
     setIsResizing(true);
+  }, []);
+
+  useEffect(() => {
+    const syncDefaultWidth = () => {
+      if (hasCustomWidth.current) return;
+      setSidebarWidth(getResponsiveSidebarWidth());
+    };
+
+    syncDefaultWidth();
+    window.addEventListener("resize", syncDefaultWidth);
+    return () => window.removeEventListener("resize", syncDefaultWidth);
   }, []);
 
   useEffect(() => {
     if (!isResizing) return;
     const handleMouseMove = (e: MouseEvent) => {
-      const newWidth = e.clientX;
+      const left = sidebarRef.current?.getBoundingClientRect().left ?? 0;
+      const newWidth = e.clientX - left;
       if (newWidth < SIDEBAR_HIDE_THRESHOLD) {
         setSidebarHidden(true);
         setIsResizing(false);
@@ -150,27 +184,28 @@ export default function Sidebar() {
 
   // ─── Colors ───
   const colors = {
-    sidebar: darkMode ? "bg-[#0d131d]" : "bg-gray-100",
-    border: darkMode ? "border-[#202938]" : "border-gray-300",
-    hover: darkMode ? "hover:bg-[#1e293b]" : "hover:bg-gray-200",
-    text: darkMode ? "text-gray-300" : "text-gray-700",
-    textMuted: darkMode ? "text-gray-400" : "text-gray-500",
-    textHover: darkMode ? "hover:text-gray-300" : "hover:text-gray-900",
-    textRed: darkMode ? "text-red-400" : "text-red-500",
-    inputBg: darkMode ? "bg-transparent" : "bg-white",
-    inputFocus: darkMode ? "focus:bg-[#1e293b]" : "focus:bg-gray-100",
-    placeholder: darkMode ? "placeholder-gray-500" : "placeholder-gray-400",
-    overlay: darkMode ? "bg-black/50" : "bg-black/30",
-    popoverBg: darkMode ? "bg-[#121824]" : "bg-white",
-    popoverBorder: darkMode ? "border-[#202938]" : "border-gray-300",
-    iconColor: darkMode ? "text-gray-400" : "text-gray-500",
-    iconHover: darkMode ? "hover:text-white" : "hover:text-gray-900",
+    sidebar: "bg-[var(--sidebar-bg)] backdrop-blur-[24px]",
+    border: "border-[var(--sidebar-border)]",
+    hover: "hover:bg-[var(--sidebar-hover)]",
+    text: "text-[var(--sidebar-text)]",
+    textMuted: "text-[var(--sidebar-muted)]",
+    textHover: "hover:text-[var(--sidebar-text)]",
+    textRed: "text-red-400",
+    inputBg: "bg-[var(--sidebar-card)]",
+    inputFocus: "focus:bg-[var(--sidebar-hover)]",
+    placeholder: "placeholder:text-[var(--sidebar-faint)]",
+    overlay: "bg-black/50",
+    popoverBg: "bg-[var(--sidebar-popover)] backdrop-blur-[24px]",
+    popoverBorder: "border-[var(--sidebar-border)]",
+    iconColor: "text-[var(--sidebar-muted)]",
+    iconHover: "hover:text-[var(--sidebar-text)]",
   };
 
   // ─── Handlers ───
   const handleToggleProject = (projectId: string) => {
     if (projectId === "__toggle") {
       setView({ type: "projects" });
+      setSidebarOpen(false);
       return;
     }
     if (expandedProjectId === projectId) {
@@ -223,6 +258,13 @@ export default function Sidebar() {
     p.name.toLowerCase().includes(projectSearch.toLowerCase())
   );
 
+  const activeProjectId =
+    currentProjectId || (view.type === "project" ? view.id : null);
+  const activeProject = activeProjectId
+    ? projects.find((p) => p.id === activeProjectId)
+    : undefined;
+  const userInitial = (user?.name || user?.email || "U").charAt(0).toUpperCase();
+
   const filteredPopoverChats = chats.filter((c) =>
     c.title.toLowerCase().includes(popoverSearch.toLowerCase())
   );
@@ -234,8 +276,17 @@ export default function Sidebar() {
   };
 
   const handleRestoreSidebar = () => {
+    hasCustomWidth.current = false;
     setSidebarHidden(false);
-    setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+    setSidebarWidth(getResponsiveSidebarWidth());
+  };
+
+  const handleOpenSidebar = () => {
+    setSidebarCollapsed(false);
+    setSidebarHidden(false);
+    setAccountMenuOpen(false);
+    setSearchPopoverOpen(false);
+    setPopoverSearch("");
   };
 
   // ─── Expanded sidebar view ───
@@ -243,52 +294,79 @@ export default function Sidebar() {
     <div
       ref={sidebarRef}
       style={{ width: sidebarWidth }}
-      className={`fixed lg:relative z-40 h-full ${colors.sidebar} ${colors.border} border-r flex flex-col transition-all duration-300 ease-in-out ${
+      className={`fixed lg:relative z-40 h-full ${colors.sidebar} max-lg:bg-[var(--sidebar-popover)] ${colors.border} border-r flex flex-col transition-all duration-300 ease-in-out ${
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
-      } lg:translate-x-0 ${sidebarHidden ? "lg:-translate-x-full" : ""} overflow-hidden shrink-0`}
+      } ${sidebarHidden ? "lg:-translate-x-full" : "lg:translate-x-0"} overflow-hidden shrink-0`}
     >
-      <div className="flex items-center justify-between pt-5 pb-4 px-3">
-        <div className="flex-1 flex justify-center">
-          <NextImage src="/LogoSaludDigna.svg" className="w-24 h-24" alt="Logo" width={96} height={96} />
+      <div className="px-2.5 pt-3">
+        <div className="flex items-center gap-2">
+          <div className="sidebar-brand-mark">
+            <NextImage
+              src="/logo.png"
+              alt="Inteligencia Digna"
+              width={32}
+              height={30}
+              className="h-full w-full object-contain"
+            />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="chat-brand-title">Inteligencia Digna</div>
+            <div className="chat-brand-kicker">by Salud Digna</div>
+          </div>
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className={`lg:hidden flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`}
+            title="Cerrar menú"
+            aria-label="Cerrar menú"
+          >
+            <X size={15} strokeWidth={1.7} />
+          </button>
+          <button
+            onClick={toggleCollapse}
+            className={`hidden lg:flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`}
+            title="Colapsar sidebar"
+            aria-label="Colapsar sidebar"
+          >
+            <PanelLeftClose size={15} strokeWidth={1.7} />
+          </button>
         </div>
-        <button
-          onClick={() => setSidebarOpen(false)}
-          className={`lg:hidden p-1.5 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition shrink-0`}
-          title="Cerrar menú"
-          aria-label="Cerrar menú"
-        >
-          <X size={18} />
-        </button>
-        <button
-          onClick={toggleCollapse}
-          className={`hidden lg:flex p-1.5 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition shrink-0`}
-          title="Colapsar sidebar"
-          aria-label="Colapsar sidebar"
-        >
-          <PanelLeftClose size={18} />
-        </button>
+
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="chat-status-pill">
+            <span className="chat-status-dot" />
+            Asistente en línea
+          </span>
+          {activeProject && (
+            <span className="chat-project-pill max-w-full overflow-hidden" title={activeProject.name}>
+              <span className="min-w-0 truncate">Proyecto: {activeProject.name}</span>
+            </span>
+          )}
+        </div>
       </div>
 
-      <div className="px-3 space-y-0.5">
-        <button onClick={() => { newChat(); setSidebarOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2 text-sm ${colors.text} ${colors.hover} rounded-lg transition-colors`}>
-          <MessageSquarePlus size={18} /> Nuevo chat
+      <div className="px-3 pt-3 space-y-1">
+        <button
+          onClick={() => { newChat(); setSidebarOpen(false); }}
+          className="sidebar-new-chat"
+        >
+          <MessageSquarePlus size={17} strokeWidth={1.7} /> Nuevo chat
         </button>
-        <button aria-label="Crear imagen" className={`w-full flex items-center gap-3 px-3 py-2 text-sm ${colors.text} ${colors.hover} rounded-lg transition-colors`}>
+        <button aria-label="Crear imagen" className="sidebar-side-item">
           {/* eslint-disable-next-line jsx-a11y/alt-text -- falso positivo: icono lucide <Image>, no <img> */}
-          <Image size={18} /> Crear imagen
+          <Image size={17} strokeWidth={1.7} /> Crear imagen
         </button>
-        <button onClick={() => analyzeInputRef.current?.click()} className={`w-full flex items-center gap-3 px-3 py-2 text-sm ${colors.text} ${colors.hover} rounded-lg transition-colors`}>
-          <FileText size={18} /> Analizar archivo
+        <button onClick={() => analyzeInputRef.current?.click()} className="sidebar-side-item">
+          <FileText size={17} strokeWidth={1.7} /> Analizar archivo
         </button>
       </div>
 
       <div className="px-3 pt-3 pb-1">
-        <div className="flex items-center justify-between mb-1">
-          <button onClick={() => handleToggleProject("__toggle")} className={`flex items-center gap-1.5 text-xs font-semibold ${colors.textMuted} uppercase tracking-wider transition-colors`}>
-            <Folder size={14} /> Proyectos <span className={`text-[11px] ${colors.textMuted}`}>{projects.length}</span>
+        <div className="mb-2 flex items-center justify-between">
+          <button onClick={() => handleToggleProject("__toggle")} className="sidebar-section-label flex items-center gap-1.5 transition-colors hover:text-[var(--sidebar-text)]">
+            <Folder size={13} strokeWidth={1.8} /> Proyectos <span className="text-[10px] tracking-normal text-[var(--sidebar-faint)]">{projects.length}</span>
           </button>
-          <button onClick={() => setShowNewProjectInput(true)} className={`p-1 rounded ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`} title="Nuevo proyecto">
-            <Plus size={14} />
+          <button onClick={() => setShowNewProjectInput(true)} className={`flex h-7 w-7 items-center justify-center rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`} title="Nuevo proyecto">
+            <Plus size={14} strokeWidth={1.8} />
           </button>
         </div>
 
@@ -303,18 +381,18 @@ export default function Sidebar() {
               }}
               placeholder="Nombre del proyecto"
               autoFocus
-              className={`w-full px-2.5 py-1.5 text-xs rounded-lg ${colors.inputBg} ${colors.border} border ${colors.text} ${colors.placeholder} outline-none ${colors.inputFocus} transition-colors`}
+              className="sidebar-input"
             />
-            <div className="flex gap-2 mt-1">
-              <button onClick={() => createProject(newProjectName)} className="text-xs text-green-400 hover:underline">Crear</button>
-              <button onClick={() => setShowNewProjectInput(false)} className={`text-xs ${colors.textMuted} hover:underline`}>Cancelar</button>
+            <div className="mt-1.5 flex gap-2">
+              <button onClick={() => createProject(newProjectName)} className="text-[11px] text-green-400 hover:underline">Crear</button>
+              <button onClick={() => setShowNewProjectInput(false)} className={`text-[11px] ${colors.textMuted} hover:underline`}>Cancelar</button>
             </div>
           </div>
         )}
 
         <div className="relative mt-1">
-          <Search size={14} className={`absolute left-2.5 top-1/2 -translate-y-1/2 ${colors.textMuted}`} />
-          <input value={projectSearch} onChange={(e) => setProjectSearch(e.target.value)} placeholder="Buscar proyectos..." className={`w-full pl-8 pr-2.5 py-1.5 text-xs rounded-lg ${colors.inputBg} ${colors.border} border ${colors.text} ${colors.placeholder} outline-none ${colors.inputFocus} transition-colors`} />
+          <Search size={13} strokeWidth={1.8} className={`absolute left-2.5 top-1/2 -translate-y-1/2 ${colors.textMuted}`} />
+          <input value={projectSearch} onChange={(e) => setProjectSearch(e.target.value)} placeholder="Buscar proyectos..." className="sidebar-search" />
         </div>
       </div>
 
@@ -327,26 +405,26 @@ export default function Sidebar() {
           const projectChatList = projectChats[project.id] || [];
           return (
             <div key={project.id} className="mb-0.5">
-              <div className={`flex items-center rounded-lg ${colors.hover} transition-colors`}>
-                <button onClick={() => handleProjectClick(project.id)} className={`flex-1 text-left px-3 py-2 text-sm ${colors.text} truncate flex items-center gap-1.5`} title="Click: expandir · Doble click: abrir">
-                  <span className="shrink-0 text-[10px]">{isExpanded ? "▾" : "▸"}</span>
-                  <Folder size={14} className="shrink-0" />
+              <div className={`flex items-center rounded-[10px] ${colors.hover} transition-colors`}>
+                <button onClick={() => handleProjectClick(project.id)} className={`flex flex-1 items-center gap-1.5 truncate px-2.5 py-[7px] text-left text-[12.5px] ${colors.text}`} title="Click: expandir · Doble click: abrir">
+                  <span className="shrink-0 text-[9px] text-[var(--sidebar-faint)]">{isExpanded ? "▾" : "▸"}</span>
+                  <Folder size={13} strokeWidth={1.8} className="shrink-0" />
                   <span className="truncate">{project.name}</span>
-                  <span className={`text-[10px] ${colors.textMuted} shrink-0`}>({project.chat_count || projectChatList.length})</span>
+                  <span className={`shrink-0 text-[10px] ${colors.textMuted}`}>({project.chat_count || projectChatList.length})</span>
                 </button>
-                <button onClick={() => openAddToProjectModal(project.id)} className={`px-2 py-2 ${colors.textMuted} ${colors.textHover} transition-colors`} title="Agregar chat">
-                  <Plus size={14} />
+                <button onClick={() => openAddToProjectModal(project.id)} className={`px-2 py-[7px] ${colors.textMuted} ${colors.textHover} transition-colors`} title="Agregar chat">
+                  <Plus size={13} strokeWidth={1.8} />
                 </button>
               </div>
 
               {isExpanded && (
-                <div className={`ml-4 border-l ${darkMode ? "border-[#202938]" : "border-gray-300"} pl-2 mt-0.5 space-y-0.5`}>
+                <div className="ml-4 mt-0.5 space-y-0.5 border-l border-[var(--sidebar-border)] pl-2">
                   {projectChatList.length === 0 ? (
-                    <p className={`px-2 py-1 text-xs ${colors.textMuted}`}>Sin chats</p>
+                    <p className={`px-2 py-1 text-[11px] ${colors.textMuted}`}>Sin chats</p>
                   ) : (
                     projectChatList.map((chat) => (
-                      <div key={chat.id} className={`flex items-center rounded-lg transition-colors ${chat.id === currentChatId ? "bg-[#1e293b] border-l-2 border-green-500 rounded-l-none" : colors.hover}`}>
-                        <button onClick={() => handleOpenChatInProject(chat, project.id)} className={`flex-1 text-left px-2 py-1 text-xs truncate ${chat.id === currentChatId ? "text-white" : colors.textMuted}`}>
+                      <div key={chat.id} className={`flex items-center rounded-[10px] transition-colors ${chat.id === currentChatId ? "sidebar-item-active" : colors.hover}`}>
+                        <button onClick={() => handleOpenChatInProject(chat, project.id)} className={`flex-1 truncate px-2 py-1.5 text-left text-[11.5px] ${chat.id === currentChatId ? "" : colors.textMuted}`}>
                           {chat.title}
                         </button>
                         <button onClick={() => removeChatFromProject(project.id, chat.id)} className={`px-1 py-1 ${colors.textMuted} hover:text-red-400 transition-colors`} title="Quitar del proyecto">
@@ -361,30 +439,30 @@ export default function Sidebar() {
           );
         })}
 
-        <div className={`border-t ${colors.border} my-2`} />
+        <div className={`my-2 border-t ${colors.border}`} />
 
         <div className="px-3 py-1">
-          <div className="flex items-center gap-1.5 mb-1">
-            <span className={`text-xs font-semibold ${colors.textMuted} uppercase tracking-wider`}>Chats</span>
-            <span className={`text-[11px] ${colors.textMuted}`}>{filteredChats.length}</span>
+          <div className="mb-2 flex items-center gap-1.5">
+            <span className="sidebar-section-label">Chats</span>
+            <span className="text-[10px] text-[var(--sidebar-faint)]">{filteredChats.length}</span>
           </div>
           <div className="relative">
-            <Search size={14} className={`absolute left-2.5 top-1/2 -translate-y-1/2 ${colors.textMuted}`} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar chats..." className={`w-full pl-8 pr-2.5 py-1.5 text-xs rounded-lg ${colors.inputBg} ${colors.border} border ${colors.text} ${colors.placeholder} outline-none ${colors.inputFocus} transition-colors`} />
+            <Search size={13} strokeWidth={1.8} className={`absolute left-2.5 top-1/2 -translate-y-1/2 ${colors.textMuted}`} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar chats..." className="sidebar-search" />
           </div>
         </div>
 
         {filteredChats.length === 0 && (
-          <p className={`px-3 py-4 text-xs text-center ${colors.textMuted}`}>{search ? "Sin resultados" : "No hay chats aún"}</p>
+          <p className={`px-3 py-4 text-center text-[11px] ${colors.textMuted}`}>{search ? "Sin resultados" : "No hay chats aún"}</p>
         )}
         {filteredChats.map((chat) => (
           <div key={chat.id} className="relative mb-0.5">
-            <div className={`flex items-center rounded-lg transition-colors ${chat.id === currentChatId ? "bg-[#1e293b] border-l-2 border-green-500 rounded-l-none" : colors.hover}`}>
-              <button onClick={() => handleOpenChat(chat)} className={`flex-1 text-left px-3 py-2 text-sm truncate ${chat.id === currentChatId ? "text-white" : colors.textMuted}`}>
+            <div className={`flex items-center rounded-[10px] transition-colors ${chat.id === currentChatId ? "sidebar-item-active" : colors.hover}`}>
+              <button onClick={() => handleOpenChat(chat)} className={`flex-1 truncate px-2.5 py-[7px] text-left text-[12.5px] ${chat.id === currentChatId ? "" : colors.textMuted}`}>
                 {chat.title}
               </button>
-              <button onClick={() => setMenuOpen(menuOpen === chat.id ? null : chat.id)} className={`px-2 py-2 ${chat.id === currentChatId ? "text-white" : colors.textMuted} ${colors.textHover} transition-colors`}>
-                <EllipsisVertical size={16} />
+              <button onClick={() => setMenuOpen(menuOpen === chat.id ? null : chat.id)} className={`px-2 py-[7px] ${chat.id === currentChatId ? "" : colors.textMuted} ${colors.textHover} transition-colors`}>
+                <EllipsisVertical size={15} strokeWidth={1.8} />
               </button>
             </div>
 
@@ -408,20 +486,50 @@ export default function Sidebar() {
         ))}
       </div>
 
-      <div className={`p-3 border-t ${colors.border} space-y-1`}>
+      <div className={`space-y-1 border-t ${colors.border} p-2.5`}>
         {showAdminButton && (
-          <Link
-            href="/admin/dashboard"
-            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors bg-green-600/20 text-green-400 hover:bg-green-600/30 border border-green-500/20"
-          >
-            <Settings size={16} />
+          <Link href="/admin/dashboard" className="sidebar-admin-link">
+            <Settings size={15} strokeWidth={1.8} />
             <span>Panel de Administración</span>
           </Link>
         )}
-        <button onClick={toggleDarkMode} className={`w-full flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors ${colors.text} ${colors.hover}`}>
-          {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+
+        <button onClick={toggleDarkMode} className="sidebar-side-item">
+          {darkMode ? <Sun size={17} strokeWidth={1.7} /> : <Moon size={17} strokeWidth={1.7} />}
           <span>{darkMode ? "Modo claro" : "Modo oscuro"}</span>
         </button>
+
+        {user && (
+          <div className="sidebar-user-card">
+            <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-full border border-[var(--sidebar-border)] bg-green-600 text-xs font-bold text-white">
+              {user.picture ? (
+                <NextImage
+                  src={user.picture}
+                  alt=""
+                  width={32}
+                  height={32}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span className="flex h-full w-full items-center justify-center">{userInitial}</span>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[11.5px] font-medium text-[var(--sidebar-text)]">
+                {user.name || user.email}
+              </p>
+              <p className={`truncate text-[10px] ${colors.textMuted}`}>{user.email}</p>
+            </div>
+            <a
+              href="/api/auth/logout"
+              className={`rounded-lg p-1.5 ${colors.iconColor} ${colors.iconHover} transition-colors hover:bg-red-500/10 hover:text-red-400`}
+              title="Cerrar sesión"
+              aria-label="Cerrar sesión"
+            >
+              <LogOut size={14} strokeWidth={1.8} />
+            </a>
+          </div>
+        )}
       </div>
 
       <input ref={analyzeInputRef} type="file" accept=".pdf,.docx,.xlsx,.xls,.txt,.md,.csv,.png,.jpg,.jpeg,.gif" multiple className="hidden" onChange={(e) => { if (e.target.files) handleFilesSelected(e.target.files); e.target.value = ""; }} />
@@ -431,55 +539,169 @@ export default function Sidebar() {
   );
 
   // ─── Collapsed sidebar view ───
-  const renderCollapsed = () => (
-    <>
-      <div className={`fixed lg:relative z-40 h-full w-[64px] ${colors.sidebar} ${colors.border} border-r flex flex-col items-center py-3 gap-1 transition-all duration-300 ease-in-out ${sidebarOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 shrink-0`}>
-        <button onClick={toggleCollapse} className={`p-2 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition mb-2`} title="Expandir sidebar">
-          <PanelLeft size={20} />
-        </button>
-        <button onClick={() => { newChat(); setSidebarOpen(false); }} className={`p-2 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`} title="Nuevo chat">
-          <MessageSquarePlus size={20} />
-        </button>
-        <button onClick={() => handleToggleProject("__toggle")} className={`p-2 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`} title="Proyectos">
-          <Folder size={20} />
-        </button>
-        <button ref={searchBtnRef} onClick={() => setSearchPopoverOpen(v => !v)} className={`p-2 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`} title="Buscar chats">
-          <Search size={20} />
-        </button>
-        <div className="flex-1" />
-        {showAdminButton && (
-          <Link href="/admin/dashboard" className={`p-2 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`} title="Panel de Administración">
-            <Settings size={20} />
-          </Link>
-        )}
-        <button onClick={toggleDarkMode} className={`p-2 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`} title={darkMode ? "Modo claro" : "Modo oscuro"}>
-          {darkMode ? <Sun size={20} /> : <Moon size={20} />}
-        </button>
-      </div>
+  const renderCollapsed = () => {
+    const railButton =
+      "relative flex h-9 w-9 items-center justify-center rounded-[11px] text-[var(--rail-icon)] transition-colors hover:bg-white/[0.08] hover:text-white";
+    const projectsActive = view.type !== "chat";
 
-      {searchPopoverOpen && (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => { setSearchPopoverOpen(false); setPopoverSearch(""); }} />
-          <div ref={popoverRef} className={`fixed lg:absolute z-40 left-[68px] top-1 w-72 ${colors.popoverBg} ${colors.popoverBorder} border rounded-xl shadow-xl p-2`}>
-            <div className="relative mb-1">
-              <Search size={16} className={`absolute left-3 top-1/2 -translate-y-1/2 ${colors.textMuted}`} />
-              <input value={popoverSearch} onChange={(e) => setPopoverSearch(e.target.value)} placeholder="Buscar chats..." autoFocus className={`w-full pl-9 pr-3 py-2 text-sm ${colors.inputBg} ${colors.text} ${colors.placeholder} rounded-lg outline-none ${colors.inputFocus} transition-colors`} />
-            </div>
-            <div className="max-h-60 overflow-y-auto">
-              {filteredPopoverChats.length === 0 && (
-                <p className={`px-3 py-4 text-xs text-center ${colors.textMuted}`}>{popoverSearch ? "Sin resultados" : "No hay chats aún"}</p>
-              )}
-              {filteredPopoverChats.map((chat) => (
-                <button key={chat.id} onClick={() => handlePopoverChatClick(chat)} className={`w-full text-left px-3 py-2 text-sm ${colors.textMuted} ${colors.hover} rounded-lg transition-colors truncate`}>
-                  {chat.title}
-                </button>
-              ))}
-            </div>
+    return (
+      <>
+        <div className={`sidebar-rail fixed lg:relative z-40 flex h-full w-[64px] shrink-0 flex-col items-center gap-1.5 py-3 transition-all duration-300 ease-in-out ${sidebarOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0`}>
+          <div className="rail-logo-wrap relative mb-1">
+            <button
+              type="button"
+              onClick={handleOpenSidebar}
+              className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-[12px] border border-white/10 bg-[#0a0c10] text-white transition-colors hover:border-white/25 hover:bg-[#141720] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--chat-accent)]/60"
+              aria-label="Abrir panel"
+              aria-describedby="rail-logo-tooltip"
+            >
+              <NextImage src="/logo.png" alt="" width={40} height={36} className="h-full w-full object-contain" />
+            </button>
+            <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[#07080b] bg-green-400" title="Asistente en línea" />
+            <span id="rail-logo-tooltip" role="tooltip" className="rail-tooltip">
+              Abrir panel
+            </span>
           </div>
-        </>
-      )}
-    </>
-  );
+
+          <div className="rail-divider" />
+
+          <button
+            ref={searchBtnRef}
+            type="button"
+            onClick={() => {
+              setAccountMenuOpen(false);
+              setSearchPopoverOpen((open) => !open);
+            }}
+            className={railButton}
+            title="Buscar chats"
+            aria-label="Buscar chats"
+          >
+            <Search size={18} strokeWidth={1.7} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              newChat();
+              setSidebarOpen(false);
+            }}
+            className={railButton}
+            title="Nuevo chat"
+            aria-label="Nuevo chat"
+          >
+            <MessageSquarePlus size={18} strokeWidth={1.7} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleToggleProject("__toggle")}
+            className={`${railButton} ${projectsActive ? "bg-white/[0.1] text-white" : ""}`}
+            title="Proyectos"
+            aria-label="Proyectos"
+            aria-current={projectsActive ? "page" : undefined}
+          >
+            <Folder size={18} strokeWidth={1.7} />
+            {activeProject && (
+              <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-green-400" />
+            )}
+          </button>
+
+          <div className="flex-1" />
+
+          {showAdminButton && (
+            <Link
+              href="/admin/dashboard"
+              className={railButton}
+              title="Panel de Administración"
+              aria-label="Panel de Administración"
+            >
+              <Settings size={18} strokeWidth={1.7} />
+            </Link>
+          )}
+
+          <button
+            type="button"
+            onClick={toggleDarkMode}
+            className="mb-1 flex h-8 w-8 items-center justify-center rounded-full text-white ring-1 ring-white/20 shadow-[0_0_18px_rgba(129,140,248,0.35)] transition-transform hover:scale-105"
+            style={{ background: "conic-gradient(from 200deg, #34d399, #38bdf8, #818cf8, #c084fc, #f472b6, #34d399)" }}
+            title={darkMode ? "Modo claro" : "Modo oscuro"}
+            aria-label={darkMode ? "Modo claro" : "Modo oscuro"}
+          >
+            {darkMode ? <Sun size={14} strokeWidth={1.7} /> : <Moon size={14} strokeWidth={1.7} />}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setSearchPopoverOpen(false);
+              setPopoverSearch("");
+              setAccountMenuOpen((open) => !open);
+            }}
+            className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/15 bg-[#16181f] text-[11px] font-bold text-white transition-colors hover:border-white/25 hover:bg-[#20232c]"
+            title={user?.name || user?.email || "Cuenta"}
+            aria-label="Cuenta"
+            aria-expanded={accountMenuOpen}
+            aria-controls="sidebar-account-menu"
+          >
+            {user?.picture ? (
+              <NextImage src={user.picture} alt="" width={36} height={36} className="h-full w-full object-cover" />
+            ) : (
+              <span>{userInitial}</span>
+            )}
+          </button>
+        </div>
+
+        {accountMenuOpen && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setAccountMenuOpen(false)} />
+            <div
+              id="sidebar-account-menu"
+              className={`fixed lg:absolute z-40 left-[68px] bottom-[56px] w-64 ${colors.popoverBg} ${colors.popoverBorder} border rounded-xl shadow-xl p-2`}
+            >
+              <div className="px-2 py-1.5">
+                <p className={`truncate text-xs font-medium ${colors.text}`}>
+                  {user?.name || user?.email || "Cuenta"}
+                </p>
+                {user?.email && (
+                  <p className={`truncate text-[10px] ${colors.textMuted}`}>{user.email}</p>
+                )}
+              </div>
+              <div className={`my-1 border-t ${colors.border}`} />
+              <a
+                href="/api/auth/logout"
+                className="flex items-center gap-2 rounded-lg px-2 py-2 text-xs text-red-400 transition-colors hover:bg-red-500/10"
+              >
+                <LogOut size={14} />
+                Cerrar sesión
+              </a>
+            </div>
+          </>
+        )}
+
+        {searchPopoverOpen && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => { setSearchPopoverOpen(false); setPopoverSearch(""); }} />
+            <div ref={popoverRef} className={`fixed lg:absolute z-40 left-[68px] top-[100px] w-72 ${colors.popoverBg} ${colors.popoverBorder} border rounded-xl shadow-xl p-2`}>
+              <div className="relative mb-1">
+                <Search size={16} className={`absolute left-3 top-1/2 -translate-y-1/2 ${colors.textMuted}`} />
+                <input value={popoverSearch} onChange={(e) => setPopoverSearch(e.target.value)} placeholder="Buscar chats..." autoFocus className={`w-full pl-9 pr-3 py-2 text-sm ${colors.inputBg} ${colors.text} ${colors.placeholder} rounded-lg outline-none ${colors.inputFocus} transition-colors`} />
+              </div>
+              <div className="max-h-60 overflow-y-auto">
+                {filteredPopoverChats.length === 0 && (
+                  <p className={`px-3 py-4 text-xs text-center ${colors.textMuted}`}>{popoverSearch ? "Sin resultados" : "No hay chats aún"}</p>
+                )}
+                {filteredPopoverChats.map((chat) => (
+                  <button key={chat.id} onClick={() => handlePopoverChatClick(chat)} className={`w-full text-left px-3 py-2 text-sm ${colors.textMuted} ${colors.hover} rounded-lg transition-colors truncate`}>
+                    {chat.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+      </>
+    );
+  };
 
   return (
     <>
