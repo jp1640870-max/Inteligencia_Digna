@@ -1,0 +1,103 @@
+- generic [ref=f10e2]:
+  - complementary "Navegación principal":
+    - generic:
+      - generic:
+        - generic:
+          - strong: Inteligencia Digna
+          - generic: by Salud Digna
+      - button "Nuevo chat ⌘ K":
+        - text: Nuevo chat
+        - generic: ⌘ K
+      - generic:
+        - searchbox "Buscar chats"
+      - generic: Recientes
+      - generic:
+        - button "Bienvenida a Inteligencia Digna"
+        - button "Resumen de resultados Q3"
+        - button "Correo para el equipo médico"
+        - button "Ideas para la campaña de salud"
+        - generic: Proyectos
+        - button "Onboarding de pacientes 7":
+          - generic: Onboarding de pacientes
+          - generic: "7"
+        - button "Propuestas comerciales 4":
+          - generic: Propuestas comerciales
+          - generic: "4"
+      - generic:
+        - generic:
+          - generic: JR
+          - generic:
+            - generic: Juan Rochín
+            - generic: Cuenta personal
+          - button "Opciones de cuenta"
+  - generic [ref=f10e3]:
+    - banner [ref=f10e4]:
+      - generic [ref=f10e5]:
+        - button "Mostrar menú" [ref=f10e6] [cursor=pointer]
+        - generic [ref=f10e9]: Inteligencia Digna
+      - tablist "Vistas de la aplicación" [ref=f10e14]:
+        - tab "Chat" [selected] [ref=f10e15] [cursor=pointer]
+        - tab "Proyectos" [ref=f10e16] [cursor=pointer]
+      - generic [ref=f10e17]:
+        - generic [ref=f10e18]: Vista previa
+        - button "Cambiar a modo claro" [ref=f10e20] [cursor=pointer]
+        - generic [ref=f10e23]:
+          - button "Configuración" [ref=f10e24] [cursor=pointer]
+          - menu "Configuración":
+            - menuitem "Reiniciar conversación"
+            - menuitem "Cambiar tema"
+            - separator
+            - menuitem "Cerrar sesión"
+        - button "Cuenta de Juan" [ref=f10e27] [cursor=pointer]: JR
+    - main [ref=f10e28]:
+      - tabpanel "Chat" [ref=f10e29]:
+        - generic [ref=f10e31]:
+          - heading "Buenos días" [level=1] [ref=f10e36]
+          - paragraph [ref=f10e37]: ¿En qué puedo ayudarte hoy?
+          - generic [ref=f10e38]:
+            - generic [ref=f10e39]: JR
+            - text: Juan
+          - generic "Sugerencias para empezar" [ref=f10e40]:
+            - button "Explica un concepto" [ref=f10e41] [cursor=pointer]
+            - button "Resume un texto" [ref=f10e45] [cursor=pointer]
+            - button "Escribe código" [ref=f10e49] [cursor=pointer]
+            - button "Ayúdame a escribir" [ref=f10e53] [cursor=pointer]
+        - generic [ref=f10e58]:
+          - generic [ref=f10e59]:
+            - generic [ref=f10e60]:
+              - generic "Modelo del asistente" [ref=f10e61]: Inteligencia Digna
+              - generic [ref=f10e63]:
+                - button "Capacidades" [ref=f10e64] [cursor=pointer]
+                - dialog "Capacidades del asistente":
+                  - paragraph: Capacidades del asistente
+                  - generic:
+                    - generic:
+                      - strong: Búsqueda web
+                      - generic: Información actualizada de internet
+                  - generic:
+                    - generic:
+                      - strong: Análisis de archivos
+                      - generic: PDF, Word, Excel e imágenes
+                  - generic:
+                    - generic:
+                      - strong: Generación de documentos
+                      - generic: PDF, Word y Excel listos para descargar
+                  - generic:
+                    - generic:
+                      - strong: Edición de archivos
+                      - generic: Cambios sobre tus documentos existentes
+              - generic [ref=f10e69]: Entorno seguro
+            - generic [ref=f10e72]: ≈ 0 tokens
+          - generic [ref=f10e73]:
+            - generic [ref=f10e74]: Mensaje
+            - textbox "Mensaje" [ref=f10e75]:
+              - /placeholder: Escribe un mensaje o adjunta archivos...
+            - generic [ref=f10e76]:
+              - generic [ref=f10e77]:
+                - button "Adjuntar archivo" [ref=f10e78] [cursor=pointer]
+                - button "Editar documento" [ref=f10e81] [cursor=pointer]
+              - generic [ref=f10e84]:
+                - generic [ref=f10e85]:
+                  - generic [ref=f10e86]: ↵
+                  - text: para enviar
+                - button "Enviar mensaje" [disabled] [ref=f10e87]
