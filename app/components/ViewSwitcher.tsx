@@ -10,15 +10,15 @@ export default function ViewSwitcher() {
   const setSidebarCollapsed = useUIStore((s) => s.setSidebarCollapsed);
 
   const isChat = view.type === "chat";
-  const isProjects = view.type === "projects" || view.type === "project";
+  const isAgents = view.type === "agents";
 
   const goToChat = () => {
     setView({ type: "chat" });
     setSidebarOpen(false);
   };
 
-  const goToProjects = () => {
-    setView({ type: "projects" });
+  const goToAgents = () => {
+    setView({ type: "agents" });
     setSidebarOpen(false);
   };
 
@@ -51,11 +51,11 @@ export default function ViewSwitcher() {
 
         <button
           type="button"
-          onClick={goToProjects}
-          className={`view-switcher-tab ${isProjects ? "active" : ""}`}
-          aria-current={isProjects ? "page" : undefined}
+          onClick={goToAgents}
+          className={`view-switcher-tab ${isAgents ? "active" : ""}`}
+          aria-current={isAgents ? "page" : undefined}
         >
-          Proyectos
+          Hearts
         </button>
       </nav>
     </>

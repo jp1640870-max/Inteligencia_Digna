@@ -418,6 +418,15 @@ input {
   color: var(--sidebar-text);
 }
 
+.sidebar-side-item.is-active {
+  background: var(--sidebar-active);
+  color: var(--sidebar-text);
+}
+
+.sidebar-side-item.is-active svg {
+  color: var(--chat-accent);
+}
+
 .sidebar-section-label {
   color: var(--sidebar-faint);
   font-size: 9.5px;

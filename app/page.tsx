@@ -7,6 +7,7 @@ import Sidebar from "./components/Sidebar";
 import ViewSwitcher from "./components/ViewSwitcher";
 import ChatMessage from "./components/ChatMessage";
 import ChatInput from "./components/ChatInput";
+import AgentsView from "./components/AgentsView";
 import ProjectDetailView from "./components/ProjectDetailView";
 import ProjectsListView from "./components/ProjectsListView";
 import RenameChatModal from "./components/modals/RenameChatModal";
@@ -153,6 +154,9 @@ export default function Home() {
 
       <div className="app-surface relative flex min-h-0 min-w-0 flex-1 flex-col">
         <ViewSwitcher />
+
+        {/* ─── Agents View ─── */}
+      {view.type === "agents" && <AgentsView />}
 
         {/* ─── Projects List View ─── */}
       {view.type === "projects" && (

@@ -4,6 +4,7 @@ import { create } from "zustand";
 
 type ViewState =
   | { type: "chat" }
+  | { type: "agents" }
   | { type: "projects" }
   | { type: "project"; id: string };
 

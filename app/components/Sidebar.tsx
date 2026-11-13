@@ -9,6 +9,7 @@ import {
   Image,
   FileText,
   Folder,
+  Brain,
   Search,
   Moon,
   Sun,
@@ -346,7 +347,11 @@ export default function Sidebar() {
 
       <div className="px-3 pt-3 space-y-1">
         <button
-          onClick={() => { newChat(); setSidebarOpen(false); }}
+          onClick={() => {
+            newChat();
+            setView({ type: "chat" });
+            setSidebarOpen(false);
+          }}
           className="sidebar-new-chat"
         >
           <MessageSquarePlus size={17} strokeWidth={1.7} /> Nuevo chat
@@ -357,6 +362,20 @@ export default function Sidebar() {
         </button>
         <button onClick={() => analyzeInputRef.current?.click()} className="sidebar-side-item">
           <FileText size={17} strokeWidth={1.7} /> Analizar archivo
+        </button>
+        <button
+          onClick={() => {
+            setView({ type: "projects" });
+            setSidebarOpen(false);
+          }}
+          className={`sidebar-side-item ${
+            view.type === "projects" || view.type === "project" ? "is-active" : ""
+          }`}
+          aria-current={
+            view.type === "projects" || view.type === "project" ? "page" : undefined
+          }
+        >
+          <Folder size={17} strokeWidth={1.7} /> Proyectos
         </button>
       </div>
 
@@ -542,11 +561,12 @@ export default function Sidebar() {
   const renderCollapsed = () => {
     const railButton =
       "relative flex h-9 w-9 items-center justify-center rounded-[11px] text-[var(--rail-icon)] transition-colors hover:bg-white/[0.08] hover:text-white";
-    const projectsActive = view.type !== "chat";
+    const projectsActive = view.type === "projects" || view.type === "project";
+    const agentsActive = view.type === "agents";
 
     return (
       <>
-        <div className={`sidebar-rail fixed lg:relative z-40 flex h-full w-[64px] shrink-0 flex-col items-center gap-1.5 py-3 transition-all duration-300 ease-in-out ${sidebarOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0`}>
+        <div className={`sidebar-rail fixed lg:relative z-40 flex h-full w-[62.72px] shrink-0 flex-col items-center gap-1.5 py-3 transition-all duration-300 ease-in-out ${sidebarOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0`}>
           <div className="rail-logo-wrap relative mb-1">
             <button
               type="button"
@@ -583,6 +603,7 @@ export default function Sidebar() {
             type="button"
             onClick={() => {
               newChat();
+              setView({ type: "chat" });
               setSidebarOpen(false);
             }}
             className={railButton}
@@ -590,6 +611,20 @@ export default function Sidebar() {
             aria-label="Nuevo chat"
           >
             <MessageSquarePlus size={18} strokeWidth={1.7} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setView({ type: "agents" });
+              setSidebarOpen(false);
+            }}
+            className={`${railButton} ${agentsActive ? "bg-white/[0.1] text-white" : ""}`}
+            title="Hearts"
+            aria-label="Hearts"
+            aria-current={agentsActive ? "page" : undefined}
+          >
+            <Brain size={18} strokeWidth={1.7} />
           </button>
 
           <button
@@ -607,28 +642,6 @@ export default function Sidebar() {
           </button>
 
           <div className="flex-1" />
-
-          {showAdminButton && (
-            <Link
-              href="/admin/dashboard"
-              className={railButton}
-              title="Panel de Administración"
-              aria-label="Panel de Administración"
-            >
-              <Settings size={18} strokeWidth={1.7} />
-            </Link>
-          )}
-
-          <button
-            type="button"
-            onClick={toggleDarkMode}
-            className="mb-1 flex h-8 w-8 items-center justify-center rounded-full text-white ring-1 ring-white/20 shadow-[0_0_18px_rgba(129,140,248,0.35)] transition-transform hover:scale-105"
-            style={{ background: "conic-gradient(from 200deg, #34d399, #38bdf8, #818cf8, #c084fc, #f472b6, #34d399)" }}
-            title={darkMode ? "Modo claro" : "Modo oscuro"}
-            aria-label={darkMode ? "Modo claro" : "Modo oscuro"}
-          >
-            {darkMode ? <Sun size={14} strokeWidth={1.7} /> : <Moon size={14} strokeWidth={1.7} />}
-          </button>
 
           <button
             type="button"
@@ -656,7 +669,7 @@ export default function Sidebar() {
             <div className="fixed inset-0 z-30" onClick={() => setAccountMenuOpen(false)} />
             <div
               id="sidebar-account-menu"
-              className={`fixed lg:absolute z-40 left-[68px] bottom-[56px] w-64 ${colors.popoverBg} ${colors.popoverBorder} border rounded-xl shadow-xl p-2`}
+              className={`fixed lg:absolute z-40 left-[66.72px] bottom-[56px] w-64 ${colors.popoverBg} ${colors.popoverBorder} border rounded-xl shadow-xl p-2`}
             >
               <div className="px-2 py-1.5">
                 <p className={`truncate text-xs font-medium ${colors.text}`}>
@@ -681,7 +694,7 @@ export default function Sidebar() {
         {searchPopoverOpen && (
           <>
             <div className="fixed inset-0 z-30" onClick={() => { setSearchPopoverOpen(false); setPopoverSearch(""); }} />
-            <div ref={popoverRef} className={`fixed lg:absolute z-40 left-[68px] top-[100px] w-72 ${colors.popoverBg} ${colors.popoverBorder} border rounded-xl shadow-xl p-2`}>
+            <div ref={popoverRef} className={`fixed lg:absolute z-40 left-[66.72px] top-[100px] w-72 ${colors.popoverBg} ${colors.popoverBorder} border rounded-xl shadow-xl p-2`}>
               <div className="relative mb-1">
                 <Search size={16} className={`absolute left-3 top-1/2 -translate-y-1/2 ${colors.textMuted}`} />
                 <input value={popoverSearch} onChange={(e) => setPopoverSearch(e.target.value)} placeholder="Buscar chats..." autoFocus className={`w-full pl-9 pr-3 py-2 text-sm ${colors.inputBg} ${colors.text} ${colors.placeholder} rounded-lg outline-none ${colors.inputFocus} transition-colors`} />

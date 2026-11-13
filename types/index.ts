@@ -1,3 +1,5 @@
+import type { HeartTool } from "@/lib/heart-config";
+
 export type SearchResult = {
   title: string;
   url: string;
@@ -497,6 +499,31 @@ export type HeartRow = {
 export type HeartWithOwnerRow = HeartRow & {
   user_name: string | null;
   user_email: string | null;
+};
+
+/**
+ * Representación de un Heart para la vista de usuario.
+ *
+ * `is_owner` se calcula respecto al usuario que consulta: un preset de empresa
+ * es visible pero no editable. `tools` y `knowledge_files` llegan ya parseados
+ * para que la UI no tenga que interpretar JSON.
+ */
+export type Agent = {
+  id: string;
+  user_id: string;
+  name: string;
+  role: string;
+  tone: string;
+  instructions: string;
+  limitations: string;
+  temperature: number;
+  tools: HeartTool[];
+  knowledge_files: string[];
+  is_public: boolean;
+  is_preset: boolean;
+  is_owner: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
 export type ConfigRow = {
