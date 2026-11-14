@@ -21,6 +21,7 @@ import {
   X,
   Settings,
   LogOut,
+  BookOpen,
 } from "lucide-react";
 import Link from "next/link";
 import { useChatStore } from "@/lib/stores/chat-store";
@@ -377,6 +378,18 @@ export default function Sidebar() {
         >
           <Folder size={17} strokeWidth={1.7} /> Proyectos
         </button>
+        <button
+          onClick={() => {
+            setView({ type: "library" });
+            setSidebarOpen(false);
+          }}
+          className={`sidebar-side-item ${
+            view.type === "library" ? "is-active" : ""
+          }`}
+          aria-current={view.type === "library" ? "page" : undefined}
+        >
+          <BookOpen size={17} strokeWidth={1.7} /> Biblioteca
+        </button>
       </div>
 
       <div className="px-3 pt-3 pb-1">
@@ -563,6 +576,7 @@ export default function Sidebar() {
       "relative flex h-9 w-9 items-center justify-center rounded-[11px] text-[var(--rail-icon)] transition-colors hover:bg-white/[0.08] hover:text-white";
     const projectsActive = view.type === "projects" || view.type === "project";
     const agentsActive = view.type === "agents";
+    const libraryActive = view.type === "library";
 
     return (
       <>
@@ -639,6 +653,20 @@ export default function Sidebar() {
             {activeProject && (
               <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-green-400" />
             )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setView({ type: "library" });
+              setSidebarOpen(false);
+            }}
+            className={`${railButton} ${libraryActive ? "bg-white/[0.1] text-white" : ""}`}
+            title="Biblioteca"
+            aria-label="Biblioteca"
+            aria-current={libraryActive ? "page" : undefined}
+          >
+            <BookOpen size={18} strokeWidth={1.7} />
           </button>
 
           <div className="flex-1" />

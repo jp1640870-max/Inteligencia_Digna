@@ -6,7 +6,8 @@ type ViewState =
   | { type: "chat" }
   | { type: "agents" }
   | { type: "projects" }
-  | { type: "project"; id: string };
+  | { type: "project"; id: string }
+  | { type: "library" };
 
 export type FileItem = {
   file: File;

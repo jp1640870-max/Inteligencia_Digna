@@ -282,6 +282,44 @@ export type GeneratedDocumentInsert = {
   metadata?: Record<string, unknown>;
 };
 
+// ─── Biblioteca de documentos generados ───
+
+export type DocumentLibraryFilters = {
+  search?: string | null;
+  format?: GeneratedDocumentFormat | null;
+  status?: GeneratedDocumentStatus | null;
+  page?: number;
+  pageSize?: number;
+};
+
+export type DocumentLibraryItem = {
+  id: string;
+  title: string;
+  filename: string;
+  format: GeneratedDocumentFormat;
+  mime_type: string;
+  size_bytes: number;
+  page_count: number | null;
+  version: string;
+  summary: string;
+  status: GeneratedDocumentStatus;
+  source: GeneratedDocumentSource;
+  partial?: boolean;
+  timed_out?: boolean;
+  created_at: string;
+  downloadUrl: string;
+  previewUrl: string;
+  docxUrl?: string;
+};
+
+export type DocumentLibraryPage = {
+  items: DocumentLibraryItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
 // ─── Knowledge Base ───
 
 export type KbFileStatus =

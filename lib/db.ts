@@ -770,6 +770,104 @@ export async function getLatestPartialDocumentForChat(
  * Se usa para versionar un documento parcial (versión 1.0 -> 1.1 -> 1.2)
  * sin crear una nueva fila ni una nueva tarjeta en el chat.
  */
+export type ListGeneratedDocumentsOptions = {
+  userId: string;
+  search?: string | null;
+  format?: string | null;
+  status?: string | null;
+  page?: number;
+  pageSize?: number;
+};
+
+/**
+ * Lista los documentos generados de un usuario con paginación y filtros.
+ *
+ * Los resultados se ordenan por fecha de creación descendente. Se filtra por
+ * `user_id` para que cada usuario solo vea sus propios documentos.
+ */
+export async function listGeneratedDocuments(
+  opts: ListGeneratedDocumentsOptions,
+): Promise<{ rows: GeneratedDocumentRow[]; total: number }> {
+  const {
+    userId,
+    search,
+    format,
+    status,
+    page = 1,
+    pageSize = 20,
+  } = opts;
+
+  const conditions: string[] = ["user_id = $1"];
+  const values: unknown[] = [userId];
+  let paramIndex = 2;
+
+  if (search) {
+    conditions.push(
+      `(title ILIKE $${paramIndex} OR filename ILIKE $${paramIndex})`,
+    );
+    values.push(`%${search}%`);
+    paramIndex += 1;
+  }
+
+  if (format) {
+    conditions.push(`format = $${paramIndex}`);
+    values.push(format);
+    paramIndex += 1;
+  }
+
+  if (status) {
+    conditions.push(`status = $${paramIndex}`);
+    values.push(status);
+    paramIndex += 1;
+  }
+
+  const where = conditions.join(" AND ");
+  const offset = (page - 1) * pageSize;
+
+  const countResult = await query(
+    `SELECT COUNT(*) FROM generated_documents WHERE ${where}`,
+    values,
+  );
+  const total = numberValue(countResult.rows[0]?.count, 0);
+
+  const result = await query(
+    `SELECT * FROM generated_documents
+      WHERE ${where}
+      ORDER BY created_at DESC, id DESC
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
+    [...values, pageSize, offset],
+  );
+
+  const rows = result.rows.map((row) =>
+    normalizeGeneratedDocument(row as DbRow),
+  );
+  return { rows, total };
+}
+
+/**
+ * Elimina un documento generado y sus objetos en storage.
+ *
+ * Solo se puede eliminar si pertenece al usuario indicado. Devuelve las claves
+ * de los objetos que se borraron para que el llamador pueda limpiar storage.
+ */
+export async function deleteGeneratedDocument(
+  id: string,
+  userId: string,
+): Promise<{ objectKeys: string[] } | null> {
+  const document = await getGeneratedDocumentById(id);
+  if (!document || document.user_id !== userId) return null;
+
+  await query("DELETE FROM generated_documents WHERE id = $1", [id]);
+
+  const objectKeys = [
+    document.object_key,
+    document.docx_object_key,
+    document.markdown_object_key,
+  ].filter(Boolean) as string[];
+
+  return { objectKeys };
+}
+
 export async function updateGeneratedDocument(
   id: string,
   data: GeneratedDocumentUpdateInput,

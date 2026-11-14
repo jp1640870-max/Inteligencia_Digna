@@ -8,6 +8,7 @@ import ViewSwitcher from "./components/ViewSwitcher";
 import ChatMessage from "./components/ChatMessage";
 import ChatInput from "./components/ChatInput";
 import AgentsView from "./components/AgentsView";
+import LibraryView from "./components/LibraryView";
 import ProjectDetailView from "./components/ProjectDetailView";
 import ProjectsListView from "./components/ProjectsListView";
 import RenameChatModal from "./components/modals/RenameChatModal";
@@ -83,7 +84,10 @@ export default function Home() {
     if (projectId) {
       useProjectStore.getState().setCurrentProjectId(projectId);
     }
-  }, [loadChats, loadProjects, loadUser]);
+    if (params.get("view") === "library") {
+      setView({ type: "library" });
+    }
+  }, [loadChats, loadProjects, loadUser, setView]);
 
   // ─── Auto-scroll ───
   const handleScroll = useCallback(() => {
@@ -157,6 +161,9 @@ export default function Home() {
 
         {/* ─── Agents View ─── */}
       {view.type === "agents" && <AgentsView />}
+
+      {/* ─── Library View ─── */}
+      {view.type === "library" && <LibraryView />}
 
         {/* ─── Projects List View ─── */}
       {view.type === "projects" && (
