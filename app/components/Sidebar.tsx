@@ -38,6 +38,7 @@ export default function Sidebar() {
   const currentChatId = useChatStore((s) => s.chatId);
   const openChat = useChatStore((s) => s.openChat);
   const newChat = useChatStore((s) => s.newChat);
+  const setImageMode = useChatStore((s) => s.setImageMode);
   const deleteChat = useChatStore((s) => s.deleteChat);
   const shareChat = useChatStore((s) => s.shareChat);
   const handleFilesSelected = useChatStore((s) => s.handleFilesSelected);
@@ -193,6 +194,13 @@ export default function Sidebar() {
     setSidebarOpen(false);
   };
 
+  const handleCreateImage = () => {
+    newChat();
+    setImageMode(true);
+    setView({ type: "chat" });
+    setSidebarOpen(false);
+  };
+
   const handleOpenChatInProject = (chat: Chat, projectId: string) => {
     setView({ type: "chat" });
     setCurrentProjectId(projectId);
@@ -258,7 +266,7 @@ export default function Sidebar() {
         <button onClick={() => { newChat(); setSidebarOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2 text-sm ${colors.text} ${colors.hover} rounded-lg transition-colors`}>
           <MessageSquarePlus size={18} /> Nuevo chat
         </button>
-        <button aria-label="Crear imagen" className={`w-full flex items-center gap-3 px-3 py-2 text-sm ${colors.text} ${colors.hover} rounded-lg transition-colors`}>
+        <button onClick={handleCreateImage} aria-label="Crear imagen" title="Crear imagen" className={`w-full flex items-center gap-3 px-3 py-2 text-sm ${colors.text} ${colors.hover} rounded-lg transition-colors`}>
           {/* eslint-disable-next-line jsx-a11y/alt-text -- falso positivo: icono lucide <Image>, no <img> */}
           <Image size={18} /> Crear imagen
         </button>
@@ -424,6 +432,10 @@ export default function Sidebar() {
         </button>
         <button onClick={() => { newChat(); setSidebarOpen(false); }} className={`p-2 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`} title="Nuevo chat">
           <MessageSquarePlus size={20} />
+        </button>
+        <button onClick={handleCreateImage} className={`p-2 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`} title="Crear imagen">
+          {/* eslint-disable-next-line jsx-a11y/alt-text -- falso positivo: icono lucide <Image>, no <img> */}
+          <Image size={20} />
         </button>
         <button onClick={() => handleToggleProject("__toggle")} className={`p-2 rounded-lg ${colors.hover} ${colors.iconColor} ${colors.iconHover} transition`} title="Proyectos">
           <Folder size={20} />

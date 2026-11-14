@@ -11,6 +11,10 @@ const IMAGE_PROMPT_MAX_CHARS = parseInt(
   process.env.IMAGE_PROMPT_MAX_CHARS || "700",
   10
 );
+const IMAGE_PROMPT_TIMEOUT_MS = parseInt(
+  process.env.IMAGE_PROMPT_TIMEOUT_MS || "20000",
+  10
+);
 
 type ImageGenResponse = {
   model: string;
@@ -84,7 +88,8 @@ export async function buildDetailedImagePrompt(
 ${references ? `EJEMPLOS Y REFERENCIAS DE LA WEB:\n${references}\n\n` : ""}${context ? `CONTEXTO DE LA CONVERSACIÓN:\n${context}` : ""}`,
             },
           ],
-          { num_predict: 900 }
+          { num_predict: 900 },
+          IMAGE_PROMPT_TIMEOUT_MS
         )
       ).trim();
     } catch (e) {
@@ -139,7 +144,8 @@ export async function describeImageWithVL(
             images: [image.data],
           },
         ],
-        { num_predict: 300 }
+        { num_predict: 300 },
+        IMAGE_PROMPT_TIMEOUT_MS
       )
     ).trim();
 

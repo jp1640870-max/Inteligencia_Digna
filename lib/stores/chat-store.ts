@@ -26,6 +26,25 @@ const SEARCH_KEYWORDS = [
 
 const EDIT_KEYWORDS = /\b(agrega|añade|inserta|elimina|borra|modifica|cambia|edita|editar|columna|fila|celda|renombra|actualiza|pone|pon)\b/i;
 
+const IMAGE_INTENT_PATTERN =
+  /\b(?:haz|hace|crea|genera|dibuja|pinta|hazme|haceme|creame|generame|dibujame|imagina|muéstrame|muestrame|muestreme|dame|quiero|necesito|regálame|regalame)\b(?:(?:\s+\w+){0,5}\s+)?\b(?:imagen|imágen|imágenes|imagenes|ilustración|ilustracion|foto|fotos|dibujo|dibujos|arte|poster|banner|logo|infografía|infografia|póster)\b/i;
+
+function isImageIntent(text: string): boolean {
+  text = text.trim();
+  if (!IMAGE_INTENT_PATTERN.test(text)) return false;
+  if (/\b(?:analiz|describe|explica|observa|revisa|veo|mirar|visualiza|captura|leer|lee|mostrar|ver)\w*\b/i.test(text)) return false;
+  return true;
+}
+
+function extractImagePrompt(text: string): string {
+  text = text.trim();
+  const match = text.match(IMAGE_INTENT_PATTERN);
+  if (!match || match.index === undefined) return text;
+  let rest = text.slice(match.index + match[0].length);
+  rest = rest.replace(/^(?:de|sobre|para|con|que|una|un|la|el|las|los|muy|bien|se\s+vea|que\s+sea)\s+/i, "");
+  return rest.trim() || text;
+}
+
 function checkAutoSearch(text: string): boolean {
   const lower = text.toLowerCase();
   return SEARCH_KEYWORDS.some((kw) => lower.includes(kw));
@@ -41,6 +60,10 @@ interface ChatState {
   input: string;
   images: string[];
   files: FileItem[];
+
+  // Imagen
+  imageMode: boolean;
+  imageLoading: boolean;
 
   // Edit mode
   editFile: File | null;
@@ -73,6 +96,7 @@ interface ChatState {
   setLoading: (v: boolean) => void;
   setSearching: (v: boolean) => void;
   setAutoScroll: (v: boolean) => void;
+  setImageMode: (v: boolean) => void;
 
   // Actions — edit
   handleEditFileToggle: () => void;
@@ -83,6 +107,7 @@ interface ChatState {
 
   // Actions — send
   sendMessage: (currentProjectId?: string | null, textOverride?: string, editFromIndex?: number) => Promise<void>;
+  generateImage: (prompt: string, originalText?: string, references?: string[], projectId?: string | null) => Promise<void>;
   handleStop: () => void;
   handleRegenerate: (currentProjectId?: string | null) => Promise<void>;
   handleEditMessage: (index: number, newText: string, projectId?: string | null) => Promise<void>;
@@ -103,6 +128,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   input: "",
   images: [],
   files: [],
+  imageMode: false,
+  imageLoading: false,
   editFile: null,
   editInstruction: "",
   isEditMode: false,
@@ -124,6 +151,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setLoading: (v) => set({ loading: v }),
   setSearching: (v) => set({ searching: v }),
   setAutoScroll: (v) => set({ autoScroll: v }),
+  setImageMode: (v) => set({ imageMode: v }),
   setEditInstruction: (v) => set({ editInstruction: v }),
   setEditFile: (f) => set({ editFile: f }),
   setTypeChoiceFile: (f) => set({ typeChoiceFile: f }),
@@ -149,6 +177,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       input: "",
       images: [],
       files: [],
+      imageMode: false,
       chatId: uuidv4(),
     });
 
@@ -384,11 +413,104 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await state.sendMessage(projectId, newText, index);
   },
 
+  generateImage: async (prompt, originalText, references, projectId) => {
+    const state = get();
+    const cleanPrompt = prompt.trim();
+    if (!cleanPrompt || state.imageLoading) return;
+
+    const userMessage = (originalText || cleanPrompt).trim();
+    const refs = references && references.length > 0 ? references : undefined;
+
+    set({ imageMode: false, imageLoading: true, input: "", images: [], files: [] });
+
+    set((s) => ({
+      messages: [
+        ...s.messages,
+        { role: "user" as const, text: `🎨 ${userMessage}`, images: refs },
+        { role: "ai" as const, text: "Generando imagen..." },
+      ],
+    }));
+
+    try {
+      const res = await fetch("/api/image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: cleanPrompt,
+          chatId: state.chatId,
+          originalMessage: userMessage,
+          ...(refs ? { images: refs } : {}),
+          ...(projectId ? { projectId } : {}),
+        }),
+      });
+
+      if (res.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data.success) {
+        set((s) => {
+          const copy = [...s.messages];
+          const last = copy[copy.length - 1];
+          if (last?.role === "ai") {
+            copy[copy.length - 1] = {
+              role: "ai",
+              text: data.error || "No se pudo generar la imagen",
+            };
+          }
+          return { messages: copy };
+        });
+        return;
+      }
+
+      set((s) => {
+        const copy = [...s.messages];
+        const last = copy[copy.length - 1];
+        if (last?.role === "ai") {
+          copy[copy.length - 1] = { role: "ai", text: "", images: [data.image] };
+        }
+        return { messages: copy };
+      });
+      get().loadChats();
+    } catch {
+      set((s) => {
+        const copy = [...s.messages];
+        const last = copy[copy.length - 1];
+        if (last?.role === "ai") {
+          copy[copy.length - 1] = {
+            role: "ai",
+            text: "Error de conexión al generar la imagen",
+          };
+        }
+        return { messages: copy };
+      });
+    } finally {
+      set({ imageLoading: false });
+    }
+  },
+
   sendMessage: async (currentProjectId, textOverride, editFromIndex) => {
     const state = get();
     const messageText = textOverride ?? state.input;
 
     if (!messageText.trim() && state.images.length === 0 && state.files.length === 0) return;
+
+    // Auto-detección: si piden generar una imagen, hacerlo sin cambiar de flujo
+    if (
+      editFromIndex === undefined &&
+      messageText.trim() &&
+      state.files.length === 0 &&
+      !state.isEditMode &&
+      isImageIntent(messageText)
+    ) {
+      const refs = [...state.images];
+      set({ input: "", images: [], files: [] });
+      await state.generateImage(extractImagePrompt(messageText), messageText, refs, currentProjectId);
+      return;
+    }
 
     // Auto-detect: editable file + edit keywords
     if (messageText.trim() && state.files.length > 0) {

@@ -9,6 +9,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "comfy:tunnel": "powershell -ExecutionPolicy Bypass -File scripts/comfy-tunnel.ps1",
+    "comfy:tunnel:stop": "powershell -ExecutionPolicy Bypass -File scripts/comfy-tunnel.ps1 -Stop",
     "test": "tsx --test --env-file=tests/.env.test \"tests/*.test.ts\"",
     "smoke:db": "tsx --env-file=tests/.env.test scripts/smoke-db.mjs"
   },

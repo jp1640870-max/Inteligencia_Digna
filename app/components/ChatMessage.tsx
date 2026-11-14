@@ -220,7 +220,12 @@ const ChatMessage = ({ message, index, isLastAi, onEdit, onRegenerate, darkMode 
                     </div>
                   )}
                   {message.images?.map((img, idx) => (
-                    <Image key={idx} src={img} alt="Imagen adjunta al mensaje" width={320} height={160} className="mt-2 max-h-40 w-auto rounded-lg" />
+                    message.role === "ai" ? (
+                      // eslint-disable-next-line @next/next/no-img-element -- imágenes generadas (data URL, tamaño variable)
+                      <img key={idx} src={img} alt="Imagen generada" className="mt-2 max-h-96 w-auto rounded-lg" />
+                    ) : (
+                      <Image key={idx} src={img} alt="Imagen adjunta al mensaje" width={320} height={160} className="mt-2 max-h-40 w-auto rounded-lg" />
+                    )
                   ))}
                 </>
               )}

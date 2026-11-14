@@ -2,7 +2,7 @@
 
 import { useRef, useEffect } from "react";
 import Image from "next/image";
-import { ArrowUp, FileEdit, Paperclip, Search, Wand2 } from "lucide-react";
+import { ArrowUp, FileEdit, ImagePlus, Paperclip, Search, Wand2 } from "lucide-react";
 
 type FilePreview = {
   name: string;
@@ -30,6 +30,9 @@ type Props = {
   onTypeChoiceAction?: (file: File, action: "analyze" | "edit") => void;
   onDismissTypeChoice?: () => void;
   onShowTypeChoice?: (file: File) => void;
+  onGenerateImage?: (prompt: string) => void;
+  imageMode?: boolean;
+  onDismissImageMode?: () => void;
 };
 
 const EDITABLE_EXTS = [".xlsx", ".xls", ".docx", ".pdf"];
@@ -55,6 +58,9 @@ const ChatInput = ({
   onTypeChoiceAction,
   onDismissTypeChoice,
   onShowTypeChoice,
+  onGenerateImage,
+  imageMode,
+  onDismissImageMode,
 }: Props) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editFileInputRef = useRef<HTMLInputElement>(null);
@@ -76,6 +82,14 @@ const ChatInput = ({
       onShowTypeChoice(file);
     } else {
       onFilesSelected(fileList);
+    }
+  };
+
+  const handleSubmit = () => {
+    if (imageMode) {
+      onGenerateImage?.(input);
+    } else {
+      onSend();
     }
   };
 
@@ -165,7 +179,32 @@ const ChatInput = ({
             <FileEdit size={18} />
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => onGenerateImage?.(input)}
+          disabled={loading || !input.trim() || imageMode}
+          className="p-1.5 rounded-lg hover:bg-[#1e293b] transition text-gray-400 hover:text-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Generar imagen con IA"
+        >
+          <ImagePlus size={18} />
+        </button>
       </div>
+
+      {imageMode && (
+        <div className="mb-2 bg-[#1a2332] rounded-xl border border-green-600/30 px-3 py-2 flex items-center gap-2">
+          <ImagePlus size={14} className="text-green-400 shrink-0" />
+          <p className="text-xs text-gray-300 flex-1">
+            Modo imagen activo: describe la imagen y pulsa Enviar para generarla.
+          </p>
+          <button
+            type="button"
+            onClick={onDismissImageMode}
+            className="text-xs text-gray-500 hover:text-gray-300"
+          >
+            Cancelar
+          </button>
+        </div>
+      )}
 
       {/* File type choice popover */}
       {typeChoiceFile && (
@@ -243,7 +282,7 @@ const ChatInput = ({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            onSend();
+            handleSubmit();
           }}
           className="flex items-end gap-2 bg-[#121824] rounded-xl px-3 py-2 border border-[#1f2632] focus-within:border-gray-600 transition-colors"
         >
@@ -252,12 +291,12 @@ const ChatInput = ({
             value={input}
             onChange={(e) => onInputChange(e.target.value)}
             onPaste={onPaste}
-            placeholder="Escribe un mensaje..."
+            placeholder={imageMode ? "Describe la imagen que quieres generar..." : "Escribe un mensaje..."}
             className="flex-1 bg-transparent text-white placeholder-gray-500 resize-none outline-none text-sm leading-relaxed max-h-[200px]"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                onSend();
+                handleSubmit();
               }
             }}
           />

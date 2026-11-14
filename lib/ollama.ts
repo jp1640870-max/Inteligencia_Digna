@@ -18,12 +18,14 @@ type OllamaResponse = {
 export async function ollamaChat(
   model: string,
   messages: OllamaMessage[],
-  options?: Record<string, unknown>
+  options?: Record<string, unknown>,
+  timeoutMs = 60_000
 ): Promise<string> {
   const res = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model, messages, stream: false, options }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   const json: OllamaResponse = await res.json();

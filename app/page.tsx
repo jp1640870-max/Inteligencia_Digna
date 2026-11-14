@@ -24,6 +24,10 @@ export default function Home() {
   const input = useChatStore((s) => s.input);
   const images = useChatStore((s) => s.images);
   const files = useChatStore((s) => s.files);
+  const imageMode = useChatStore((s) => s.imageMode);
+  const imageLoading = useChatStore((s) => s.imageLoading);
+  const setImageMode = useChatStore((s) => s.setImageMode);
+  const generateImage = useChatStore((s) => s.generateImage);
   const isEditMode = useChatStore((s) => s.isEditMode);
   const editInstruction = useChatStore((s) => s.editInstruction);
   const editLoading = useChatStore((s) => s.editLoading);
@@ -115,6 +119,10 @@ export default function Home() {
 
   // ─── Handlers ───
   const handleSend = () => {
+    if (imageMode) {
+      generateImage(input, input, images, currentProjectId);
+      return;
+    }
     if (isEditMode) {
       if (!editFile || !editInstruction.trim()) return;
       handleEditFlow(editFile, editInstruction, currentProjectId);
@@ -294,11 +302,14 @@ export default function Home() {
             input={input}
             images={images}
             files={files.map((f) => ({ name: f.name, size: f.size }))}
-            loading={loading || editLoading}
+            loading={loading || editLoading || imageLoading}
             onInputChange={setInput}
             onSend={handleSend}
             onStop={handleStop}
             onPaste={handlePaste}
+            onGenerateImage={(prompt) => generateImage(prompt, prompt, images, currentProjectId)}
+            imageMode={imageMode}
+            onDismissImageMode={() => setImageMode(false)}
             onRemoveImage={(i) => setImages(images.filter((_, idx) => idx !== i))}
             onRemoveFile={(i) => setFiles(files.filter((_, idx) => idx !== i))}
             onFilesSelected={handleFilesSelected}
