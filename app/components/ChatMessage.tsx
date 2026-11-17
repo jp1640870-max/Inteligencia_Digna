@@ -12,10 +12,12 @@ import {
   FileSpreadsheet,
   FileText,
   FileType2,
+  ImagePlus,
   Loader2,
   Paperclip,
   Pencil,
   RefreshCw,
+  Wand2,
   X,
 } from "lucide-react";
 import MarkdownMessage from "./MarkdownMessage";
@@ -24,6 +26,8 @@ import type {
   DocumentProgress,
   EditResult,
   GeneratedDocumentMeta,
+  GeneratedImageMeta,
+  ImageJobMeta,
   Msg,
 } from "@/types";
 
@@ -35,6 +39,9 @@ type Props = {
   onEdit?: (index: number, newText: string) => void;
   onRegenerate?: () => void;
   onExportPdf?: () => Promise<void> | void;
+  onCancelImageJob?: (jobId: string) => void | Promise<void>;
+  onImageVariant?: (image: GeneratedImageMeta) => void;
+  onImageEdit?: (image: GeneratedImageMeta) => void;
   darkMode: boolean;
 };
 
@@ -42,6 +49,24 @@ const formatBytes = (bytes: number): string => {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+/**
+ * Los adjuntos se guardan como base64 puro para Ollama, pero al recargar el
+ * chat el navegador necesita una URL. Los data URLs almacenados o las URLs
+ * existentes se dejan intactos.
+ */
+const messageImageSource = (source: string): string => {
+  const value = source.trim();
+  if (/^(?:data:|https?:\/\/|\/)/i.test(value)) return value;
+  const mime = value.startsWith("/9j/")
+    ? "image/jpeg"
+    : value.startsWith("R0lGOD")
+      ? "image/gif"
+      : value.startsWith("UklGR")
+        ? "image/webp"
+        : "image/png";
+  return `data:${mime};base64,${value}`;
 };
 
 const progressLabel = (stage: DocumentProgress["stage"]): string => {
@@ -94,6 +119,9 @@ const ChatMessage = ({
   onEdit,
   onRegenerate,
   onExportPdf,
+  onCancelImageJob,
+  onImageVariant,
+  onImageEdit,
   darkMode,
 }: Props) => {
   const [editing, setEditing] = useState(false);
@@ -326,13 +354,17 @@ const ChatMessage = ({
       {message.images && message.images.length > 0 && (
         <div className="chat-message-images">
           {message.images.map((img, idx) => (
-            <Image
+            // El adjunto viene como base64 puro desde PostgreSQL y debe
+            // convertirse a data URL; next/image rechaza el base64 sin prefijo.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
               key={`img-${idx}`}
-              src={img}
+              src={messageImageSource(img)}
               alt="Imagen adjunta al mensaje"
               width={320}
               height={200}
               className="chat-message-image"
+              loading="lazy"
             />
           ))}
         </div>
@@ -340,7 +372,147 @@ const ChatMessage = ({
     </>
   );
 
+  const renderGeneratedImage = (image: GeneratedImageMeta) => (
+    <div className="chat-generated-image-card">
+      {/* eslint-disable-next-line @next/next/no-img-element -- la imagen se sirve autenticada desde la API; el optimizador de Next no reenvía la cookie */}
+      <img
+        src={image.previewUrl}
+        alt={image.prompt || "Imagen generada"}
+        width={image.width}
+        height={image.height}
+        className="chat-generated-image"
+        loading="lazy"
+      />
+      <div className="chat-generated-image-meta">
+        <span>
+          {image.width} × {image.height}
+          {image.seed !== undefined ? ` · semilla ${image.seed}` : ""}
+        </span>
+        <span>{formatBytes(image.size_bytes)}</span>
+      </div>
+      <div className="chat-generated-image-actions">
+        <a
+          href={image.downloadUrl}
+          download={image.filename}
+          className="chat-doc-button"
+        >
+          <Download size={14} />
+          Descargar
+        </a>
+        {onImageVariant && (
+          <button
+            type="button"
+            onClick={() => onImageVariant(image)}
+            className="chat-doc-button"
+          >
+            <ImagePlus size={14} />
+            Variante
+          </button>
+        )}
+        {onImageEdit && (
+          <button
+            type="button"
+            onClick={() => onImageEdit(image)}
+            className="chat-doc-button"
+          >
+            <Wand2 size={14} />
+            Editar
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderImageJob = (job: ImageJobMeta) => {
+    const active = !["completed", "failed", "cancelled"].includes(job.status);
+    const labels: Record<ImageJobMeta["status"], string> = {
+      preparing: "Preparando imagen…",
+      queued: "En cola de generación…",
+      generating: "Generando imagen…",
+      saving: "Guardando imagen…",
+      completed: "Imagen generada",
+      failed: "No se pudo generar la imagen",
+      cancelled: "Generación cancelada",
+    };
+    const percent =
+      job.status === "preparing"
+        ? 6
+        : job.status === "queued"
+          ? 14
+          : job.status === "generating"
+            ? 52
+            : job.status === "saving"
+              ? 92
+              : 100;
+
+    return (
+      <div className="chat-image-job-card">
+        <div className="chat-image-job-head">
+          {active ? (
+            <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+          ) : (
+            <ImagePlus size={16} aria-hidden="true" />
+          )}
+          <span>{labels[job.status]}</span>
+          {active && <span className="chat-progress-percent">{percent}%</span>}
+        </div>
+
+        {active && (
+          <>
+            <div className="chat-progress-bar" aria-hidden="true">
+              <div className="chat-progress-fill" style={{ width: `${percent}%` }} />
+            </div>
+            <p className="chat-image-job-prompt" title={job.prompt}>
+              {job.prompt}
+            </p>
+            {job.cancelRequested ? (
+              <p className="chat-image-job-note">Cancelando…</p>
+            ) : (
+              <button
+                type="button"
+                className="chat-image-cancel"
+                onClick={() => onCancelImageJob?.(job.id)}
+                disabled={!onCancelImageJob}
+              >
+                <X size={13} />
+                Cancelar generación
+              </button>
+            )}
+          </>
+        )}
+
+        {job.status === "failed" && (
+          <p className="chat-image-job-error" role="alert">
+            {job.error?.message || "Ocurrió un error durante la generación."}
+          </p>
+        )}
+
+        {job.image && job.status === "completed" && renderGeneratedImage(job.image)}
+        {!job.image &&
+          job.status === "completed" &&
+          message.generatedImages?.map((image) => (
+            <div key={image.id}>{renderGeneratedImage(image)}</div>
+          ))}
+        {job.image && (
+          <p className="chat-image-job-prompt" title={job.image.prompt}>
+            {job.image.prompt}
+          </p>
+        )}
+      </div>
+    );
+  };
+
   const renderContent = () => {
+    if (message.imageJob) return renderImageJob(message.imageJob);
+    if (message.generatedImages && message.generatedImages.length > 0) {
+      return (
+        <div className="chat-generated-image-list">
+          {message.generatedImages.map((image) => (
+            <div key={image.id}>{renderGeneratedImage(image)}</div>
+          ))}
+        </div>
+      );
+    }
     if (message.documentProgress) return renderDocumentProgress(message.documentProgress);
     if (message.editResult && !message.document) return renderEditResult(message.editResult);
 
@@ -389,6 +561,7 @@ const ChatMessage = ({
     !editing &&
     !streaming &&
     !message.documentProgress &&
+    !message.imageJob &&
     (!message.editResult || Boolean(message.document));
 
   return (

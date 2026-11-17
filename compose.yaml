@@ -111,6 +111,9 @@ services:
       DATABASE_URL: ${DATABASE_URL_INTERNAL:?define DATABASE_URL_INTERNAL en .env}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT_INTERNAL:-http://minio:9000}
       MINIO_HOST: minio
+      # Para el diagnóstico de /api/admin/images/health. El worker usa la misma
+      # convención. En Docker, 127.0.0.1 no apunta al host.
+      COMFYUI_URL: ${COMFYUI_URL_DOCKER:-http://host.docker.internal:8188}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -120,11 +123,47 @@ services:
       - ./data:/app/data
     restart: unless-stopped
     command: ["npm", "run", "start", "--", "--hostname", "0.0.0.0", "--port", "3000"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
+      start_period: 20s
+
+  # Worker de imágenes separado del proceso web. Compose lo reinicia si cae y,
+  # además, scripts/image-worker-supervisor.ts reinicia el proceso interno con
+  # backoff. Nunca reencola a ciegas un trabajo que pudo llegar a ComfyUI.
+  image-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL_INTERNAL:?define DATABASE_URL_INTERNAL en .env}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT_INTERNAL:-http://minio:9000}
+      MINIO_HOST: minio
+      # Desde un contenedor, 127.0.0.1 es el propio contenedor. El túnel SSH o
+      # ComfyUI debe ser alcanzable en el host Docker.
+      COMFYUI_URL: ${COMFYUI_URL_DOCKER:-http://host.docker.internal:8188}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - ./data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["npm", "run", "image:worker:supervisor"]
+    restart: unless-stopped
+    stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD", "npm", "run", "image:health", "--", "--worker-only"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
       start_period: 20s
 
 volumes:

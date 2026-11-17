@@ -19,8 +19,138 @@ export type Msg = {
   document?: GeneratedDocumentMeta;
   /** Progreso temporal mientras se genera un documento. */
   documentProgress?: DocumentProgress;
+  /** Trabajo de imagen vinculado a este mensaje (estado persistente). */
+  imageJob?: ImageJobMeta;
+  /** Imágenes generadas y almacenadas en MinIO. */
+  generatedImages?: GeneratedImageMeta[];
   searching?: boolean;
   sources?: SearchResult[];
+};
+
+export type ImageJobKind = "generate" | "edit" | "variant";
+
+export type ImageJobStatus =
+  | "preparing"
+  | "queued"
+  | "generating"
+  | "saving"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type ImageJobError = {
+  code: string;
+  message: string;
+};
+
+export type GeneratedImageMeta = {
+  id: string;
+  jobId: string;
+  chatId: string;
+  messageId?: number;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  width: number;
+  height: number;
+  prompt: string;
+  seed?: number;
+  parentImageId?: string;
+  created_at: string;
+  previewUrl: string;
+  downloadUrl: string;
+};
+
+export type ImageJobMeta = {
+  id: string;
+  chatId: string;
+  userMessageId?: number;
+  assistantMessageId?: number;
+  kind: ImageJobKind;
+  status: ImageJobStatus;
+  prompt: string;
+  width: number;
+  height: number;
+  steps: number;
+  seed?: number;
+  parentImageId?: string;
+  cancelRequested: boolean;
+  error?: ImageJobError;
+  image?: GeneratedImageMeta;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** Fila de PostgreSQL; no se expone directamente al cliente. */
+export type ImageJobRow = {
+  id: string;
+  user_id: string;
+  chat_id: string;
+  user_message_id: number | null;
+  assistant_message_id: number | null;
+  client_request_id: string;
+  kind: ImageJobKind;
+  status: ImageJobStatus;
+  prompt: string;
+  effective_prompt: string | null;
+  context_excerpt: string | null;
+  parent_job_id: string | null;
+  width: number;
+  height: number;
+  steps: number;
+  seed: number | null;
+  comfy_prompt_id: string | null;
+  worker_id: string | null;
+  attempts: number;
+  max_attempts: number;
+  cancel_requested: boolean;
+  error_code: string | null;
+  error_message: string | null;
+  available_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GeneratedImageRow = {
+  id: string;
+  user_id: string;
+  chat_id: string;
+  message_id: number | null;
+  job_id: string;
+  attachment_id: string;
+  width: number;
+  height: number;
+  prompt: string;
+  effective_prompt: string | null;
+  seed: number | null;
+  parent_image_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+/** Referencia de imagen subida para un trabajo, ya almacenada en MinIO. */
+export type ImageReferenceInput = {
+  data: string;
+  mime?: string;
+  filename?: string;
+};
+
+export type ImageReferenceRow = {
+  id: string;
+  job_id: string;
+  attachment_id: string;
+  sort_order: number;
+  role: string;
+  original_filename: string;
+  mime_type: string;
+  size_bytes: number;
+  width: number;
+  height: number;
+  object_key: string;
+  bucket: string;
+  created_at: string;
 };
 
 export type DocumentProgressStage =

@@ -16,7 +16,9 @@ const includeDb =
 const files = fs
   .readdirSync(testsDir)
   .filter((file) => file.endsWith(".test.ts"))
-  .filter((file) => includeDb || file !== "kb-access-db.test.ts")
+  // Los archivos *-db.test.ts requieren servicios reales; solo se ejecutan con
+  // `npm run test:db` (o TEST_INCLUDE_DB=1).
+  .filter((file) => includeDb || !file.endsWith("-db.test.ts"))
   .sort()
   .map((file) => path.posix.join("tests", file));
 

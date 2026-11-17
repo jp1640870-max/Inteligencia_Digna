@@ -34,6 +34,8 @@ export default function Home() {
   const input = useChatStore((s) => s.input);
   const images = useChatStore((s) => s.images);
   const files = useChatStore((s) => s.files);
+  const imageMode = useChatStore((s) => s.imageMode);
+  const parentImageId = useChatStore((s) => s.parentImageId);
   const isEditMode = useChatStore((s) => s.isEditMode);
   const editInstruction = useChatStore((s) => s.editInstruction);
   const editLoading = useChatStore((s) => s.editLoading);
@@ -58,6 +60,10 @@ export default function Home() {
   const setAutoScroll = useChatStore((s) => s.setAutoScroll);
   const loadChats = useChatStore((s) => s.loadChats);
   const handleEditFileSelected = useChatStore((s) => s.handleEditFileSelected);
+  const refreshImageJobs = useChatStore((s) => s.refreshImageJobs);
+  const cancelImageJob = useChatStore((s) => s.cancelImageJob);
+  const prepareImageEdit = useChatStore((s) => s.prepareImageEdit);
+  const exitImageMode = useChatStore((s) => s.exitImageMode);
 
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
   const loadProjects = useProjectStore((s) => s.loadProjects);
@@ -100,6 +106,22 @@ export default function Home() {
   useEffect(() => {
     if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, autoScroll]);
+
+  // Los trabajos viven en el servidor. El cliente solo sondea mientras haya
+  // alguno activo; al recargar, la hidratación de mensajes los recupera.
+  const hasActiveImageJobs = messages.some(
+    (message) =>
+      message.imageJob &&
+      !["completed", "failed", "cancelled"].includes(message.imageJob.status),
+  );
+  useEffect(() => {
+    if (!hasActiveImageJobs) return;
+    void refreshImageJobs();
+    const timer = window.setInterval(() => {
+      void refreshImageJobs();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveImageJobs, refreshImageJobs]);
 
   // ─── Handlers ───
   const handleSend = () => {
@@ -243,6 +265,9 @@ export default function Home() {
                       onExportPdf={
                         m.role === "ai" && !loading ? () => exportMessageAsPdf(i) : undefined
                       }
+                      onCancelImageJob={cancelImageJob}
+                      onImageVariant={(image) => prepareImageEdit(image, "variant")}
+                      onImageEdit={(image) => prepareImageEdit(image, "edit")}
                       darkMode={darkMode}
                     />
                   );
@@ -299,6 +324,9 @@ export default function Home() {
             onTypeChoiceAction={handleTypeChoiceAction}
             onDismissTypeChoice={() => setTypeChoiceFile(null)}
             onShowTypeChoice={(file) => setTypeChoiceFile(file)}
+            imageMode={imageMode}
+            hasParentImage={Boolean(parentImageId)}
+            onExitImageMode={exitImageMode}
           />
         </div>
       )}

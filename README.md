@@ -61,6 +61,102 @@ Si un documento se corta por tiempo límite, se guarda el Markdown fuente como s
 
 `GET /api/documents/{id}` descarga el archivo; con `?inline=1` se sirve para la vista previa. `POST /api/documents/from-message` exporta una respuesta existente sin llamar al modelo.
 
+### Generación de imágenes
+
+La generación y edición conversacional usan FLUX.2 Klein 4B en un ComfyUI externo. La app solo crea el trabajo en PostgreSQL; un worker separado lo reclama con `FOR UPDATE SKIP LOCKED`, llama a ComfyUI y sube el resultado a MinIO. El endpoint `/api/chat` es el único punto de entrada, tanto para el botón **Crear imagen** como para las peticiones en lenguaje natural.
+
+Aplica la migración antes de iniciar el worker:
+
+```bash
+npm run db:migrate
+```
+
+El grafo FLUX.2 Klein se construye en código y encadena `ReferenceLatent` para las imágenes de referencia. `COMFYUI_WORKFLOW` es opcional: si se define, debe ser una ruta local legible por el worker; la ruta del workflow en la DGX no es visible desde el contenedor.
+
+#### Red hacia ComfyUI
+
+- En el host, con el túnel SSH activo: `COMFYUI_URL=http://127.0.0.1:8188`.
+- En Docker, `127.0.0.1` apunta al propio contenedor. Usa `COMFYUI_URL_DOCKER=http://host.docker.internal:8188` (Compose ya lo aplica a `app` e `image-worker`) o la IP/VPN de la DGX.
+- El túnel o ComfyUI debe escuchar en el host Docker; `extra_hosts` ya resuelve `host.docker.internal:host-gateway`.
+- ComfyUI no se expone públicamente. Mantén el puerto en la red local o detrás del túnel.
+
+Variables principales (detalle en `.env.example`):
+
+```env
+IMAGE_ENABLED=true
+IMAGE_BACKEND=flux2-klein       # mock para pruebas sin GPU
+COMFYUI_URL=http://127.0.0.1:8188
+COMFYUI_URL_DOCKER=http://host.docker.internal:8188
+COMFYUI_STEPS=4
+COMFYUI_SEED=42
+IMAGE_MAX_PIXELS=1100000
+COMFYUI_TARGETED_CANCEL=false   # true solo si ComfyUI soporta cancelación por prompt_id
+```
+
+#### Worker
+
+En el host:
+
+```bash
+npm run image:worker
+# o con supervisor y reinicio con backoff:
+npm run image:worker:supervisor
+```
+
+Con Docker Compose:
+
+```bash
+docker compose up -d --build image-worker
+docker compose logs -f image-worker
+```
+
+Diagnóstico:
+
+```bash
+npm run image:health
+npm run image:health -- --worker-only
+```
+
+También existe `GET /api/admin/images/health` para el panel (requiere autenticación y `panel.read`). Muestra la conexión con ComfyUI, los workers con heartbeat fresco y los trabajos por estado.
+
+Los estados persistidos son `preparing`, `queued`, `generating`, `saving`, `completed`, `failed` y `cancelled`. Si el worker cae, la recuperación no reencola a ciegas: consulta el `prompt_id` persistido en `/queue` y `/history`. Un trabajo cancelado borra su prompt de la cola; `/interrupt` solo se usa con `COMFYUI_TARGETED_CANCEL=true` y siempre con `prompt_id`.
+
+#### Pruebas
+
+```bash
+npm test                 # unitarias, incluye intención, grafo, errores y mock
+npm run test:db          # requiere PostgreSQL y MinIO de prueba aislados
+```
+
+Para la integración define `IMAGE_TEST_DATABASE_URL` y `IMAGE_TEST_BUCKET` (el test crea el bucket si no existe). No uses la base ni el bucket de producción:
+
+```powershell
+$env:IMAGE_TEST_DATABASE_URL = "postgresql://usuario:clave@127.0.0.1:5433/inteligencia_digna_test?sslmode=disable"
+$env:IMAGE_TEST_BUCKET = "inteligencia-digna-test"
+npm run test:db
+```
+
+No dejes un `image:worker` apuntando a esa misma base mientras corre la integración: reclamaría los trabajos que crea el test. Detén el worker o usa otra base.
+
+Las pruebas con `IMAGE_BACKEND=mock` validan el pipeline pero **no** demuestran que la GPU, los modelos o el ComfyUI real funcionen.
+
+#### Verificación real en GPU
+
+Con ComfyUI accesible:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8188/system_stats
+npm run image:health
+```
+
+Después genera una imagen desde la UI y confirma el trabajo persistido:
+
+```bash
+npm run db:query -- "SELECT id, status, seed, width, height, error_code FROM image_jobs ORDER BY created_at DESC LIMIT 5"
+```
+
+Revisa también que el PNG descargado desde la tarjeta sea válido y que edición, variante (semilla nueva) y recuperación tras reiniciar el worker funcionen contra ComfyUI real. Esa verificación queda pendiente si no hay acceso a la DGX o al túnel en el entorno de despliegue.
+
 ## Desarrollo de datos
 
 PostgreSQL es una dependencia real y consultable, no una base oculta detrás de la aplicación.

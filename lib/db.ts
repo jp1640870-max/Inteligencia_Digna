@@ -1,5 +1,6 @@
 import { query, withTransaction } from "./db-connection";
 import { toGeneratedDocumentMeta } from "./generated-document";
+import { attachImageGeneration } from "./images/repository";
 import type { PoolClient } from "pg";
 import type {
   AnnouncementRow,
@@ -607,7 +608,8 @@ export async function getMessagesByChat(chatId: string): Promise<Msg[]> {
     [chatId],
   );
   const messages = (result.rows as DbRow[]).map(messageFromRow);
-  return attachGeneratedDocuments(messages);
+  const withDocuments = await attachGeneratedDocuments(messages);
+  return attachImageGeneration(withDocuments);
 }
 
 /** Devuelve el mensaje solo si pertenece a un chat del usuario. */

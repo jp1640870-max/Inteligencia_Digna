@@ -40,6 +40,22 @@ import { retrieveRelevantChunks, formatRagContext } from "@/lib/rag";
 import { retrieveKb, formatKbContext, toKbSources } from "@/lib/kb";
 import { log, childLogger } from "@/lib/logger";
 import { checkRateLimit } from "@/lib/rate-limit";
+import {
+  detectImageIntent,
+  type ImageIntentResult,
+} from "@/lib/images/intent";
+import {
+  createImageClarification,
+  ImageServiceError,
+  startImageJob,
+} from "@/lib/images/service";
+import {
+  findJobByClientRequest,
+  getJobWithImageForUser,
+  getLatestGeneratedImageForChat,
+  toImageJobMeta,
+} from "@/lib/images/repository";
+import type { ImageReferenceInput } from "@/types";
 import type {
   DocGenStructure,
   DocGenFormat,
@@ -516,11 +532,23 @@ export async function POST(req: Request) {
     const filesContent = (form.get("filesContent") as string) || "";
     const editFromIndex = form.get("editFromIndex") as string | null;
     const projectId = form.get("projectId") as string | null;
+    const forceImage = form.get("forceImage") === "1";
+    const parentImageId = (form.get("parentImageId") as string) || undefined;
+    const clientRequestId = (form.get("clientRequestId") as string) || undefined;
+    const requestedWidth = Number(form.get("width")) || undefined;
+    const requestedHeight = Number(form.get("height")) || undefined;
     const images: string[] = [];
+    const imageReferences: ImageReferenceInput[] = [];
     form.forEach((value, key) => {
-      if (key.startsWith("image_") && typeof value === "string") {
-        images.push(value.split(",")[1]);
-      }
+      if (!key.startsWith("image_") || typeof value !== "string") return;
+      const match = /^data:([^;,]+)?(?:;base64)?,([\s\S]*)$/i.exec(value);
+      const data = match ? match[2] : value;
+      images.push(data);
+      imageReferences.push({
+        data,
+        mime: match?.[1],
+        filename: `referencia-${imageReferences.length + 1}`,
+      });
     });
 
     model = getChatModel();
@@ -562,10 +590,29 @@ ${project.instructions}`;
       }
     }
 
+    // Idempotencia: si el navegador reintentó una petición cuya respuesta se
+    // perdió, no se crea otro trabajo ni otro mensaje de usuario.
+    if (clientRequestId) {
+      const existingJob = await findJobByClientRequest(userId, clientRequestId);
+      if (existingJob) {
+        const details = await getJobWithImageForUser(existingJob.id, userId);
+        return NextResponse.json({
+          type: "image_job",
+          job: toImageJobMeta(existingJob, details?.image ?? undefined),
+          assistantMessageId: existingJob.assistant_message_id,
+          text: existingJob.status === "completed" ? "Imagen generada." : "Generando imagen…",
+          duplicate: true,
+        });
+      }
+    }
+
     const dbMessage = filesContent
       ? `[Archivos adjuntos]\n\n${message}\n\n---\n${filesContent}`
       : message;
-    try { await addMessage(chatId, "user", dbMessage, images); } catch {}
+    let userMessageId: number | null = null;
+    try {
+      userMessageId = await addMessage(chatId, "user", dbMessage, images);
+    } catch {}
 
     // --- Exportación por lenguaje natural ---
     // Se resuelve antes de RAG/KB porque no necesita contexto externo: solo
@@ -869,6 +916,96 @@ ${project.instructions}`;
       });
     }
     // --- End document creation detection ---
+
+    // --- Image generation detection ---
+    // El documento tiene prioridad: «hazme un PDF con una imagen» sigue siendo
+    // una exportación documental. La imagen se resuelve después y reutiliza el
+    // mismo endpoint para el botón y el lenguaje natural.
+    let hasGeneratedParent = false;
+    try {
+      hasGeneratedParent = Boolean(await getLatestGeneratedImageForChat(chatId, userId));
+    } catch {
+      hasGeneratedParent = false;
+    }
+    const imageIntent: ImageIntentResult = await detectImageIntent(message, {
+      history: history.map((item) => ({ role: item.role, text: item.text })),
+      referenceCount: imageReferences.length,
+      hasGeneratedParent,
+      parentImageId,
+      forceImage,
+    });
+
+    if (imageIntent.action === "clarify") {
+      const text =
+        "¿Quieres que genere una imagen? Dime qué debe mostrar o adjunta la imagen que quieres editar.";
+      const assistantMessageId = await createImageClarification(chatId, text);
+      return NextResponse.json({
+        type: "image_clarification",
+        text,
+        assistantMessageId,
+      });
+    }
+
+    if (
+      imageIntent.action === "generate" ||
+      imageIntent.action === "edit" ||
+      imageIntent.action === "variant"
+    ) {
+      reqLog.info(
+        {
+          action: imageIntent.action,
+          source: imageIntent.source,
+          confidence: imageIntent.confidence,
+          references: imageReferences.length,
+        },
+        "Intención de imagen detectada",
+      );
+      try {
+        const start = await startImageJob({
+          userId,
+          chatId,
+          userMessageId,
+          message,
+          intent: imageIntent,
+          referenceImages: imageReferences,
+          parentImageId,
+          clientRequestId,
+          width: requestedWidth,
+          height: requestedHeight,
+          history: history.map((item) => ({ role: item.role, text: item.text })),
+        });
+        return NextResponse.json({
+          type: "image_job",
+          job: start.job,
+          assistantMessageId: start.assistantMessageId,
+          text: start.assistantText,
+          duplicate: start.duplicate,
+        });
+      } catch (error) {
+        if (error instanceof ImageServiceError) {
+          if (error.code === "missing_image") {
+            const text =
+              "Para editar o crear una variante necesito una imagen. Adjúntala o selecciona una imagen generada anteriormente.";
+            const assistantMessageId = await createImageClarification(chatId, text);
+            return NextResponse.json({
+              type: "image_clarification",
+              text,
+              assistantMessageId,
+            });
+          }
+          reqLog.warn({ code: error.code, status: error.status }, "Solicitud de imagen rechazada");
+          // El error también debe persistir: al recargar el chat, el usuario no
+          // debe ver una pregunta sin respuesta.
+          const text = `No se pudo generar la imagen: ${error.message}`;
+          await addMessage(chatId, "ai", text).catch(() => undefined);
+          return NextResponse.json(
+            { error: error.message, code: error.code, text },
+            { status: error.status },
+          );
+        }
+        throw error;
+      }
+    }
 
     // --- Web search integration ---
     const encoder = new TextEncoder();

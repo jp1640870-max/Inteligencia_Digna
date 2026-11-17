@@ -8,6 +8,8 @@ import type {
   DocumentProgressStage,
   EditResult,
   GeneratedDocumentMeta,
+  GeneratedImageMeta,
+  ImageJobMeta,
   SearchResult,
 } from "@/types";
 
@@ -66,6 +68,11 @@ interface ChatState {
   images: string[];
   files: FileItem[];
 
+  // Modo imagen: el botón del sidebar y las acciones de una tarjeta generada
+  // fuerzan la intención aunque el texto no contenga una orden explícita.
+  imageMode: boolean;
+  parentImageId: string | null;
+
   // Edit mode
   editFile: File | null;
   editInstruction: string;
@@ -91,6 +98,9 @@ interface ChatState {
   setInput: (v: string) => void;
   setImages: (v: string[]) => void;
   setFiles: (v: FileItem[]) => void;
+  startImageMode: () => void;
+  exitImageMode: () => void;
+  prepareImageEdit: (image: GeneratedImageMeta, mode: "edit" | "variant") => void;
   setMessages: (v: Msg[] | ((prev: Msg[]) => Msg[])) => void;
   setChats: (v: Chat[]) => void;
   setChatId: (v: string) => void;
@@ -113,6 +123,10 @@ interface ChatState {
   /** Exporta una respuesta existente a PDF sin llamar al modelo. */
   exportMessageAsPdf: (index: number) => Promise<void>;
 
+  // Actions — imágenes
+  refreshImageJobs: () => Promise<void>;
+  cancelImageJob: (jobId: string) => Promise<void>;
+
   // Actions — files
   handlePaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   handleFilesSelected: (fileList: FileList) => void;
@@ -129,6 +143,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   input: "",
   images: [],
   files: [],
+  imageMode: false,
+  parentImageId: null,
   editFile: null,
   editInstruction: "",
   isEditMode: false,
@@ -141,6 +157,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setInput: (v) => set({ input: v }),
   setImages: (v) => set({ images: v }),
   setFiles: (v) => set({ files: v }),
+  startImageMode: () =>
+    set({
+      messages: [],
+      input: "",
+      images: [],
+      files: [],
+      chatId: uuidv4(),
+      imageMode: true,
+      parentImageId: null,
+      loading: false,
+      searching: false,
+    }),
+  exitImageMode: () => set({ imageMode: false, parentImageId: null }),
+  prepareImageEdit: (image, mode) =>
+    set({
+      imageMode: true,
+      parentImageId: image.id,
+      images: [],
+      files: [],
+      input:
+        mode === "variant"
+          ? "Crea una variación de esta imagen."
+          : "Edita esta imagen: ",
+    }),
   setMessages: (v) =>
     set((s) => ({
       messages: typeof v === "function" ? v(s.messages) : v,
@@ -195,6 +235,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...(!saved.document && match.document ? { document: match.document } : {}),
             ...(!saved.editResult && match.editResult ? { editResult: match.editResult } : {}),
             ...(match.documentProgress ? { documentProgress: match.documentProgress } : {}),
+            ...(!saved.imageJob && match.imageJob ? { imageJob: match.imageJob } : {}),
+            ...(!saved.generatedImages && match.generatedImages
+              ? { generatedImages: match.generatedImages }
+              : {}),
           };
         });
 
@@ -218,6 +262,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       images: [],
       files: [],
       chatId: uuidv4(),
+      imageMode: false,
+      parentImageId: null,
     });
 
     if (currentProjectId) {
@@ -235,7 +281,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({
       chatId: chat.id,
       messages: chat.messages,
+      imageMode: false,
+      parentImageId: null,
     });
+    // La lista puede venir de una carga anterior. Refrescarla permite ver el
+    // avance de trabajos de imagen que siguieron corriendo en otro chat.
+    void get().loadChats();
   },
 
   deleteChat: async (id) => {
@@ -460,8 +511,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendMessage: async (currentProjectId, textOverride, editFromIndex) => {
     const state = get();
     const messageText = textOverride ?? state.input;
+    const forcedImage = Boolean(textOverride === undefined && state.imageMode);
+    const selectedParentImageId = state.parentImageId;
 
-    if (!messageText.trim() && state.images.length === 0 && state.files.length === 0) return;
+    if (
+      !messageText.trim() &&
+      state.images.length === 0 &&
+      state.files.length === 0 &&
+      !forcedImage
+    ) {
+      return;
+    }
 
     // Auto-detect: editable file + edit keywords
     if (messageText.trim() && state.files.length > 0) {
@@ -498,7 +558,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       } catch { /* fallback: solo texto */ }
     }
 
-    const visibleText = messageText || "Analiza este archivo";
+    const visibleText =
+      messageText || (forcedImage ? "Crea una imagen" : "Analiza este archivo");
 
     const formData = new FormData();
     formData.append("chatId", state.chatId);
@@ -509,6 +570,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     extraImages.forEach((img, i) => {
       formData.append(`image_${i}`, img);
     });
+
+    if (forcedImage) formData.append("forceImage", "1");
+    if (selectedParentImageId) formData.append("parentImageId", selectedParentImageId);
+    // El servidor lo usa para no duplicar trabajos si el navegador reintenta.
+    // Se envía en todos los mensajes porque la intención de imagen también se
+    // detecta en el servidor a partir del lenguaje natural.
+    formData.append("clientRequestId", uuidv4());
 
     if (editFromIndex !== undefined) {
       formData.append("editFromIndex", String(editFromIndex));
@@ -555,6 +623,61 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (contentType.includes("application/json")) {
         const data = await res.json();
         set({ loading: false, searching: false });
+
+        if (!res.ok) {
+          set((s) => {
+            const copy = [...s.messages];
+            const last = copy[copy.length - 1];
+            if (last?.role === "ai") {
+              copy[copy.length - 1] = {
+                ...last,
+                text: data.text || data.error || "No se pudo completar la solicitud.",
+              };
+            }
+            return { messages: copy };
+          });
+          return;
+        }
+
+        if (data.type === "image_job") {
+          const job = data.job as ImageJobMeta;
+          set((s) => {
+            const copy = [...s.messages];
+            const last = copy[copy.length - 1];
+            if (last?.role === "ai") {
+              copy[copy.length - 1] = {
+                ...last,
+                id: data.assistantMessageId ?? job.assistantMessageId,
+                text: data.text || "Generando imagen…",
+                imageJob: job,
+                generatedImages: job.image ? [job.image] : undefined,
+              };
+            }
+            return {
+              messages: copy,
+              imageMode: false,
+              parentImageId: null,
+            };
+          });
+          return;
+        }
+
+        if (data.type === "image_clarification") {
+          set((s) => {
+            const copy = [...s.messages];
+            const last = copy[copy.length - 1];
+            if (last?.role === "ai") {
+              copy[copy.length - 1] = {
+                ...last,
+                id: data.assistantMessageId ?? last.id,
+                text: data.text || "",
+              };
+            }
+            return { messages: copy };
+          });
+          return;
+        }
+
         if (data.type === "document" && data.editResult) {
           let editResult = data.editResult;
           if (editResult.dataUri) {
@@ -767,6 +890,115 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
       set({ abortController: null, loading: false, searching: false });
       get().loadChats();
+    }
+  },
+
+  refreshImageJobs: async () => {
+    const { messages } = get();
+    const active = new Map<string, ImageJobMeta>();
+    for (const message of messages) {
+      const job = message.imageJob;
+      if (
+        job &&
+        !["completed", "failed", "cancelled"].includes(job.status) &&
+        !active.has(job.id)
+      ) {
+        active.set(job.id, job);
+      }
+    }
+    if (active.size === 0) return;
+
+    await Promise.all(
+      Array.from(active.keys()).map(async (jobId) => {
+        try {
+          const res = await fetch(`/api/images/jobs/${jobId}`, {
+            cache: "no-store",
+          });
+          if (res.status === 401) {
+            window.location.href = "/login";
+            return;
+          }
+          if (!res.ok) return;
+          const data = (await res.json()) as {
+            job?: ImageJobMeta;
+            assistantText?: string;
+          };
+          if (!data.job) return;
+          const job = data.job;
+
+          set((state) => {
+            const copy = [...state.messages];
+            const index = copy.findIndex(
+              (message) =>
+                message.imageJob?.id === job.id ||
+                (job.assistantMessageId !== undefined &&
+                  message.id === job.assistantMessageId),
+            );
+            if (index < 0) return { messages: copy };
+            const current = copy[index];
+            copy[index] = {
+              ...current,
+              id: job.assistantMessageId ?? current.id,
+              text:
+                data.assistantText ||
+                current.text ||
+                (job.status === "failed"
+                  ? "No se pudo generar la imagen."
+                  : "Generando imagen…"),
+              imageJob: job,
+              generatedImages: job.image
+                ? [job.image]
+                : current.generatedImages,
+            };
+            return { messages: copy };
+          });
+        } catch {
+          /* un fallo transitorio no debe detener el sondeo */
+        }
+      }),
+    );
+  },
+
+  cancelImageJob: async (jobId) => {
+    try {
+      const res = await fetch(`/api/images/jobs/${jobId}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (res.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      const data = (await res.json().catch(() => ({}))) as {
+        job?: ImageJobMeta;
+        error?: string;
+      };
+      if (!res.ok || !data.job) {
+        throw new Error(data.error || "No se pudo cancelar la imagen.");
+      }
+      const job = data.job;
+      set((state) => {
+        const copy = [...state.messages];
+        const index = copy.findIndex(
+          (message) =>
+            message.imageJob?.id === job.id ||
+            (job.assistantMessageId !== undefined &&
+              message.id === job.assistantMessageId),
+        );
+        if (index < 0) return { messages: copy };
+        copy[index] = {
+          ...copy[index],
+          imageJob: job,
+          text:
+            job.status === "cancelled"
+              ? "Generación de imagen cancelada."
+              : copy[index].text,
+        };
+        return { messages: copy };
+      });
+    } catch (error) {
+      console.error("No se pudo cancelar el trabajo de imagen:", error);
     }
   },
 

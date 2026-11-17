@@ -31,6 +31,9 @@ type Props = {
   onTypeChoiceAction?: (file: File, action: "analyze" | "edit") => void;
   onDismissTypeChoice?: () => void;
   onShowTypeChoice?: (file: File) => void;
+  imageMode?: boolean;
+  hasParentImage?: boolean;
+  onExitImageMode?: () => void;
 };
 
 const EDITABLE_EXTS = [".xlsx", ".xls", ".docx", ".pdf"];
@@ -57,6 +60,9 @@ const ChatInput = ({
   onTypeChoiceAction,
   onDismissTypeChoice,
   onShowTypeChoice,
+  imageMode = false,
+  hasParentImage = false,
+  onExitImageMode,
 }: Props) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editFileInputRef = useRef<HTMLInputElement>(null);
@@ -70,6 +76,10 @@ const ChatInput = ({
     }
   }, [input]);
 
+  useEffect(() => {
+    if (imageMode) textareaRef.current?.focus();
+  }, [imageMode]);
+
   const handleFileSelect = (fileList: FileList) => {
     const file = fileList[0];
     if (!file) return;
@@ -81,13 +91,33 @@ const ChatInput = ({
     }
   };
 
-  const canSend = input.trim().length > 0 || images.length > 0 || files.length > 0;
+  const canSend =
+    imageMode || input.trim().length > 0 || images.length > 0 || files.length > 0;
 
   return (
     <div
       className={`chat-composer-wrap ${darkMode ? "chat-theme-dark" : "chat-theme-light"}`}
     >
       <div className="chat-composer-inner">
+        {imageMode && (
+          <div className="chat-image-mode-bar">
+            <Wand2 size={14} aria-hidden="true" />
+            <span>
+              {hasParentImage
+                ? "Modo imagen · usando la imagen seleccionada"
+                : "Modo imagen"}
+            </span>
+            <button
+              type="button"
+              onClick={onExitImageMode}
+              title="Salir del modo imagen"
+              aria-label="Salir del modo imagen"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+
         {images.length > 0 && (
           <div className="chat-attachment-row">
             {images.map((img, index) => (
@@ -136,7 +166,7 @@ const ChatInput = ({
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,.docx,.xlsx,.xls,.txt,.md,.csv,.png,.jpg,.jpeg,.gif"
+          accept=".pdf,.docx,.xlsx,.xls,.txt,.md,.csv,.png,.jpg,.jpeg,.webp,.gif"
           multiple
           className="hidden"
           onChange={(event) => {
@@ -267,7 +297,11 @@ const ChatInput = ({
               value={input}
               onChange={(event) => onInputChange(event.target.value)}
               onPaste={onPaste}
-              placeholder="Escribe un mensaje..."
+              placeholder={
+                imageMode
+                  ? "Describe la imagen que quieres crear…"
+                  : "Escribe un mensaje..."
+              }
               className="chat-composer-textarea"
               aria-label="Mensaje"
               rows={1}

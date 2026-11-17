@@ -56,6 +56,7 @@ export default function Sidebar() {
   const currentChatId = useChatStore((s) => s.chatId);
   const openChat = useChatStore((s) => s.openChat);
   const newChat = useChatStore((s) => s.newChat);
+  const startImageMode = useChatStore((s) => s.startImageMode);
   const deleteChat = useChatStore((s) => s.deleteChat);
   const shareChat = useChatStore((s) => s.shareChat);
   const handleFilesSelected = useChatStore((s) => s.handleFilesSelected);
@@ -357,7 +358,15 @@ export default function Sidebar() {
         >
           <MessageSquarePlus size={17} strokeWidth={1.7} /> Nuevo chat
         </button>
-        <button aria-label="Crear imagen" className="sidebar-side-item">
+        <button
+          onClick={() => {
+            startImageMode();
+            setView({ type: "chat" });
+            setSidebarOpen(false);
+          }}
+          aria-label="Crear imagen"
+          className="sidebar-side-item"
+        >
           {/* eslint-disable-next-line jsx-a11y/alt-text -- falso positivo: icono lucide <Image>, no <img> */}
           <Image size={17} strokeWidth={1.7} /> Crear imagen
         </button>
@@ -625,6 +634,21 @@ export default function Sidebar() {
             aria-label="Nuevo chat"
           >
             <MessageSquarePlus size={18} strokeWidth={1.7} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              startImageMode();
+              setView({ type: "chat" });
+              setSidebarOpen(false);
+            }}
+            className={railButton}
+            title="Crear imagen"
+            aria-label="Crear imagen"
+          >
+            {/* eslint-disable-next-line jsx-a11y/alt-text -- falso positivo: icono lucide <Image>, no <img> */}
+            <Image size={18} strokeWidth={1.7} />
           </button>
 
           <button

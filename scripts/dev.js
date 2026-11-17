@@ -52,6 +52,44 @@ const next = spawn("npx", ["next", "dev", "--experimental-https"], {
   env: { ...process.env },
 });
 
+// ─── 2b. Worker de imágenes ───
+// En desarrollo se arranca junto con Next para que los trabajos no queden en
+// cola. Se puede desactivar con IMAGE_WORKER_AUTOSTART=0.
+let stopping = false;
+const imageEnabled =
+  (readEnvValue(".env", "IMAGE_ENABLED") || "true").toLowerCase() !== "false";
+const workerAutostart =
+  (readEnvValue(".env", "IMAGE_WORKER_AUTOSTART") || "true").toLowerCase() !==
+  "false";
+let imageWorker = null;
+if (imageEnabled && workerAutostart) {
+  const tsxCli = path.join(
+    process.cwd(),
+    "node_modules",
+    "tsx",
+    "dist",
+    "cli.mjs",
+  );
+  if (fs.existsSync(tsxCli)) {
+    console.log("  → Iniciando worker de imágenes (IMAGE_WORKER_AUTOSTART=false para omitir)");
+    imageWorker = spawn(
+      process.execPath,
+      [tsxCli, path.join("scripts", "image-worker-supervisor.ts")],
+      {
+        stdio: "inherit",
+        env: { ...process.env, IMAGE_WORKER_AUTOSTART: "0" },
+      },
+    );
+    imageWorker.on("exit", (code, signal) => {
+      if (!stopping) {
+        console.warn(
+          `  ⚠ Worker de imágenes terminó (código ${code ?? "?"}, señal ${signal ?? "?"}).`,
+        );
+      }
+    });
+  }
+}
+
 // ─── 3. Detectar ngrok automáticamente ───
 const NGROK_API = "http://127.0.0.1:4040/api/tunnels";
 const CHECK_INTERVAL = 4000; // 4s
@@ -85,13 +123,17 @@ const checkNgrok = setInterval(async () => {
 }, CHECK_INTERVAL);
 
 next.on("close", (code) => {
+  stopping = true;
   clearInterval(checkNgrok);
+  imageWorker?.kill("SIGTERM");
   process.exit(code ?? 0);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
+    stopping = true;
     clearInterval(checkNgrok);
+    imageWorker?.kill("SIGTERM");
     next.kill(signal);
   });
 }
