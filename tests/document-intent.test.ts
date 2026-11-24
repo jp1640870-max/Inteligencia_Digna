@@ -76,6 +76,7 @@ describe("detectDocFormat", () => {
   });
 });
 
+
 describe("resolveDocumentIntent", () => {
   const history = [
     { role: "user" as const, text: "Hazme un manual en Word" },

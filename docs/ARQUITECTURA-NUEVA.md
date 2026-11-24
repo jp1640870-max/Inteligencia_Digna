@@ -81,6 +81,9 @@ El navegador nunca conoce `DATABASE_URL`, `MINIO_ENDPOINT` ni `OLLAMA_URL`. Esas
 │   ├── rag.ts                 chunking y retrieval
 │   ├── permissions.ts         matriz rol → capacidad (fuente única)
 │   ├── kb-access.ts           política de lectura (fuente única)
+│   ├── email-policy.ts        dominio permitido para altas
+│   ├── password-policy.ts     complejidad de contraseña (fuente única)
+│   ├── google-oauth.ts        flag de OAuth (UI y API)
 │   └── kb.ts                  Knowledge Base
 ├── tests/
 │   ├── ollama.test.ts

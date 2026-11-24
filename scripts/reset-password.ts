@@ -1,17 +1,21 @@
-const bcrypt = require("bcryptjs");
-const { Pool } = require("pg");
+import bcrypt from "bcryptjs";
+import { Pool } from "pg";
+import { validatePasswordPolicy } from "../lib/password-policy";
 
 const email = process.argv[2];
 const newPassword = process.argv[3];
 
 if (!email || !newPassword) {
-  console.error("Uso: node scripts/reset-password.js <email> <nueva-password>");
+  console.error("Uso: npm run db:reset-password -- <email> <nueva-password>");
   process.exit(1);
 }
-if (newPassword.length < 12) {
-  console.error("La nueva contraseña debe tener al menos 12 caracteres");
+
+const passwordCheck = validatePasswordPolicy(newPassword);
+if (!passwordCheck.valid) {
+  console.error(`Contraseña inválida: ${passwordCheck.errors.join("; ")}`);
   process.exit(1);
 }
+
 if (!process.env.DATABASE_URL) {
   console.error("Falta DATABASE_URL");
   process.exit(1);
@@ -21,7 +25,10 @@ async function main() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
   try {
     const hash = await bcrypt.hash(newPassword, 10);
-    const result = await pool.query("UPDATE users SET password_hash = $1 WHERE LOWER(email) = LOWER($2)", [hash, email]);
+    const result = await pool.query(
+      "UPDATE users SET password_hash = $1 WHERE LOWER(email) = LOWER($2)",
+      [hash, email],
+    );
     if (result.rowCount === 0) {
       console.error(`Usuario con email "${email}" no encontrado.`);
       process.exitCode = 1;

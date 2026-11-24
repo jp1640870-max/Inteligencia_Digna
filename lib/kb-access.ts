@@ -16,7 +16,9 @@ import type { KbChunk, KbFile, UserRole } from "@/types";
  *
  * Reglas:
  *  - Sin grant explícito no hay acceso. La ausencia de política es denegación,
- *    nunca permiso implícito.
+ *    nunca permiso implícito. El trigger de la migración 009 agrega a cada usuario
+ *    nuevo al área `general`, pero no crea grants: la pertenencia es el canal
+ *    por el que el administrador reparte acceso, no un permiso en sí misma.
  *  - `super_admin` y `admin` tienen bypass: son el perímetro y gestionan el
  *    contenido en lugar de consultarlo. El control sobre ellos es detective
  *    (auditoría + revisión periódica de grants), no preventivo.

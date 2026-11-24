@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
+import { validateRegistrationEmail } from "../lib/email-policy";
+import { validatePasswordPolicy } from "../lib/password-policy";
 
 function loadEnvironment(): void {
   for (const fileName of [".env"]) {
@@ -27,7 +29,13 @@ async function main(): Promise<void> {
     throw new Error("Define DATABASE_URL, ADMIN_EMAIL y ADMIN_PASSWORD para crear el administrador");
   }
   if (!["super_admin", "admin"].includes(role)) throw new Error("ADMIN_ROLE debe ser super_admin o admin");
-  if (password.length < 12) throw new Error("ADMIN_PASSWORD debe tener al menos 12 caracteres");
+
+  const emailCheck = validateRegistrationEmail(email);
+  if (!emailCheck.valid) throw new Error(`ADMIN_EMAIL: ${emailCheck.error}`);
+  const passwordCheck = validatePasswordPolicy(password);
+  if (!passwordCheck.valid) {
+    throw new Error(`ADMIN_PASSWORD: ${passwordCheck.errors.join("; ")}`);
+  }
 
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
   try {

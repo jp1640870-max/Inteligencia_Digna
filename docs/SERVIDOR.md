@@ -61,7 +61,11 @@ Con dominio, TLS automático y Google OAuth:
 
 En ese caso `NEXTAUTH_URL` queda en `https://digna.midominio.com`, Caddy obtiene el certificado y el callback de Google es `https://digna.midominio.com/api/auth/google/callback`. El DNS debe apuntar al servidor y los puertos 80/443 deben estar abiertos. La app sigue escuchando en `0.0.0.0:3000`; si quieres cerrar el acceso directo, cambia `APP_BIND_ADDRESS=127.0.0.1` y elimina la regla de firewall 3000.
 
+El botón de Google está oculto y las rutas OAuth bloqueadas hasta que `GOOGLE_OAUTH_ENABLED=true` esté definido en `.env`. Tener el Client ID y el secreto no basta: el flag manda tanto en la UI como en la API.
+
 Sin dominio, el primer despliegue usa HTTP interno. El login por email/contraseña funciona; Google OAuth necesita HTTPS (Caddy, un proxy TLS o un túnel).
+
+Las altas de usuario (registro, panel de administración y Google) solo aceptan correos del dominio configurado en `ALLOWED_EMAIL_DOMAIN` (`example.org` por defecto). La contraseña debe tener al menos 12 caracteres con mayúscula, minúscula y carácter especial; la misma política aplica a `db:create-admin` y `db:reset-password`.
 
 ### Actualizaciones
 

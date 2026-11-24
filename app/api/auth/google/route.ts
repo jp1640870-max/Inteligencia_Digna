@@ -1,12 +1,17 @@
 import { createHash, randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getPublicOrigin } from "@/lib/public-url";
+import { isGoogleOAuthEnabled } from "@/lib/google-oauth";
 
 function base64Url(value: Buffer): string {
   return value.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 export async function GET(req: Request) {
+  if (!isGoogleOAuthEnabled()) {
+    return NextResponse.json({ error: "Google OAuth deshabilitado" }, { status: 404 });
+  }
+
   const clientId = process.env.GOOGLE_CLIENT_ID;
   if (!clientId) return NextResponse.json({ error: "Google OAuth no configurado" }, { status: 500 });
 

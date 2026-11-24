@@ -6,6 +6,7 @@ import Link from "next/link";
 import { SIN_AREA, assignableRolesFor } from "@/types";
 import type { UserRole } from "@/types";
 import { useAuthStore } from "@/lib/stores/auth-store";
+import { PASSWORD_REQUIREMENTS_TEXT, validatePasswordPolicy } from "@/lib/password-policy";
 
 type AdminUser = {
   id: string;
@@ -133,8 +134,9 @@ export default function AdminUsuarios() {
       setCreateError("Email y contraseña son requeridos");
       return;
     }
-    if (createForm.password.length < 6) {
-      setCreateError("La contraseña debe tener al menos 6 caracteres");
+    const passwordCheck = validatePasswordPolicy(createForm.password);
+    if (!passwordCheck.valid) {
+      setCreateError(passwordCheck.errors[0]);
       return;
     }
     setCreating(true);
@@ -227,9 +229,10 @@ export default function AdminUsuarios() {
                   type="password"
                   value={createForm.password}
                   onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
-                  placeholder="Mínimo 6 caracteres"
+                  placeholder="Contraseña segura"
                   className="w-full bg-[#030812] border border-[#202938] rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500/50"
                 />
+                <p className="text-[11px] text-gray-500 mt-1">{PASSWORD_REQUIREMENTS_TEXT}</p>
               </div>
               <div>
                 <label className="text-xs text-gray-500 block mb-1">Rol</label>

@@ -1,5 +1,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { DEFAULT_ALLOWED_EMAIL_DOMAIN } from "../lib/email-policy.js";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -298,6 +300,56 @@ describe("ACL contra Postgres", { skip: hasDatabase() ? false : "sin DATABASE_UR
     const general = areas.find((a) => a.name === areaName);
     assert.ok(general, "el área sembrada debe existir y estar activa");
     assert.ok((general.member_count ?? 0) > 0, "el área debe tener miembros");
+  });
+});
+
+/**
+ * La regla nueva no es una convención en el código de registro: es un trigger,
+ * así que debe cumplirse incluso para inserciones directas. Se comprueba con un
+ * usuario temporal y un archivo temporal con grant al área general, sin tocar
+ * los grants reales de la instancia.
+ */
+describe("Alta por defecto en el área general", { skip: hasDatabase() ? false : "sin DATABASE_URL" }, () => {
+  it("todo usuario nuevo pertenece al área general y hereda sus grants", async () => {
+    const db = await import("../lib/db.js");
+    const { query } = await import("../lib/db-connection.js");
+    const general = await query<{ id: string }>(
+      "SELECT id FROM areas WHERE key = 'general' AND is_active = TRUE",
+    );
+    assert.ok(general.rows[0], "el área general debe existir y estar activa");
+    const areaId = general.rows[0].id;
+
+    const userId = randomUUID();
+    const fileId = randomUUID();
+    try {
+      await db.createUser(userId, `test-general-${Date.now()}@${DEFAULT_ALLOWED_EMAIL_DOMAIN}`, "Usuario prueba");
+
+      const member = await query(
+        "SELECT 1 FROM area_members WHERE area_id = $1 AND user_id = $2",
+        [areaId, userId],
+      );
+      assert.equal(member.rowCount, 1, "el trigger debió agregar al usuario al área general");
+
+      await db.insertKbFile({
+        id: fileId,
+        filename: `test-general-${Date.now()}.txt`,
+        format: "text",
+        status: "active",
+        content: "contenido de prueba",
+      });
+      await db.grantKbFileAccess({
+        principalType: "area",
+        principalId: areaId,
+        kbFileId: fileId,
+        grantedBy: userId,
+      });
+
+      const accessible = await db.getAccessibleKbFileIds(userId);
+      assert.ok(accessible.includes(fileId), "el usuario debe leer archivos con grant del área general");
+    } finally {
+      if (fileId) await query("DELETE FROM kb_files WHERE id = $1", [fileId]);
+      if (userId) await query("DELETE FROM users WHERE id = $1", [userId]);
+    }
   });
 });
 

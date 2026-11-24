@@ -7,7 +7,6 @@ import {
   PanelLeftClose,
   MessageSquarePlus,
   Image,
-  FileText,
   Folder,
   Brain,
   Search,
@@ -59,7 +58,6 @@ export default function Sidebar() {
   const startImageMode = useChatStore((s) => s.startImageMode);
   const deleteChat = useChatStore((s) => s.deleteChat);
   const shareChat = useChatStore((s) => s.shareChat);
-  const handleFilesSelected = useChatStore((s) => s.handleFilesSelected);
 
   const projects = useProjectStore((s) => s.projects);
   const projectChats = useProjectStore((s) => s.projectChats);
@@ -100,7 +98,6 @@ export default function Sidebar() {
 
   // ─── Local UI state (menu) ───
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
-  const analyzeInputRef = useRef<HTMLInputElement>(null);
   const [searchPopoverOpen, setSearchPopoverOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [popoverSearch, setPopoverSearch] = useState("");
@@ -370,8 +367,15 @@ export default function Sidebar() {
           {/* eslint-disable-next-line jsx-a11y/alt-text -- falso positivo: icono lucide <Image>, no <img> */}
           <Image size={17} strokeWidth={1.7} /> Crear imagen
         </button>
-        <button onClick={() => analyzeInputRef.current?.click()} className="sidebar-side-item">
-          <FileText size={17} strokeWidth={1.7} /> Analizar archivo
+        <button
+          onClick={() => {
+            setView({ type: "agents" });
+            setSidebarOpen(false);
+          }}
+          className={`sidebar-side-item ${view.type === "agents" ? "is-active" : ""}`}
+          aria-current={view.type === "agents" ? "page" : undefined}
+        >
+          <Brain size={17} strokeWidth={1.7} /> Hearts
         </button>
         <button
           onClick={() => {
@@ -572,8 +576,6 @@ export default function Sidebar() {
           </div>
         )}
       </div>
-
-      <input ref={analyzeInputRef} type="file" accept=".pdf,.docx,.xlsx,.xls,.txt,.md,.csv,.png,.jpg,.jpeg,.gif" multiple className="hidden" onChange={(e) => { if (e.target.files) handleFilesSelected(e.target.files); e.target.value = ""; }} />
 
       <div className={`hidden lg:block absolute right-0 top-0 h-full w-1 cursor-col-resize z-50 transition-colors ${isResizing ? "bg-green-500" : "bg-transparent hover:bg-green-500/40"}`} onMouseDown={handleResizeStart} />
     </div>

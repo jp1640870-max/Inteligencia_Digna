@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { createUser, getUserByEmail, logAudit } from "@/lib/db";
 import { hashPassword, signToken } from "@/lib/auth";
+import { validateRegistrationEmail } from "@/lib/email-policy";
+import { validatePasswordPolicy } from "@/lib/password-policy";
 
 export async function POST(req: Request) {
   try {
@@ -10,6 +12,19 @@ export async function POST(req: Request) {
     if (!email || !password) {
       return NextResponse.json(
         { error: "Email y contraseña son requeridos" },
+        { status: 400 }
+      );
+    }
+
+    const emailCheck = validateRegistrationEmail(email);
+    if (!emailCheck.valid) {
+      return NextResponse.json({ error: emailCheck.error }, { status: 400 });
+    }
+
+    const passwordCheck = validatePasswordPolicy(password);
+    if (!passwordCheck.valid) {
+      return NextResponse.json(
+        { error: passwordCheck.errors[0], errors: passwordCheck.errors },
         { status: 400 }
       );
     }

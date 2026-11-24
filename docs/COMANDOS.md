@@ -71,6 +71,8 @@ npm run smoke:db
 
 `db:migrate` aplica `migrations/*.sql` en orden y registra checksum en `schema_migrations`. `db:seed` es idempotente y no crea usuarios ni contraseñas. Para crear el primer administrador usa `npm run db:create-admin` con `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` y `ADMIN_ROLE`. Para resetear una contraseña usa `npm run db:reset-password -- email nueva-password`.
 
+`ADMIN_EMAIL` y la contraseña nueva deben cumplir las mismas reglas que las altas desde la app: correo en `ALLOWED_EMAIL_DOMAIN` (por defecto `@example.org`) y contraseña de al menos 12 caracteres con mayúscula, minúscula y carácter especial. La migración 009 agrega automáticamente cada usuario nuevo al área `general` de la KB; los grants de archivos siguen siendo explícitos.
+
 ## Ollama
 
 El backend usa la API nativa, no SGLang:
@@ -155,7 +157,7 @@ El servidor de desarrollo acepta localhost, la LAN y los dominios de ngrok sin c
    https://mi-dominio.ngrok-free.dev/api/auth/google/callback
    ```
 
-5. Completa `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` en `.env`, y reinicia el dev server.
+5. Completa `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` y `GOOGLE_OAUTH_ENABLED=true` en `.env`, y reinicia el dev server. Sin el flag el botón no aparece y las rutas devuelven error aunque las credenciales estén correctas.
 
 El callback de ngrok aparece en la salida de `npm run dev` y en `npm run env:show`. El login con Google crea un rol `user` si el correo es nuevo; para probar un admin con Google, crea primero el usuario con ese correo usando `db:create-admin`.
 

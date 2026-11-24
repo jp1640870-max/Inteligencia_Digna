@@ -34,3 +34,19 @@ Default breve	        2 páginas	                                               
 5. Ruta + evento `target: "previous-ai"`.
 6. UI + docs + deploy.
 7. `npm test`, `npm run lint` y prueba manual.
+
+_____________________________________________________________________________________________________________________________________________________________________________________
+
+# Cambios de acceso y altas de usuario (implementado)
+
+1. KB "general" por defecto: la migración `009_default_general_kb_access.sql` crea un trigger `AFTER INSERT ON users` que agrega a cada usuario nuevo al área `general` (activa) y hace backfill de usuarios sin pertenencia. Cubre registro, panel admin, callback de Google, `db:create-admin` e inserciones directas. No crea grants: el ACL sigue fail-closed y el administrador reparte el acceso al área.
+
+2. Google OAuth oculto temporalmente: flag `GOOGLE_OAUTH_ENABLED=false` (default). `lib/google-oauth.ts` gira UI y API: el login oculta botón/divisor y `/api/auth/google` + `/callback` responden 404/redirect. Se reactiva con `GOOGLE_OAUTH_ENABLED=true` en `.env`.
+
+3. Dominio de altas: `ALLOWED_EMAIL_DOMAIN=example.org` (default) y validador puro en `lib/email-policy.ts`. Se aplica en registro, creación desde admin, callback de Google (cuando se reactive) y `db:create-admin`. Coincidencia exacta, case-insensitive; rechaza subdominios y suplantaciones.
+
+4. Contraseñas: `lib/password-policy.ts` exige mínimo 12 caracteres, mayúscula, minúscula y carácter no alfanumérico (`@`, `.`, `!`, etc.). Misma regla en registro, panel admin, `db:reset-password` (ahora TypeScript con `tsx`) y `db:create-admin`. La UI muestra los requisitos; el servidor es la autoridad.
+
+Archivos nuevos: `lib/password-policy.ts`, `lib/email-policy.ts`, `lib/google-oauth.ts`, `app/components/LoginForm.tsx`, `scripts/reset-password.ts`, `migrations/009_default_general_kb_access.sql`, `tests/auth-policy.test.ts`.
+Ajustes: rutas de auth y admin users, `app/login/page.tsx` (wrapper server), `app/admin/usuarios/page.tsx`, `lib/env.ts`, `lib/kb-access.ts`, `scripts/seed.ts`, `package.json`, `.env.example`, docs y test de integración del ACL.
+Verificación ejecutada: `npm test` (261/261), `npm run lint` (0 errores, 11 warnings preexistentes), `npx tsc --noEmit`, `npm run build`, `npm run db:migrate` (009 aplicada) y `npm run test:db` (276/276, incluye el nuevo test del trigger).

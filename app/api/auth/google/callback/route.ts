@@ -4,12 +4,17 @@ import { v4 as uuidv4 } from "uuid";
 import { createUser, getUserByEmail, getUserByGoogleId, updateUserPicture, updateUserGoogleId } from "@/lib/db";
 import { signToken, isUserRole } from "@/lib/auth";
 import { getPublicOrigin } from "@/lib/public-url";
+import { isGoogleOAuthEnabled } from "@/lib/google-oauth";
+import { isAllowedEmailDomain } from "@/lib/email-policy";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
 
 export async function GET(req: Request) {
   const publicOrigin = getPublicOrigin(req);
+  if (!isGoogleOAuthEnabled()) {
+    return NextResponse.redirect(new URL("/login?error=oauth_disabled", publicOrigin));
+  }
   try {
     const { searchParams } = new URL(req.url);
     const code = searchParams.get("code");
@@ -55,6 +60,9 @@ export async function GET(req: Request) {
     };
     if (!userRes.ok || !googleUser.id || !googleUser.email || googleUser.verified_email === false) {
       return NextResponse.redirect(new URL("/login?error=email_required", publicOrigin));
+    }
+    if (!isAllowedEmailDomain(googleUser.email)) {
+      return NextResponse.redirect(new URL("/login?error=domain_not_allowed", publicOrigin));
     }
 
     let user = await getUserByGoogleId(googleUser.id);

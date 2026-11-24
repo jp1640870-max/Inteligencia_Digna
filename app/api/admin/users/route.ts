@@ -9,6 +9,8 @@ import {
   canAssignRole,
 } from "@/lib/auth";
 import { getAllUsers, createUser, getUserByEmail, logAudit } from "@/lib/db";
+import { validateRegistrationEmail } from "@/lib/email-policy";
+import { validatePasswordPolicy } from "@/lib/password-policy";
 
 /**
  * `areaId` y `groupId` se combinan con AND; `SIN_AREA` selecciona a quien no
@@ -65,6 +67,19 @@ export async function POST(req: Request) {
 
   if (!email || !password) {
     return NextResponse.json({ error: "Email y contraseña son requeridos" }, { status: 400 });
+  }
+
+  const emailCheck = validateRegistrationEmail(email);
+  if (!emailCheck.valid) {
+    return NextResponse.json({ error: emailCheck.error }, { status: 400 });
+  }
+
+  const passwordCheck = validatePasswordPolicy(password);
+  if (!passwordCheck.valid) {
+    return NextResponse.json(
+      { error: passwordCheck.errors[0], errors: passwordCheck.errors },
+      { status: 400 }
+    );
   }
 
   const existing = await getUserByEmail(email);
