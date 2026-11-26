@@ -6,8 +6,11 @@ import {
   Building2,
   Check,
   Copy,
+  LifeBuoy,
   Loader2,
+  MessageSquare,
   Pencil,
+  Pin,
   Plus,
   RefreshCw,
   Search,
@@ -23,8 +26,12 @@ import {
   type HeartDraft,
   type HeartTool,
 } from "@/lib/heart-config";
+import { resolveOfficialAgent } from "@/lib/official-agents";
 import { useAgentsStore } from "@/lib/stores/agents-store";
-import type { Agent } from "@/types";
+import { useChatStore } from "@/lib/stores/chat-store";
+import { useProjectStore } from "@/lib/stores/project-store";
+import { useUIStore } from "@/lib/stores/ui-store";
+import type { Agent, Chat } from "@/types";
 
 type EditorState = { mode: "create" } | { mode: "edit"; agent: Agent };
 
@@ -54,38 +61,92 @@ function AgentCard({
   onEdit,
   onDuplicate,
   onDelete,
+  onPin,
+  onStartChat,
 }: {
   agent: Agent;
   onEdit: (agent: Agent) => void;
   onDuplicate: (agent: Agent) => void;
   onDelete: (agent: Agent) => void;
+  onPin: (agent: Agent) => void;
+  onStartChat: (agent: Agent) => void;
 }) {
+  const officialAgent = agent.agent_key ? resolveOfficialAgent(agent.agent_key) : null;
+  const official = Boolean(officialAgent);
+  const userPinned = agent.is_pinned;
+  const highlighted = userPinned || agent.is_featured;
+  const toolLabels = official
+    ? ["Base de conocimiento", "Archivos de conversación", "Escalamiento"]
+    : agent.tools.map((tool) => HEART_TOOL_LABELS[tool]);
+  const description =
+    officialAgent?.description ||
+    agent.instructions ||
+    agent.tone ||
+    "Sin instrucciones todavía.";
+  const pinTitle = userPinned
+    ? "Quitar de mis fijados"
+    : agent.is_featured
+      ? "Destacado por la empresa. Fijar también en mi panel"
+      : "Fijar en mi panel";
+
   return (
-    <article className="surface-card group flex min-h-[212px] flex-col gap-3 rounded-2xl p-5 transition-colors hover:border-[var(--chat-accent-border)]">
+    <article className="surface-card group flex min-h-[228px] flex-col gap-3 rounded-2xl p-5 transition-colors hover:border-[var(--chat-accent-border)]">
       <div className="flex items-start gap-3">
         <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-500 text-white shadow-lg shadow-emerald-500/15">
-          <Brain size={20} strokeWidth={1.8} />
+          {official ? (
+            <LifeBuoy size={20} strokeWidth={1.8} />
+          ) : (
+            <Brain size={20} strokeWidth={1.8} />
+          )}
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate text-[15px] font-semibold text-[var(--chat-text-strong)]">
               {agent.name}
             </h3>
-            {!agent.is_owner && (
+            {agent.scope === "company" && (
               <span className="shrink-0 rounded-full bg-[var(--chat-accent-soft)] px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-[var(--chat-accent)]">
                 Empresa
               </span>
             )}
+            {official && (
+              <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-emerald-400">
+                Oficial
+              </span>
+            )}
+            {agent.is_featured && (
+              <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-amber-400">
+                Destacado
+              </span>
+            )}
           </div>
           <p className="truncate text-xs text-[var(--chat-muted)]">
-            {agent.role || (agent.is_owner ? "Heart personal" : "Heart de la empresa")}
+            {agent.role ||
+              (agent.scope === "personal"
+                ? "Heart personal"
+                : "Heart de la empresa")}
           </p>
         </div>
+
+        <button
+          type="button"
+          onClick={() => onPin(agent)}
+          title={pinTitle}
+          aria-label={pinTitle}
+          aria-pressed={userPinned}
+          className={`shrink-0 rounded-lg p-1.5 transition-colors ${
+            highlighted
+              ? "text-[var(--chat-accent)] hover:bg-[var(--chat-accent-soft)]"
+              : "text-[var(--chat-muted-2)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--chat-text)]"
+          }`}
+        >
+          <Pin size={14} fill={userPinned ? "currentColor" : "none"} />
+        </button>
       </div>
 
       <p className="line-clamp-3 text-[12.5px] leading-relaxed text-[var(--chat-muted)]">
-        {agent.instructions || agent.tone || "Sin instrucciones todavía."}
+        {description}
       </p>
 
       <div className="flex flex-wrap items-center gap-1.5">
@@ -93,18 +154,27 @@ function AgentCard({
           <Settings size={10} strokeWidth={1.8} />
           Temp. {agent.temperature.toFixed(1)}
         </span>
-        {agent.tools.map((tool) => (
+        {toolLabels.map((label) => (
           <span
-            key={tool}
+            key={label}
             className="rounded-full bg-[var(--sidebar-card)] px-2 py-0.5 text-[10px] text-[var(--chat-muted)]"
           >
-            {HEART_TOOL_LABELS[tool]}
+            {label}
           </span>
         ))}
       </div>
 
-      <div className="mt-auto flex items-center gap-1.5 border-t border-[var(--sidebar-border)] pt-3">
-        {agent.is_owner ? (
+      <div className="mt-auto flex flex-wrap items-center gap-1.5 border-t border-[var(--sidebar-border)] pt-3">
+        <button
+          type="button"
+          onClick={() => onStartChat(agent)}
+          className="accent-button inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11.5px]"
+        >
+          <MessageSquare size={13} strokeWidth={1.8} />
+          Conversar
+        </button>
+
+        {agent.scope === "personal" ? (
           <>
             <button type="button" onClick={() => onEdit(agent)} className={secondaryButton}>
               <Pencil size={13} strokeWidth={1.8} />
@@ -124,13 +194,9 @@ function AgentCard({
             </button>
           </>
         ) : (
-          <button
-            type="button"
-            onClick={() => onDuplicate(agent)}
-            className="accent-button inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11.5px]"
-          >
+          <button type="button" onClick={() => onDuplicate(agent)} className={secondaryButton}>
             <Copy size={13} strokeWidth={1.8} />
-            Duplicar para personalizar
+            Duplicar
           </button>
         )}
       </div>
@@ -148,7 +214,13 @@ export default function AgentsView() {
   const updateAgent = useAgentsStore((s) => s.updateAgent);
   const duplicateAgent = useAgentsStore((s) => s.duplicateAgent);
   const deleteAgent = useAgentsStore((s) => s.deleteAgent);
+  const togglePin = useAgentsStore((s) => s.togglePin);
   const clearError = useAgentsStore((s) => s.clearError);
+
+  const chats = useChatStore((s) => s.chats);
+  const startHeartChat = useChatStore((s) => s.startHeartChat);
+  const openChat = useChatStore((s) => s.openChat);
+  const setView = useUIStore((s) => s.setView);
 
   const [query, setQuery] = useState("");
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -177,8 +249,12 @@ export default function AgentsView() {
     );
   }, [agents, query]);
 
-  const mine = filtered.filter((agent) => agent.is_owner);
-  const company = filtered.filter((agent) => !agent.is_owner);
+  const mine = filtered.filter((agent) => agent.scope === "personal");
+  const company = filtered.filter((agent) => agent.scope === "company");
+  const heartChats = useMemo(
+    () => chats.filter((chat) => Boolean(chat.heart_id || chat.agent_key)),
+    [chats],
+  );
   const hasAgents = agents.length > 0;
 
   const openCreate = () => {
@@ -234,6 +310,24 @@ export default function AgentsView() {
     await duplicateAgent(agent.id);
   };
 
+  const handlePin = async (agent: Agent) => {
+    clearError();
+    await togglePin(agent.id);
+  };
+
+  const handleStartChat = (agent: Agent) => {
+    // Un Heart se abre como conversación propia, no como chat de proyecto.
+    useProjectStore.getState().setCurrentProjectId(null);
+    startHeartChat(agent);
+    setView({ type: "chat" });
+  };
+
+  const handleOpenChat = (chat: Chat) => {
+    useProjectStore.getState().setCurrentProjectId(null);
+    openChat(chat);
+    setView({ type: "chat" });
+  };
+
   const confirmDelete = async () => {
     if (!deleteTarget || deleting) return;
     setDeleting(true);
@@ -255,8 +349,9 @@ export default function AgentsView() {
               Hearts
             </h1>
             <p className="mt-1.5 max-w-2xl text-sm text-[var(--chat-muted)]">
-              Crea asistentes con su propio rol, tono e instrucciones. Los Hearts de la
-              empresa puedes duplicarlos para adaptarlos a tu trabajo.
+              Crea Hearts personales o conversa con los de la empresa. Los Hearts de
+              empresa se gestionan desde administración; aquí puedes fijarlos y
+              duplicarlos para adaptarlos a tu trabajo.
             </p>
           </div>
 
@@ -266,7 +361,7 @@ export default function AgentsView() {
             className="accent-button inline-flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm"
           >
             <Plus size={16} strokeWidth={2} />
-            Nuevo Heart
+            Nuevo Heart personal
           </button>
         </header>
 
@@ -372,6 +467,8 @@ export default function AgentsView() {
                       onEdit={openEdit}
                       onDuplicate={handleDuplicate}
                       onDelete={setDeleteTarget}
+                      onPin={handlePin}
+                      onStartChat={handleStartChat}
                     />
                   ))}
                 </div>
@@ -402,11 +499,64 @@ export default function AgentsView() {
                       onEdit={openEdit}
                       onDuplicate={handleDuplicate}
                       onDelete={setDeleteTarget}
+                      onPin={handlePin}
+                      onStartChat={handleStartChat}
                     />
                   ))}
                 </div>
               </section>
             )}
+
+            <section>
+              <div className="mb-3 flex items-center gap-2">
+                <MessageSquare
+                  size={14}
+                  strokeWidth={1.8}
+                  className="text-[var(--chat-muted-2)]"
+                />
+                <h2 className="text-[13px] font-semibold uppercase tracking-[0.12em] text-[var(--chat-muted)]">
+                  Conversaciones con Hearts
+                </h2>
+                <span className="rounded-full bg-[var(--sidebar-card)] px-2 py-0.5 text-[10px] font-medium text-[var(--chat-muted-2)]">
+                  {heartChats.length}
+                </span>
+              </div>
+
+              {heartChats.length === 0 ? (
+                <p className="surface-card rounded-xl px-4 py-5 text-sm text-[var(--chat-muted)]">
+                  Aún no has iniciado una conversación con un Heart. Usa el botón
+                  Conversar de cualquier tarjeta.
+                </p>
+              ) : (
+                <div className="grid gap-2 md:grid-cols-2">
+                  {heartChats.map((chat) => (
+                    <button
+                      key={chat.id}
+                      type="button"
+                      onClick={() => handleOpenChat(chat)}
+                      className="surface-card flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left transition-colors hover:border-[var(--chat-accent-border)]"
+                    >
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[var(--chat-accent-soft)] text-[var(--chat-accent)]">
+                        {chat.agent_key ? (
+                          <LifeBuoy size={16} strokeWidth={1.8} />
+                        ) : (
+                          <MessageSquare size={16} strokeWidth={1.8} />
+                        )}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] font-medium text-[var(--chat-text)]">
+                          {chat.title}
+                        </span>
+                        <span className="block truncate text-[11px] text-[var(--chat-muted)]">
+                          {chat.heart_name ||
+                            (chat.agent_key ? "Soporte Técnico" : "Heart")}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
           </div>
         )}
       </div>
@@ -430,7 +580,9 @@ export default function AgentsView() {
                   id="agent-editor-title"
                   className="text-lg font-semibold text-[var(--chat-text-strong)]"
                 >
-                  {editor.mode === "create" ? "Nuevo Heart" : "Editar Heart"}
+                  {editor.mode === "create"
+                    ? "Nuevo Heart personal"
+                    : "Editar Heart personal"}
                 </h2>
                 <p className="mt-1 text-xs text-[var(--chat-muted)]">
                   Define cómo se comporta y qué herramientas puede usar.

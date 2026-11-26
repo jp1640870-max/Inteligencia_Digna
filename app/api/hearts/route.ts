@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthUserFromRequest } from "@/lib/auth";
 import {
+  ensureOfficialSupportHeart,
   insertHeart,
   listHeartsForUser,
   sanitizeHeartInput,
@@ -12,6 +13,14 @@ export async function GET() {
     return NextResponse.json({ error: "No autenticado" }, { status: 401 });
   }
   const userId = authUser.id;
+
+  // La tarjeta oficial de Soporte debe existir una sola vez y ser visible para
+  // todos. La creación es idempotente y no altera un Heart ya vinculado.
+  try {
+    await ensureOfficialSupportHeart(userId);
+  } catch {
+    // Si falla la creación, la lista de Hearts sigue siendo utilizable.
+  }
 
   const agents = await listHeartsForUser(userId);
   return NextResponse.json({ agents });

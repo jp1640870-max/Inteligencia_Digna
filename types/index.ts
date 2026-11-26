@@ -25,6 +25,8 @@ export type Msg = {
   generatedImages?: GeneratedImageMeta[];
   searching?: boolean;
   sources?: SearchResult[];
+  /** Fuentes de la Knowledge Base usadas por una respuesta del agente oficial. */
+  kbSources?: KbSource[];
 };
 
 export type ImageJobKind = "generate" | "edit" | "variant";
@@ -172,6 +174,12 @@ export type Chat = {
   id: string;
   title: string;
   messages: Msg[];
+  /** Heart al que pertenece la conversación; NULL en chats normales. */
+  heart_id?: string | null;
+  /** Nombre del Heart, incluido por la API para mostrarlo sin consultas extra. */
+  heart_name?: string | null;
+  /** Identificador del agente oficial cuando la conversación no es un chat normal. */
+  agent_key?: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -498,8 +506,8 @@ export type KbChunk = {
 };
 
 /**
- * Fuente KB citada por una respuesta del asistente (solo para auditoría admin,
- * nunca se muestra al usuario final).
+ * Fuente KB citada por una respuesta del asistente. Se guarda para auditoría y
+ * el agente oficial la muestra como referencia documental al usuario.
  */
 export type KbSource = {
   file_id: string;
@@ -609,6 +617,10 @@ export type ChatRow = {
   user_id: string;
   title: string;
   heart_id: string | null;
+  /** Agente oficial de la conversación; NULL en chats normales y Hearts personales. */
+  agent_key: string | null;
+  /** Nombre del Heart cuando la consulta hace JOIN con `hearts`. */
+  heart_name?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -646,6 +658,8 @@ export type MessageRow = {
   created_at: string;
 };
 
+export type HeartScope = "personal" | "company";
+
 export type HeartRow = {
   id: string;
   user_id: string;
@@ -660,6 +674,14 @@ export type HeartRow = {
   agent_memory: string;
   is_public: number;
   is_preset: number;
+  /** `company` solo se gestiona desde el panel de administración. */
+  scope: HeartScope;
+  /** Vínculo con un agente oficial del backend; NULL en Hearts normales. */
+  agent_key: string | null;
+  /** Fijado global configurado por el administrador. */
+  is_featured: number;
+  /** Alias calculado por las consultas de usuario. */
+  is_pinned?: number;
   created_at: string;
   updated_at: string;
 };
@@ -689,6 +711,14 @@ export type Agent = {
   knowledge_files: string[];
   is_public: boolean;
   is_preset: boolean;
+  /** `personal` se edita en Hearts; `company` solo desde administración. */
+  scope: HeartScope;
+  /** Agente oficial vinculado; NULL en Hearts normales. */
+  agent_key: string | null;
+  /** Fijado global por el administrador. */
+  is_featured: boolean;
+  /** Fijado por el usuario que consulta. */
+  is_pinned: boolean;
   is_owner: boolean;
   created_at: string;
   updated_at: string;

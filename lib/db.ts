@@ -55,6 +55,7 @@ const HEART_UPDATE_FIELDS = [
   "agent_memory",
   "is_public",
   "is_preset",
+  "is_featured",
 ] as const;
 
 const KB_FILE_UPDATE_FIELDS = [
@@ -168,6 +169,7 @@ function normalizeChat(row: DbRow): ChatRow {
     user_id: textValue(row.user_id),
     title: textValue(row.title),
     heart_id: nullableTextValue(row.heart_id),
+    agent_key: nullableTextValue(row.agent_key),
     created_at: textValue(row.created_at),
     updated_at: textValue(row.updated_at),
   } as ChatRow;
@@ -230,6 +232,7 @@ function messageFromRow(row: DbRow): Msg {
   const normalized = normalizeMessageRow(row);
   const parsedImages = parseJson(normalized.images);
   const parsedSources = parseJson(normalized.web_sources);
+  const parsedKbSources = parseJson(normalized.kb_sources);
   const role: Msg["role"] = normalized.role === "assistant" ? "ai" : "user";
   const message: Msg = {
     id: normalized.id,
@@ -249,6 +252,22 @@ function messageFromRow(row: DbRow): Msg {
       );
     });
     if (sources.length > 0) message.sources = sources;
+  }
+
+  if (Array.isArray(parsedKbSources)) {
+    const kbSources = parsedKbSources.filter((source): source is KbSource => {
+      if (!source || typeof source !== "object") return false;
+      const item = source as Record<string, unknown>;
+      return (
+        typeof item.file_id === "string" &&
+        typeof item.filename === "string" &&
+        typeof item.chunk_index === "number" &&
+        typeof item.score === "number" &&
+        Number.isFinite(item.score) &&
+        (item.category === null || typeof item.category === "string")
+      );
+    });
+    if (kbSources.length > 0) message.kbSources = kbSources;
   }
 
   if (normalized.doc_data) {
@@ -291,6 +310,10 @@ function normalizeHeart(row: DbRow): HeartRow {
     agent_memory: textValue(row.agent_memory),
     is_public: booleanNumber(row.is_public),
     is_preset: booleanNumber(row.is_preset),
+    scope: row.scope === "company" ? "company" : "personal",
+    agent_key: nullableTextValue(row.agent_key),
+    is_featured: booleanNumber(row.is_featured),
+    is_pinned: booleanNumber(row.is_pinned),
     created_at: textValue(row.created_at),
     updated_at: textValue(row.updated_at),
   } as HeartRow;
@@ -427,7 +450,9 @@ function serializeJsonField(value: unknown, fallback: string): string {
 
 function serializeHeartValue(field: (typeof HEART_UPDATE_FIELDS)[number], value: unknown): unknown {
   if (field === "knowledge_files" || field === "tools") return serializeJsonField(value, "[]");
-  if (field === "is_public" || field === "is_preset") return booleanValue(value);
+  if (field === "is_public" || field === "is_preset" || field === "is_featured") {
+    return booleanValue(value);
+  }
   if (field === "temperature") return numberValue(value, 0.7);
   if (value === undefined) return null;
   return value;
@@ -505,24 +530,63 @@ export async function updateUserGoogleId(
   );
 }
 
-export async function getChatsByUser(userId: string): Promise<Array<{ id: string; title: string; messages: Msg[] }>> {
+export async function getChatsByUser(
+  userId: string,
+): Promise<
+  Array<{
+    id: string;
+    title: string;
+    agent_key: string | null;
+    heart_id: string | null;
+    heart_name: string | null;
+    messages: Msg[];
+  }>
+> {
   const result = await query(
-    "SELECT * FROM chats WHERE user_id = $1 ORDER BY updated_at DESC",
+    `SELECT c.*, h.name AS heart_name, h.agent_key AS heart_agent_key
+       FROM chats c
+       LEFT JOIN hearts h ON h.id = c.heart_id
+      WHERE c.user_id = $1
+      ORDER BY c.updated_at DESC`,
     [userId],
   );
   const rows = result.rows as DbRow[];
   return Promise.all(
     rows.map(async (rawRow) => {
       const row = normalizeChat(rawRow);
-      return { id: row.id, title: row.title, messages: await getMessagesByChat(row.id) };
+      return {
+        id: row.id,
+        title: row.title,
+        // El vínculo del Heart también identifica al agente oficial aunque el
+        // chat se haya creado solo con `heartId`.
+        agent_key: row.agent_key ?? nullableTextValue(rawRow.heart_agent_key),
+        heart_id: row.heart_id,
+        heart_name: nullableTextValue(rawRow.heart_name),
+        messages: await getMessagesByChat(row.id),
+      };
     }),
   );
 }
 
 export async function getChatById(
   chatId: string,
-): Promise<{ id: string; user_id: string; title: string; messages: Msg[] } | null> {
-  const result = await query("SELECT * FROM chats WHERE id = $1 LIMIT 1", [chatId]);
+): Promise<{
+  id: string;
+  user_id: string;
+  title: string;
+  agent_key: string | null;
+  heart_id: string | null;
+  heart_name: string | null;
+  messages: Msg[];
+} | null> {
+  const result = await query(
+    `SELECT c.*, h.name AS heart_name, h.agent_key AS heart_agent_key
+       FROM chats c
+       LEFT JOIN hearts h ON h.id = c.heart_id
+      WHERE c.id = $1
+      LIMIT 1`,
+    [chatId],
+  );
   const rawRow = result.rows[0] as DbRow | undefined;
   if (!rawRow) return null;
   const chat = normalizeChat(rawRow);
@@ -530,12 +594,24 @@ export async function getChatById(
     id: chat.id,
     user_id: chat.user_id,
     title: chat.title,
+    agent_key: chat.agent_key ?? nullableTextValue(rawRow.heart_agent_key),
+    heart_id: chat.heart_id,
+    heart_name: nullableTextValue(rawRow.heart_name),
     messages: await getMessagesByChat(chat.id),
   };
 }
 
-export async function createChat(id: string, userId: string, title: string): Promise<void> {
-  await query("INSERT INTO chats (id, user_id, title) VALUES ($1, $2, $3)", [id, userId, title]);
+export async function createChat(
+  id: string,
+  userId: string,
+  title: string,
+  agentKey?: string | null,
+  heartId?: string | null,
+): Promise<void> {
+  await query(
+    "INSERT INTO chats (id, user_id, title, agent_key, heart_id) VALUES ($1, $2, $3, $4, $5)",
+    [id, userId, title, agentKey ?? null, heartId ?? null],
+  );
 }
 
 export async function updateChatTitle(id: string, userId: string, title: string): Promise<boolean> {
@@ -1260,6 +1336,37 @@ export async function getAllHearts(): Promise<HeartWithOwnerRow[]> {
   })) as HeartWithOwnerRow[];
 }
 
+/** Hearts de empresa visibles en el panel de administración. */
+export async function getCompanyHearts(): Promise<HeartWithOwnerRow[]> {
+  const result = await query(
+    `SELECT h.*, u.name AS user_name, u.email AS user_email
+     FROM hearts h
+     LEFT JOIN users u ON h.user_id = u.id
+     WHERE h.scope = 'company'
+     ORDER BY h.is_featured DESC, h.updated_at DESC`,
+  );
+  return (result.rows as DbRow[]).map((row) => ({
+    ...normalizeHeart(row),
+    user_name: nullableTextValue(row.user_name),
+    user_email: nullableTextValue(row.user_email),
+  })) as HeartWithOwnerRow[];
+}
+
+export async function getUserHearts(): Promise<HeartWithOwnerRow[]> {
+  const result = await query(
+    `SELECT h.*, u.name AS user_name, u.email AS user_email
+     FROM hearts h
+     LEFT JOIN users u ON h.user_id = u.id
+     WHERE h.scope = 'personal'
+     ORDER BY h.updated_at DESC`,
+  );
+  return (result.rows as DbRow[]).map((row) => ({
+    ...normalizeHeart(row),
+    user_name: nullableTextValue(row.user_name),
+    user_email: nullableTextValue(row.user_email),
+  })) as HeartWithOwnerRow[];
+}
+
 export async function getHeartById(id: string): Promise<HeartRow | null> {
   const result = await query("SELECT * FROM hearts WHERE id = $1 LIMIT 1", [id]);
   const row = result.rows[0] as DbRow | undefined;
@@ -1277,11 +1384,13 @@ export async function createHeart(
   temperature?: number,
   tools?: string[],
   isPreset?: number,
+  isFeatured?: boolean,
+  scope: "personal" | "company" = "company",
 ): Promise<void> {
   await query(
     `INSERT INTO hearts
-       (id, user_id, name, role, tone, instructions, limitations, temperature, tools, is_preset)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::boolean)`,
+       (id, user_id, name, role, tone, instructions, limitations, temperature, tools, is_preset, is_featured, scope)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::boolean, $11::boolean, $12)`,
     [
       id,
       userId,
@@ -1293,6 +1402,8 @@ export async function createHeart(
       temperature ?? 0.7,
       JSON.stringify(tools || []),
       booleanValue(isPreset),
+      Boolean(isFeatured),
+      scope,
     ],
   );
 }
@@ -2371,7 +2482,7 @@ export async function getAllProjectsAdmin(search = ""): Promise<ProjectAdminRow[
 
 export async function getAllChatsAdmin(search = ""): Promise<ChatAdminRow[]> {
   let sql = `
-    SELECT c.id, c.title, c.created_at, c.updated_at, c.user_id, c.heart_id,
+    SELECT c.id, c.title, c.created_at, c.updated_at, c.user_id, c.heart_id, c.agent_key,
       u.name AS user_name, u.email AS user_email, u.role AS user_role,
       (SELECT COUNT(*)::int FROM messages WHERE chat_id = c.id) AS message_count,
       (SELECT content FROM messages WHERE chat_id = c.id ORDER BY id DESC LIMIT 1) AS last_message

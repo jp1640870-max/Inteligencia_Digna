@@ -2,7 +2,7 @@
  * Dominio permitido para dar de alta usuarios.
  *
  * Puro y sin dependencias de Next para poder usarlo tanto en las rutas como en
- * los scripts y en los tests. El valor por defecto es el dominio institucional;
+ * los scripts y en los tests. El valor por defecto es un dominio genérico;
  * `ALLOWED_EMAIL_DOMAIN` permite cambiarlo sin tocar el código.
  */
 

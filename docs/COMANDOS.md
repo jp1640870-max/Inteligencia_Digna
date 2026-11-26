@@ -85,17 +85,17 @@ GET  /api/tags
 
 Variables principales:
 
-| Variable | Uso |
-|---|---|
-| `OLLAMA_URL` | URL del servidor Ollama |
-| `OLLAMA_CHAT_MODEL` | Qwen3.8 para chat |
-| `OLLAMA_AGENT_MODEL` | Qwen3.6 para agentes/edición |
-| `OLLAMA_EMBEDDING_MODEL` | BGE-M3 para RAG |
-| `OLLAMA_CHAT_CONTEXT_LENGTH` | Contexto del chat, inicialmente `32768` |
+| Variable                      | Uso                                       |
+|-------------------------------|-------------------------------------------|
+| `OLLAMA_URL`                  | URL del servidor Ollama                   |
+| `OLLAMA_CHAT_MODEL`           | Qwen3.8 para chat                         |
+| `OLLAMA_AGENT_MODEL`          | Qwen3.6 para agentes/edición              |
+| `OLLAMA_EMBEDDING_MODEL`      | BGE-M3 para RAG                           |
+| `OLLAMA_CHAT_CONTEXT_LENGTH`  | Contexto del chat, inicialmente `32768`   |
 | `OLLAMA_AGENT_CONTEXT_LENGTH` | Contexto de agentes, inicialmente `49152` |
-| `OLLAMA_CHAT_KEEP_ALIVE` | Política de permanencia del chat |
-| `OLLAMA_AGENT_KEEP_ALIVE` | Política de permanencia de agentes |
-| `OLLAMA_EMBEDDING_KEEP_ALIVE` | `0` para carga bajo demanda |
+| `OLLAMA_CHAT_KEEP_ALIVE`      | Política de permanencia del chat          |
+| `OLLAMA_AGENT_KEEP_ALIVE`     | Política de permanencia de agentes        |
+| `OLLAMA_EMBEDDING_KEEP_ALIVE` | `0` para carga bajo demanda               |
 
 Verificar modelos sin iniciar una inferencia:
 

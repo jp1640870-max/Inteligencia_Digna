@@ -1,4 +1,5 @@
 import type { InferenceMessage } from "./ollama";
+import type { HeartTool } from "./heart-config";
 
 // Se calcula por request (no a nivel de módulo) para no congelar la fecha
 // en procesos de larga duración.
@@ -56,6 +57,51 @@ TIENES ACCESO A UNA BASE DE CONOCIMIENTO EMPRESARIAL.
 - El contexto es más confiable que tu conocimiento general: cuando ambos entren en conflicto, usa el contexto.
 - ÚNICAMENTE si el contexto NO contiene nada relacionado con lo que pregunta, di que no tienes esa información. No lo digas si el contexto sí la incluye, aunque sea parcialmente.`;
 
+type HeartPromptConfig = {
+  name: string;
+  role: string;
+  tone: string;
+  instructions: string;
+  limitations: string;
+  tools: HeartTool[];
+};
+
+/**
+ * Instrucciones para un Heart normal. Solo se anuncian y habilitan las
+ * capacidades declaradas en el Heart; la base de conocimiento es una capacidad
+ * común de la plataforma.
+ */
+export function buildHeartInstructions(heart: HeartPromptConfig): string {
+  const sections: string[] = [
+    `Eres el Heart "${heart.name}" de la organización.`,
+  ];
+
+  if (heart.role) sections.push(`Rol: ${heart.role}`);
+  if (heart.tone) sections.push(`Tono: ${heart.tone}`);
+  if (heart.instructions) {
+    sections.push(`INSTRUCCIONES DEL HEART:\n${heart.instructions}`);
+  }
+  if (heart.limitations) {
+    sections.push(`LÍMITES DEL HEART:\n${heart.limitations}`);
+  }
+
+  const allowed = ["base de conocimiento empresarial"];
+  if (heart.tools.includes("read_files")) allowed.push("leer archivos adjuntos");
+  if (heart.tools.includes("generate_docs")) allowed.push("generar documentos");
+  if (heart.tools.includes("web_search")) allowed.push("buscar en internet");
+  if (heart.tools.includes("analyze_images")) allowed.push("analizar imágenes");
+
+  sections.push(
+    `HERRAMIENTAS DISPONIBLES\n- ${allowed.join("\n- ")}\nNo uses herramientas que no estén en esta lista. No generes imágenes dentro de un Heart.`,
+  );
+
+  const notes: string[] = [KB_NOTE];
+  if (heart.tools.includes("generate_docs")) notes.push(DOC_NOTE);
+  if (heart.tools.includes("web_search")) notes.push(WEB_SEARCH_NOTE);
+
+  return `${sections.join("\n\n")}${notes.join("")}`;
+}
+
 type HistoryItem = {
   role: "user" | "ai";
   text?: string;
@@ -70,13 +116,19 @@ export function buildMessages(
   searchResults?: string,
   ragContext?: string,
   kbContext?: string,
+  agentInstructions?: string,
 ): InferenceMessage[] {
-  const systemPrompt = projectContext
-    ? `${getSystemPrompt()}
+  // Los agentes oficiales y los Hearts sustituyen las notas genéricas por sus
+  // propias reglas. El chat normal conserva exactamente el mismo system prompt
+  // de siempre.
+  const systemPrompt = agentInstructions
+    ? `${getSystemPrompt()}${projectContext ? `\n\nCONTEXTO DEL PROYECTO:\n${projectContext}` : ""}\n\n${agentInstructions}`
+    : projectContext
+      ? `${getSystemPrompt()}
 
 CONTEXTO DEL PROYECTO:
 ${projectContext}${DOC_NOTE}${WEB_SEARCH_NOTE}${KB_NOTE}`
-    : `${getSystemPrompt()}${DOC_NOTE}${WEB_SEARCH_NOTE}${KB_NOTE}`;
+      : `${getSystemPrompt()}${DOC_NOTE}${WEB_SEARCH_NOTE}${KB_NOTE}`;
 
   const messages: InferenceMessage[] = [
     { role: "system", content: systemPrompt },

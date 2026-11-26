@@ -45,6 +45,7 @@ function normalizeChat(row: DbRow): ChatRow {
     user_id: textValue(row.user_id),
     title: textValue(row.title),
     heart_id: nullableTextValue(row.heart_id),
+    agent_key: nullableTextValue(row.agent_key),
     created_at: textValue(row.created_at),
     updated_at: textValue(row.updated_at),
   } as ChatRow;

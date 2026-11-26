@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import MarkdownMessage from "./MarkdownMessage";
 import MessageSources from "./MessageSources";
+import MessageKbSources from "./MessageKbSources";
 import type {
   DocumentProgress,
   EditResult,
@@ -42,6 +43,10 @@ type Props = {
   onCancelImageJob?: (jobId: string) => void | Promise<void>;
   onImageVariant?: (image: GeneratedImageMeta) => void;
   onImageEdit?: (image: GeneratedImageMeta) => void;
+  /** Nombre del agente o Heart cuando la conversación no es un chat normal. */
+  agentName?: string;
+  /** Etiqueta visible: OFICIAL para agentes oficiales, HEART para Hearts. */
+  agentBadge?: string;
   darkMode: boolean;
 };
 
@@ -122,6 +127,8 @@ const ChatMessage = ({
   onCancelImageJob,
   onImageVariant,
   onImageEdit,
+  agentName,
+  agentBadge,
   darkMode,
 }: Props) => {
   const [editing, setEditing] = useState(false);
@@ -552,6 +559,13 @@ const ChatMessage = ({
           <MessageSources sources={message.sources} idPrefix={sourceIdPrefix} />
         )}
 
+        {message.kbSources && message.kbSources.length > 0 && (
+          <MessageKbSources
+            sources={message.kbSources}
+            idPrefix={`${sourceIdPrefix}-kb`}
+          />
+        )}
+
         {renderAttachments()}
       </div>
     );
@@ -585,8 +599,10 @@ const ChatMessage = ({
       <div className="chat-message-content">
         {!isUser && (
           <div className="chat-assistant-meta">
-            <span className="chat-assistant-name">Inteligencia Digna</span>
-            <span className="chat-ai-badge">IA</span>
+            <span className="chat-assistant-name">{agentName || "Inteligencia Digna"}</span>
+            <span className="chat-ai-badge">
+              {agentBadge || (agentName ? "OFICIAL" : "IA")}
+            </span>
             {streaming && <span className="chat-assistant-status">escribiendo…</span>}
           </div>
         )}

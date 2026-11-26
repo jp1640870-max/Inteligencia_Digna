@@ -36,7 +36,12 @@ const ALL_NAV_ITEMS = [
     roles: ["super_admin", "admin"] as UserRole[],
   },
   { label: "Conversaciones", href: "/admin/chats", icon: <MessageSquare size={18} />, roles: null },
-  { label: "Hearts", href: "/admin/hearts", icon: <Brain size={18} />, roles: null },
+  {
+    label: "Hearts",
+    href: "/admin/hearts",
+    icon: <Brain size={18} />,
+    roles: ["super_admin", "admin"] as UserRole[],
+  },
   { label: "Anuncios", href: "/admin/anuncios", icon: <Megaphone size={18} />, roles: null },
   { label: "Auditoría", href: "/admin/auditoria", icon: <Shield size={18} />, roles: null },
   { label: "Sesiones", href: "/admin/sesiones", icon: <UserCheck size={18} />, roles: null },

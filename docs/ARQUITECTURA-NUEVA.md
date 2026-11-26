@@ -14,17 +14,16 @@ El backend de desarrollo usa una base PostgreSQL consultable directamente, pgvec
 
 ## Diagrama
 
-```text
 ┌──────────────────────────────────────────┐
-│ Navegador                                  │
-│ Frontend + API /api/*                      │
+│ Navegador                                │
+│ Frontend + API /api/*                    │
 └────────────────────┬─────────────────────┘
                      │ cookies / HTTP
 ┌────────────────────▼─────────────────────┐
-│ Backend Node.js                           │
+│ Backend Node.js                          │
 │                                          │
 │ Auth · RBAC · chat · RAG · agentes       │
-│ PostgreSQL client · S3 client             │
+│ PostgreSQL client · S3 client            │
 └──────────────┬───────────────┬───────────┘
                │               │
                │               └──────────────► MinIO :9000

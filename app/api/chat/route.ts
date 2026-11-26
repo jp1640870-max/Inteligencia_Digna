@@ -13,7 +13,7 @@ import {
   getLatestPartialDocumentForChat,
 } from "@/lib/db";
 import { ollamaChat, ollamaChatStream, getChatModel, type InferenceMessage } from "@/lib/ollama";
-import { buildMessages } from "@/lib/prompt-builder";
+import { buildHeartInstructions, buildMessages } from "@/lib/prompt-builder";
 import { getAuthUserFromRequest, getUserIdFromRequest } from "@/lib/auth";
 import { getProjectById, syncProjectChatTitle } from "@/lib/projects";
 import { generateDocument } from "@/lib/document-generator";
@@ -38,6 +38,17 @@ import { toGeneratedDocumentMeta } from "@/lib/generated-document";
 import { searchWeb, formatSearchResults, shouldAutoSearch } from "@/lib/web-search";
 import { retrieveRelevantChunks, formatRagContext } from "@/lib/rag";
 import { retrieveKb, formatKbContext, toKbSources } from "@/lib/kb";
+import {
+  getSupportInstructions,
+  resolveOfficialAgent,
+  type OfficialAgent,
+} from "@/lib/official-agents";
+import {
+  ensureOfficialSupportHeart,
+  getHeartByAgentKeyForUser,
+  readHeartForUser,
+} from "@/lib/hearts";
+import type { HeartTool } from "@/lib/heart-config";
 import { log, childLogger } from "@/lib/logger";
 import { checkRateLimit } from "@/lib/rate-limit";
 import {
@@ -57,6 +68,7 @@ import {
 } from "@/lib/images/repository";
 import type { ImageReferenceInput } from "@/types";
 import type {
+  Agent,
   DocGenStructure,
   DocGenFormat,
   EditResult,
@@ -501,6 +513,67 @@ export async function GET() {
   return NextResponse.json(chats);
 }
 
+type ChatWithMessages = NonNullable<Awaited<ReturnType<typeof getChatById>>>;
+
+type ResolvedChatContext =
+  | { ok: true; heart: Agent | null; supportAgent: OfficialAgent | null }
+  | { ok: false; error: string; status: number };
+
+/**
+ * Resuelve el Heart y el agente oficial de un chat existente sin permitir
+ * convertir un chat normal en un chat de Heart.
+ */
+async function resolveExistingChatContext(
+  chat: ChatWithMessages,
+  requestedHeartId: string | null,
+  requestedAgent: OfficialAgent | null,
+  userId: string,
+): Promise<ResolvedChatContext> {
+  if (chat.heart_id) {
+    if (requestedHeartId && requestedHeartId !== chat.heart_id) {
+      return { ok: false, error: "Heart no autorizado para este chat", status: 403 };
+    }
+
+    const heart = await readHeartForUser(chat.heart_id, userId);
+    if (!heart) {
+      return { ok: false, error: "Heart no disponible", status: 409 };
+    }
+
+    const supportAgent = resolveOfficialAgent(chat.agent_key ?? heart.agent_key);
+    if ((chat.agent_key || heart.agent_key) && !supportAgent) {
+      return { ok: false, error: "Agente no disponible", status: 409 };
+    }
+    if (requestedAgent && requestedAgent.id !== supportAgent?.id) {
+      return { ok: false, error: "Agente no autorizado para este chat", status: 403 };
+    }
+
+    return { ok: true, heart, supportAgent };
+  }
+
+  if (requestedHeartId) {
+    return {
+      ok: false,
+      error: "No se puede convertir un chat normal en un chat de Heart",
+      status: 403,
+    };
+  }
+
+  const supportAgent = resolveOfficialAgent(chat.agent_key);
+  if (chat.agent_key && !supportAgent) {
+    return { ok: false, error: "Agente no disponible", status: 409 };
+  }
+  if (requestedAgent && requestedAgent.id !== supportAgent?.id) {
+    return { ok: false, error: "Agente no autorizado para este chat", status: 403 };
+  }
+
+  // Compatibilidad con chats de Soporte anteriores a `chats.heart_id`.
+  const heart = supportAgent
+    ? await getHeartByAgentKeyForUser(supportAgent.id, userId)
+    : null;
+
+  return { ok: true, heart, supportAgent };
+}
+
 export async function POST(req: Request) {
   const startTime = Date.now();
   // El objeto completo (id + rol) porque el acceso a la KB depende del rol:
@@ -532,6 +605,8 @@ export async function POST(req: Request) {
     const filesContent = (form.get("filesContent") as string) || "";
     const editFromIndex = form.get("editFromIndex") as string | null;
     const projectId = form.get("projectId") as string | null;
+    const agentId = (form.get("agentId") as string) || null;
+    const requestedHeartId = (form.get("heartId") as string) || null;
     const forceImage = form.get("forceImage") === "1";
     const parentImageId = (form.get("parentImageId") as string) || undefined;
     const clientRequestId = (form.get("clientRequestId") as string) || undefined;
@@ -556,25 +631,130 @@ export async function POST(req: Request) {
 
     reqLog.info({ msgLen: message.length, images: images.length, files: filesContent ? "yes" : "no" }, "Chat request iniciado");
 
+    // Los agentes oficiales se resuelven en el backend: el cliente solo envía
+    // un identificador y nunca puede editar su configuración. `agentId` no se
+    // acepta en un chat ya existente para no convertir un chat normal en oficial.
+    const requestedAgent = resolveOfficialAgent(agentId);
+    if (agentId && !requestedAgent) {
+      return NextResponse.json({ error: "Agente no válido" }, { status: 400 });
+    }
+    let supportAgent: OfficialAgent | null = null;
+    let heart: Agent | null = null;
+
     let chat;
     if (editFromIndex) {
       chat = await getChatById(chatId);
       if (chat && chat.user_id !== userId) {
         return NextResponse.json({ error: "No autorizado" }, { status: 403 });
       }
+      if (chat) {
+        const context = await resolveExistingChatContext(
+          chat,
+          requestedHeartId,
+          requestedAgent,
+          userId,
+        );
+        if (!context.ok) {
+          return NextResponse.json(
+            { error: context.error },
+            { status: context.status },
+          );
+        }
+        heart = context.heart;
+        supportAgent = context.supportAgent;
+      }
       await truncateMessagesToCount(chatId, parseInt(editFromIndex));
       chat = await getChatById(chatId);
     } else {
       chat = await getChatById(chatId);
       if (!chat) {
-        await createChat(chatId, userId, message.slice(0, 30));
+        if (requestedHeartId) {
+          heart = await readHeartForUser(requestedHeartId, userId);
+          if (!heart) {
+            return NextResponse.json(
+              { error: "Heart no encontrado" },
+              { status: 404 },
+            );
+          }
+          supportAgent = resolveOfficialAgent(heart.agent_key);
+          if (heart.agent_key && !supportAgent) {
+            return NextResponse.json(
+              { error: "Agente no disponible" },
+              { status: 409 },
+            );
+          }
+          if (requestedAgent && requestedAgent.id !== supportAgent?.id) {
+            return NextResponse.json(
+              { error: "Agente no autorizado para este Heart" },
+              { status: 403 },
+            );
+          }
+        } else {
+          supportAgent = requestedAgent;
+          if (supportAgent) {
+            try {
+              await ensureOfficialSupportHeart(userId);
+            } catch {
+              // El chat de Soporte puede continuar aunque falte la tarjeta.
+            }
+            heart = await getHeartByAgentKeyForUser(supportAgent.id, userId);
+          }
+        }
+
+        await createChat(
+          chatId,
+          userId,
+          message.slice(0, 30),
+          supportAgent?.id ?? null,
+          heart?.id ?? null,
+        );
         chat = await getChatById(chatId);
-      } else if (chat.user_id !== userId) {
-        return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+      } else {
+        if (chat.user_id !== userId) {
+          return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+        }
+        const context = await resolveExistingChatContext(
+          chat,
+          requestedHeartId,
+          requestedAgent,
+          userId,
+        );
+        if (!context.ok) {
+          return NextResponse.json(
+            { error: context.error },
+            { status: context.status },
+          );
+        }
+        heart = context.heart;
+        supportAgent = context.supportAgent;
       }
     }
 
     const history = chat?.messages || [];
+
+    // Los chats de Heart respetan las herramientas declaradas en el Heart. Los
+    // chats normales conservan todas las capacidades y Soporte conserva su
+    // conjunto oficial. La generación de imágenes no es una tool de Heart.
+    const heartToolAllowed = (tool: HeartTool): boolean => {
+      // Soporte conserva sus tools oficiales: KB, archivos de la conversación
+      // y preparación de escalamiento. No genera documentos, imágenes ni busca
+      // en internet.
+      if (supportAgent) return tool === "read_files";
+      if (!heart) return true;
+      return heart.tools.includes(tool);
+    };
+    const allowFiles = heartToolAllowed("read_files");
+    const allowDocs = heartToolAllowed("generate_docs");
+    const allowWebSearch = heartToolAllowed("web_search");
+    const allowImages = heartToolAllowed("analyze_images");
+    const allowImageGeneration = !supportAgent && !heart;
+
+    const heartFilesContent = allowFiles ? filesContent : "";
+    const heartImages = allowImages ? images : [];
+    const heartImageReferences = allowImages ? imageReferences : [];
+    const modelHistory = allowImages
+      ? history
+      : history.map((item) => ({ ...item, images: undefined }));
 
     let projectContext = "";
 
@@ -606,31 +786,34 @@ ${project.instructions}`;
       }
     }
 
-    const dbMessage = filesContent
-      ? `[Archivos adjuntos]\n\n${message}\n\n---\n${filesContent}`
-      : message;
+    const dbMessage = heartFilesContent
+      ? `[Archivos adjuntos]\n\n${message}\n\n---\n${heartFilesContent}`
+      : filesContent
+        ? `[Archivos adjuntos]\n\n${message}`
+        : message;
     let userMessageId: number | null = null;
     try {
       userMessageId = await addMessage(chatId, "user", dbMessage, images);
     } catch {}
 
     // --- Exportación por lenguaje natural ---
-    // Se resuelve antes de RAG/KB porque no necesita contexto externo: solo
-    // convierte la última respuesta del asistente a PDF/Word.
-    const exportIntent = detectExportIntent(message);
-    if (exportIntent.wantsExport) {
-      reqLog.info(
-        { format: exportIntent.format, unsupported: exportIntent.unsupportedFormat },
-        "Exportación por lenguaje natural detectada",
-      );
-      return handleExportIntent({
-        userId,
-        chatId,
-        history,
-        intent: exportIntent,
-        signal: req.signal,
-        reqLog,
-      });
+    // Solo los chats normales y los Hearts con `generate_docs` pueden exportar.
+    if (allowDocs) {
+      const exportIntent = detectExportIntent(message);
+      if (exportIntent.wantsExport) {
+        reqLog.info(
+          { format: exportIntent.format, unsupported: exportIntent.unsupportedFormat },
+          "Exportación por lenguaje natural detectada",
+        );
+        return handleExportIntent({
+          userId,
+          chatId,
+          history,
+          intent: exportIntent,
+          signal: req.signal,
+          reqLog,
+        });
+      }
     }
 
     // --- RAG retrieval ---
@@ -661,14 +844,16 @@ ${project.instructions}`;
     }
 
     // --- Document creation detection ---
-    const documentHistory = history.map((item) => ({
+    const documentHistory = modelHistory.map((item) => ({
       role: item.role,
       text: item.text,
       images: item.images,
     }));
-    const documentIntent = resolveDocumentIntent(message, documentHistory);
+    const documentIntent = allowDocs
+      ? resolveDocumentIntent(message, documentHistory)
+      : null;
 
-    if (documentIntent.wantsDocument) {
+    if (documentIntent?.wantsDocument) {
       console.log(
         `📄 Intención de documento: formato=${documentIntent.format}, reintento=${documentIntent.isRetry}`,
       );
@@ -679,9 +864,9 @@ ${project.instructions}`;
           model,
           chatId,
           documentIntent.request,
-          filesContent,
-          history,
-          images,
+          heartFilesContent,
+          modelHistory,
+          heartImages,
           projectContext,
           ragContext,
           kbContext,
@@ -747,11 +932,11 @@ ${project.instructions}`;
             message: documentIntent.request,
             model,
             history: documentHistory,
-            filesContent: filesContent || undefined,
+            filesContent: heartFilesContent || undefined,
             projectContext: projectContext || undefined,
             ragContext: ragContext || undefined,
             kbContext: kbContext || undefined,
-            images,
+            images: heartImages,
             format,
             signal: req.signal,
             mode: documentIntent.mode,
@@ -921,6 +1106,8 @@ ${project.instructions}`;
     // El documento tiene prioridad: «hazme un PDF con una imagen» sigue siendo
     // una exportación documental. La imagen se resuelve después y reutiliza el
     // mismo endpoint para el botón y el lenguaje natural.
+    // La generación de imágenes no es una tool de Heart ni del agente oficial.
+    if (allowImageGeneration) {
     let hasGeneratedParent = false;
     try {
       hasGeneratedParent = Boolean(await getLatestGeneratedImageForChat(chatId, userId));
@@ -929,7 +1116,7 @@ ${project.instructions}`;
     }
     const imageIntent: ImageIntentResult = await detectImageIntent(message, {
       history: history.map((item) => ({ role: item.role, text: item.text })),
-      referenceCount: imageReferences.length,
+      referenceCount: heartImageReferences.length,
       hasGeneratedParent,
       parentImageId,
       forceImage,
@@ -956,7 +1143,7 @@ ${project.instructions}`;
           action: imageIntent.action,
           source: imageIntent.source,
           confidence: imageIntent.confidence,
-          references: imageReferences.length,
+          references: heartImageReferences.length,
         },
         "Intención de imagen detectada",
       );
@@ -967,7 +1154,7 @@ ${project.instructions}`;
           userMessageId,
           message,
           intent: imageIntent,
-          referenceImages: imageReferences,
+          referenceImages: heartImageReferences,
           parentImageId,
           clientRequestId,
           width: requestedWidth,
@@ -1006,12 +1193,15 @@ ${project.instructions}`;
         throw error;
       }
     }
+    }
 
     // --- Web search integration ---
     const encoder = new TextEncoder();
 
     let searchSources: SearchResult[] = [];
 
+    // Solo los chats normales y los Hearts con `web_search` buscan en internet.
+    if (allowWebSearch) {
     // Phase 1: Determine if search is needed (before streaming starts)
     // First check heuristic (keyword-based)
     if (shouldAutoSearch(message)) {
@@ -1025,16 +1215,16 @@ ${project.instructions}`;
     // If heuristic didn't fire, ask the model via a fast decision call
     if (searchSources.length === 0) {
       const decisionMessages = buildMessages(
-        history,
+        modelHistory,
         message,
-        filesContent || undefined,
+        heartFilesContent || undefined,
         projectContext || undefined,
         undefined,
         ragContext || undefined,
         kbContext || undefined,
       );
-      if (images.length > 0 && decisionMessages.length > 0) {
-        decisionMessages[decisionMessages.length - 1].images = images;
+      if (heartImages.length > 0 && decisionMessages.length > 0) {
+        decisionMessages[decisionMessages.length - 1].images = heartImages;
       }
       try {
         console.log("🌐 Decision call (num_predict=20)...");
@@ -1050,21 +1240,28 @@ ${project.instructions}`;
         console.log(`🌐 Error en decision call: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+    }
 
     // Phase 2: Build final messages with search results (if any)
+    const agentInstructions = supportAgent
+      ? getSupportInstructions(Boolean(kbContext || ragContext))
+      : heart
+        ? buildHeartInstructions(heart)
+        : undefined;
     const chatMessages = buildMessages(
-      history,
+      modelHistory,
       message,
-      filesContent || undefined,
+      heartFilesContent || undefined,
       projectContext || undefined,
       searchSources.length > 0 ? formatSearchResults(searchSources) : undefined,
       ragContext || undefined,
       kbContext || undefined,
+      agentInstructions,
     );
 
-    if (images.length > 0 && chatMessages.length > 0) {
+    if (heartImages.length > 0 && chatMessages.length > 0) {
       const lastMsg = chatMessages[chatMessages.length - 1];
-      lastMsg.images = images;
+      lastMsg.images = heartImages;
     }
 
     // Phase 3: Stream the response

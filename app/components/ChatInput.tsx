@@ -34,6 +34,8 @@ type Props = {
   imageMode?: boolean;
   hasParentImage?: boolean;
   onExitImageMode?: () => void;
+  /** En chats de Heart/Soporte el servidor decide las tools; no hay edición documental. */
+  allowDocumentEdit?: boolean;
 };
 
 const EDITABLE_EXTS = [".xlsx", ".xls", ".docx", ".pdf"];
@@ -63,6 +65,7 @@ const ChatInput = ({
   imageMode = false,
   hasParentImage = false,
   onExitImageMode,
+  allowDocumentEdit = true,
 }: Props) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editFileInputRef = useRef<HTMLInputElement>(null);
@@ -84,7 +87,7 @@ const ChatInput = ({
     const file = fileList[0];
     if (!file) return;
     const ext = "." + file.name.split(".").pop()?.toLowerCase();
-    if (EDITABLE_EXTS.includes(ext) && onShowTypeChoice) {
+    if (allowDocumentEdit && EDITABLE_EXTS.includes(ext) && onShowTypeChoice) {
       onShowTypeChoice(file);
     } else {
       onFilesSelected(fileList);
@@ -207,14 +210,16 @@ const ChatInput = ({
                 <Search size={14} />
                 Analizar
               </button>
-              <button
-                type="button"
-                onClick={() => onTypeChoiceAction?.(typeChoiceFile, "edit")}
-                className="chat-type-btn chat-type-btn-primary"
-              >
-                <Wand2 size={14} />
-                Editar
-              </button>
+              {allowDocumentEdit && (
+                <button
+                  type="button"
+                  onClick={() => onTypeChoiceAction?.(typeChoiceFile, "edit")}
+                  className="chat-type-btn chat-type-btn-primary"
+                >
+                  <Wand2 size={14} />
+                  Editar
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onDismissTypeChoice}
@@ -279,7 +284,7 @@ const ChatInput = ({
               >
                 <Paperclip size={18} />
               </button>
-              {!isEditMode && (
+              {allowDocumentEdit && !isEditMode && (
                 <button
                   type="button"
                   onClick={() => editFileInputRef.current?.click()}

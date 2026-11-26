@@ -24,6 +24,8 @@ interface AgentsState {
   updateAgent: (id: string, draft: HeartDraft) => Promise<Agent | null>;
   duplicateAgent: (id: string) => Promise<Agent | null>;
   deleteAgent: (id: string) => Promise<boolean>;
+  /** Fija o desfija un Heart para el usuario actual. */
+  togglePin: (id: string) => Promise<Agent | null>;
   clearError: () => void;
 }
 
@@ -139,6 +141,40 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     } catch {
       set({ error: "No se pudo eliminar el Heart." });
       return false;
+    }
+  },
+
+  togglePin: async (id) => {
+    const source = get().agents.find((agent) => agent.id === id);
+    if (!source) return null;
+
+    set({ error: null });
+    try {
+      const res = await fetch(`/api/hearts/${id}/pin`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinned: !source.is_pinned }),
+      });
+      if (!res.ok) {
+        set({ error: await readError(res, "No se pudo fijar el Heart.") });
+        return null;
+      }
+
+      const data = (await res.json()) as { agent?: Agent };
+      if (!data.agent) {
+        set({ error: "No se pudo fijar el Heart." });
+        return null;
+      }
+
+      set((state) => ({
+        agents: state.agents.map((agent) =>
+          agent.id === id ? data.agent! : agent,
+        ),
+      }));
+      return data.agent;
+    } catch {
+      set({ error: "No se pudo fijar el Heart." });
+      return null;
     }
   },
 

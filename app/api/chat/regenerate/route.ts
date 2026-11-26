@@ -3,10 +3,12 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { getChatById, getMessagesByChat, truncateMessagesToCount, addMessage } from "@/lib/db";
 import { ollamaChatStream, getChatModel } from "@/lib/ollama";
-import { buildMessages } from "@/lib/prompt-builder";
+import { buildHeartInstructions, buildMessages } from "@/lib/prompt-builder";
 import { getAuthUserFromRequest } from "@/lib/auth";
 import { retrieveKb, formatKbContext, toKbSources } from "@/lib/kb";
-import type { KbSource } from "@/types";
+import { getSupportInstructions, resolveOfficialAgent } from "@/lib/official-agents";
+import { getHeartByAgentKeyForUser, readHeartForUser } from "@/lib/hearts";
+import type { Agent, KbSource } from "@/types";
 
 
 export async function POST(req: Request) {
@@ -26,6 +28,24 @@ export async function POST(req: Request) {
     }
     if (chat.user_id !== userId) {
       return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    }
+
+    let heart: Agent | null = null;
+    if (chat.heart_id) {
+      heart = await readHeartForUser(chat.heart_id, userId);
+      if (!heart) {
+        return NextResponse.json({ error: "Heart no disponible" }, { status: 409 });
+      }
+    }
+
+    const supportAgent = resolveOfficialAgent(chat.agent_key ?? heart?.agent_key);
+    if ((chat.agent_key || heart?.agent_key) && !supportAgent) {
+      return NextResponse.json({ error: "Agente no disponible" }, { status: 409 });
+    }
+
+    // Compatibilidad con chats de Soporte anteriores a `chats.heart_id`.
+    if (!heart && supportAgent) {
+      heart = await getHeartByAgentKeyForUser(supportAgent.id, userId);
     }
 
     const messages = await getMessagesByChat(chatId);
@@ -54,7 +74,31 @@ export async function POST(req: Request) {
       }
     } catch {}
 
-    const chatMessages = buildMessages(remainingMessages, undefined, undefined, undefined, undefined, undefined, kbContext || undefined);
+    const agentInstructions = supportAgent
+      ? getSupportInstructions(Boolean(kbContext))
+      : heart
+        ? buildHeartInstructions(heart)
+        : undefined;
+
+    const allowImages = supportAgent
+      ? false
+      : heart
+        ? heart.tools.includes("analyze_images")
+        : true;
+    const modelMessages = allowImages
+      ? remainingMessages
+      : remainingMessages.map((item) => ({ ...item, images: undefined }));
+
+    const chatMessages = buildMessages(
+      modelMessages,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      kbContext || undefined,
+      agentInstructions,
+    );
 
     const encoder = new TextEncoder();
     const { readable, writable } = new TransformStream();

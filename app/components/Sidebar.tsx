@@ -6,6 +6,7 @@ import {
   PanelLeft,
   PanelLeftClose,
   MessageSquarePlus,
+  LifeBuoy,
   Image,
   Folder,
   Brain,
@@ -23,11 +24,12 @@ import {
   BookOpen,
 } from "lucide-react";
 import Link from "next/link";
+import { SUPPORT_AGENT } from "@/lib/official-agents";
 import { useChatStore } from "@/lib/stores/chat-store";
 import { useProjectStore } from "@/lib/stores/project-store";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { useAuthStore, ADMIN_VISIBLE_ROLES } from "@/lib/stores/auth-store";
-import type { Chat, Msg } from "@/types";
+import type { Chat } from "@/types";
 
 const SIDEBAR_DEFAULT_WIDTH = 202;
 const SIDEBAR_MIN_WIDTH = 184;
@@ -53,8 +55,10 @@ export default function Sidebar() {
   // ─── Stores ───
   const chats = useChatStore((s) => s.chats);
   const currentChatId = useChatStore((s) => s.chatId);
+  const agentKey = useChatStore((s) => s.agentKey);
   const openChat = useChatStore((s) => s.openChat);
   const newChat = useChatStore((s) => s.newChat);
+  const startSupportChat = useChatStore((s) => s.startSupportChat);
   const startImageMode = useChatStore((s) => s.startImageMode);
   const deleteChat = useChatStore((s) => s.deleteChat);
   const shareChat = useChatStore((s) => s.shareChat);
@@ -224,8 +228,13 @@ export default function Sidebar() {
     setSidebarOpen(false);
   };
 
-  const handleOpenChat = (chat: { id: string; title: string; messages: Msg[] }) => {
+  const handleOpenChat = (chat: Chat) => {
+    // Las conversaciones de Hearts son independientes del proyecto activo.
+    if (chat.heart_id || chat.agent_key) {
+      setCurrentProjectId(null);
+    }
     openChat(chat);
+    setView({ type: "chat" });
     setSidebarOpen(false);
   };
 
@@ -250,7 +259,9 @@ export default function Sidebar() {
     }
   };
 
-  const filteredChats = chats.filter((c) =>
+  const normalChats = chats.filter((c) => !c.heart_id && !c.agent_key);
+  const heartChats = chats.filter((c) => Boolean(c.heart_id || c.agent_key));
+  const filteredChats = normalChats.filter((c) =>
     c.title.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -354,6 +365,19 @@ export default function Sidebar() {
           className="sidebar-new-chat"
         >
           <MessageSquarePlus size={17} strokeWidth={1.7} /> Nuevo chat
+        </button>
+        <button
+          onClick={() => {
+            useProjectStore.getState().setCurrentProjectId(null);
+            startSupportChat();
+            setView({ type: "chat" });
+            setSidebarOpen(false);
+          }}
+          className={`sidebar-side-item ${agentKey === SUPPORT_AGENT.id && view.type === "chat" ? "is-active" : ""}`}
+          aria-current={agentKey === SUPPORT_AGENT.id && view.type === "chat" ? "page" : undefined}
+          title="Agente oficial · Soporte Técnico"
+        >
+          <LifeBuoy size={17} strokeWidth={1.7} /> {SUPPORT_AGENT.name}
         </button>
         <button
           onClick={() => {
@@ -469,8 +493,13 @@ export default function Sidebar() {
                   ) : (
                     projectChatList.map((chat) => (
                       <div key={chat.id} className={`flex items-center rounded-[10px] transition-colors ${chat.id === currentChatId ? "sidebar-item-active" : colors.hover}`}>
-                        <button onClick={() => handleOpenChatInProject(chat, project.id)} className={`flex-1 truncate px-2 py-1.5 text-left text-[11.5px] ${chat.id === currentChatId ? "" : colors.textMuted}`}>
-                          {chat.title}
+                        <button onClick={() => handleOpenChatInProject(chat, project.id)} className={`flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-[11.5px] ${chat.id === currentChatId ? "" : colors.textMuted}`}>
+                          {chat.agent_key === SUPPORT_AGENT.id ? (
+                            <LifeBuoy size={11} strokeWidth={2} className="shrink-0 text-emerald-400" aria-label="Soporte Técnico" />
+                          ) : chat.heart_id ? (
+                            <Brain size={11} strokeWidth={2} className="shrink-0 text-[var(--chat-accent)]" aria-label="Heart" />
+                          ) : null}
+                          <span className="truncate">{chat.title}</span>
                         </button>
                         <button onClick={() => removeChatFromProject(project.id, chat.id)} className={`px-1 py-1 ${colors.textMuted} hover:text-red-400 transition-colors`} title="Quitar del proyecto">
                           <X size={12} />
@@ -483,6 +512,109 @@ export default function Sidebar() {
             </div>
           );
         })}
+
+        <div className={`my-2 border-t ${colors.border}`} />
+
+        <div className="px-3 py-1">
+          <div className="mb-2 flex items-center gap-1.5">
+            <span className="sidebar-section-label">Hearts</span>
+            <span className="text-[10px] text-[var(--sidebar-faint)]">
+              {heartChats.length}
+            </span>
+          </div>
+        </div>
+
+        {heartChats.length === 0 && (
+          <p className={`px-3 py-2 text-center text-[11px] ${colors.textMuted}`}>
+            Sin conversaciones con Hearts
+          </p>
+        )}
+
+        {heartChats.map((chat) => (
+          <div key={chat.id} className="relative mb-0.5">
+            <div
+              className={`flex items-center rounded-[10px] transition-colors ${
+                chat.id === currentChatId ? "sidebar-item-active" : colors.hover
+              }`}
+            >
+              <button
+                onClick={() => handleOpenChat(chat)}
+                className={`flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-[7px] text-left text-[12.5px] ${
+                  chat.id === currentChatId ? "" : colors.textMuted
+                }`}
+                title={chat.heart_name || undefined}
+              >
+                {chat.agent_key === SUPPORT_AGENT.id ? (
+                  <LifeBuoy
+                    size={12}
+                    strokeWidth={2}
+                    className="shrink-0 text-emerald-400"
+                    aria-label="Soporte Técnico"
+                  />
+                ) : (
+                  <Brain
+                    size={12}
+                    strokeWidth={2}
+                    className="shrink-0 text-[var(--chat-accent)]"
+                    aria-label="Heart"
+                  />
+                )}
+                <span className="truncate">{chat.title}</span>
+              </button>
+              <button
+                onClick={() => setMenuOpen(menuOpen === chat.id ? null : chat.id)}
+                className={`px-2 py-[7px] ${
+                  chat.id === currentChatId ? "" : colors.textMuted
+                } ${colors.textHover} transition-colors`}
+              >
+                <EllipsisVertical size={15} strokeWidth={1.8} />
+              </button>
+            </div>
+
+            {menuOpen === chat.id && (
+              <div
+                className={`absolute right-2 top-10 ${colors.sidebar} ${colors.border} border rounded-xl w-48 z-50 shadow-lg`}
+              >
+                <button
+                  onClick={() => {
+                    shareChat(chat);
+                    setMenuOpen(null);
+                  }}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${colors.text} ${colors.hover} rounded-t-xl transition-colors`}
+                >
+                  <Share2 size={16} /> Compartir
+                </button>
+                <button
+                  onClick={() => {
+                    openRenameModal(chat.id, chat.title);
+                    setMenuOpen(null);
+                  }}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${colors.text} ${colors.hover} transition-colors`}
+                >
+                  <Pencil size={16} /> Renombrar
+                </button>
+                <button
+                  onClick={() => {
+                    openAddToProjectModal(chat.id);
+                    setMenuOpen(null);
+                  }}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${colors.text} ${colors.hover} transition-colors`}
+                >
+                  <Folder size={16} /> Agregar a proyecto
+                </button>
+                <button
+                  onClick={() => {
+                    deleteChat(chat.id);
+                    setMenuOpen(null);
+                  }}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${colors.textRed} ${colors.hover} rounded-b-xl transition-colors`}
+                >
+                  <Trash2 size={16} /> Eliminar
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
 
         <div className={`my-2 border-t ${colors.border}`} />
 
@@ -503,8 +635,11 @@ export default function Sidebar() {
         {filteredChats.map((chat) => (
           <div key={chat.id} className="relative mb-0.5">
             <div className={`flex items-center rounded-[10px] transition-colors ${chat.id === currentChatId ? "sidebar-item-active" : colors.hover}`}>
-              <button onClick={() => handleOpenChat(chat)} className={`flex-1 truncate px-2.5 py-[7px] text-left text-[12.5px] ${chat.id === currentChatId ? "" : colors.textMuted}`}>
-                {chat.title}
+              <button onClick={() => handleOpenChat(chat)} className={`flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-[7px] text-left text-[12.5px] ${chat.id === currentChatId ? "" : colors.textMuted}`}>
+                {chat.agent_key === SUPPORT_AGENT.id && (
+                  <LifeBuoy size={12} strokeWidth={2} className="shrink-0 text-emerald-400" aria-label="Soporte Técnico" />
+                )}
+                <span className="truncate">{chat.title}</span>
               </button>
               <button onClick={() => setMenuOpen(menuOpen === chat.id ? null : chat.id)} className={`px-2 py-[7px] ${chat.id === currentChatId ? "" : colors.textMuted} ${colors.textHover} transition-colors`}>
                 <EllipsisVertical size={15} strokeWidth={1.8} />
@@ -636,6 +771,21 @@ export default function Sidebar() {
             aria-label="Nuevo chat"
           >
             <MessageSquarePlus size={18} strokeWidth={1.7} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              useProjectStore.getState().setCurrentProjectId(null);
+              startSupportChat();
+              setView({ type: "chat" });
+              setSidebarOpen(false);
+            }}
+            className={`${railButton} ${agentKey === SUPPORT_AGENT.id ? "bg-white/[0.1] text-white" : ""}`}
+            title={SUPPORT_AGENT.name}
+            aria-label={SUPPORT_AGENT.name}
+          >
+            <LifeBuoy size={18} strokeWidth={1.7} />
           </button>
 
           <button

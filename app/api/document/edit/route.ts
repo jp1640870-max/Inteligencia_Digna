@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { getUserIdFromRequest } from "@/lib/auth";
+import { getChatById } from "@/lib/db";
 import { editDocument } from "@/lib/document-editor";
 
 export async function POST(req: Request) {
@@ -14,6 +15,23 @@ export async function POST(req: Request) {
     const form = await req.formData();
     const file = form.get("file") as File | null;
     const instruction = (form.get("instruction") as string) || "";
+    const chatId = (form.get("chatId") as string) || "";
+
+    // La edición documental es un atajo del chat normal. Los chats de Heart y
+    // los agentes oficiales no la exponen: su servidor decide las tools.
+    if (chatId) {
+      const chat = await getChatById(chatId);
+      if (
+        chat &&
+        chat.user_id === userId &&
+        (chat.heart_id || chat.agent_key)
+      ) {
+        return NextResponse.json(
+          { error: "La edición de documentos no está disponible en chats de Heart." },
+          { status: 403 },
+        );
+      }
+    }
 
     if (!file) {
       return NextResponse.json({ error: "No se recibió ningún archivo" }, { status: 400 });

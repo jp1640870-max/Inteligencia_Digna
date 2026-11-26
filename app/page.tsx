@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
-import { ArrowDown, Search } from "lucide-react";
+import { ArrowDown, Brain, LifeBuoy, Search } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import ViewSwitcher from "./components/ViewSwitcher";
 import ChatMessage from "./components/ChatMessage";
 import ChatInput from "./components/ChatInput";
+import SupportEscalationModal from "./components/SupportEscalationModal";
 import AgentsView from "./components/AgentsView";
 import LibraryView from "./components/LibraryView";
 import ProjectDetailView from "./components/ProjectDetailView";
@@ -18,6 +19,7 @@ import { messageKey } from "@/lib/message-key";
 import { useProjectStore } from "@/lib/stores/project-store";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { useAuthStore } from "@/lib/stores/auth-store";
+import { SUPPORT_AGENT } from "@/lib/official-agents";
 import AnnouncementBanner from "./components/announcements/AnnouncementBanner";
 
 const SUGGESTIONS = [
@@ -26,9 +28,24 @@ const SUGGESTIONS = [
   "Busca información actualizada en la web",
 ];
 
+const SUPPORT_SUGGESTIONS = [
+  "No puedo iniciar sesión en mi cuenta",
+  "¿Cómo restablezco mi contraseña de Windows?",
+  "La VPN no conecta desde mi laptop",
+];
+
+const HEART_SUGGESTIONS = [
+  "¿Qué puedes hacer?",
+  "Ayúdame con una tarea",
+  "Explícame un tema",
+];
+
 export default function Home() {
   // ─── Stores ───
   const messages = useChatStore((s) => s.messages);
+  const agentKey = useChatStore((s) => s.agentKey);
+  const heartId = useChatStore((s) => s.heartId);
+  const heartName = useChatStore((s) => s.heartName);
   const loading = useChatStore((s) => s.loading);
   const searching = useChatStore((s) => s.searching);
   const input = useChatStore((s) => s.input);
@@ -78,6 +95,25 @@ export default function Home() {
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [escalationOpen, setEscalationOpen] = useState(false);
+
+  const isSupportChat = agentKey === SUPPORT_AGENT.id;
+  const isHeartChat = Boolean(heartId) || Boolean(agentKey);
+  const emptyTitle = isSupportChat
+    ? "¿Cuál es tu incidencia?"
+    : isHeartChat
+      ? `Conversa con ${heartName || "tu Heart"}`
+      : "¿En qué puedo ayudarte hoy?";
+  const emptyDescription = isSupportChat
+    ? "Cuenta qué está pasando. Usaré solo la información disponible y te diré cuando no sea suficiente."
+    : isHeartChat
+      ? "Este Heart responde con sus instrucciones y las herramientas que tenga habilitadas."
+      : "Pregunta, compara, analiza archivos o pide que genere un documento.";
+  const emptySuggestions = isSupportChat
+    ? SUPPORT_SUGGESTIONS
+    : isHeartChat
+      ? HEART_SUGGESTIONS
+      : SUGGESTIONS;
 
   // ─── Init ───
   useEffect(() => {
@@ -125,7 +161,7 @@ export default function Home() {
 
   // ─── Handlers ───
   const handleSend = () => {
-    if (isEditMode) {
+    if (isEditMode && !isHeartChat) {
       if (!editFile || !editInstruction.trim()) return;
       handleEditFlow(editFile, editInstruction, currentProjectId);
     } else {
@@ -135,7 +171,7 @@ export default function Home() {
 
   const handleTypeChoiceAction = (file: File, action: "analyze" | "edit") => {
     setTypeChoiceFile(null);
-    if (action === "edit") {
+    if (action === "edit" && !isHeartChat) {
       setEditFile(file);
       handleEditFileToggle();
     } else {
@@ -159,7 +195,20 @@ export default function Home() {
       }
     });
 
-    if (editable.length > 0) setTypeChoiceFile(editable[0]);
+    if (editable.length > 0) {
+      if (isHeartChat) {
+        setFiles([
+          ...files,
+          ...editable.map((file) => ({
+            file,
+            name: file.name,
+            size: file.size,
+          })),
+        ]);
+      } else {
+        setTypeChoiceFile(editable[0]);
+      }
+    }
   };
 
   const handleScrollToBottom = () => {
@@ -214,6 +263,55 @@ export default function Home() {
         <div className="chat-view">
           <AnnouncementBanner />
 
+          {isSupportChat && (
+            <div
+              role="status"
+              className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.07] px-4 py-3"
+            >
+              <div className="flex min-w-0 items-start gap-3">
+                <LifeBuoy size={18} className="mt-0.5 shrink-0 text-emerald-400" aria-hidden="true" />
+                <div className="min-w-0">
+                  <p className="text-[13px] font-semibold text-[var(--chat-text)]">
+                    {SUPPORT_AGENT.name} · agente oficial
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-[var(--chat-muted)]">
+                    Respuestas basadas en la información disponible. Si no hay evidencia suficiente, lo indicaré.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEscalationOpen(true)}
+                disabled={messages.length === 0 || loading}
+                className="shrink-0 rounded-lg border border-emerald-500/30 px-3 py-1.5 text-[12px] font-medium text-emerald-300 transition-colors hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Preparar escalamiento
+              </button>
+            </div>
+          )}
+
+          {isHeartChat && !isSupportChat && (
+            <div
+              role="status"
+              className="mx-4 mt-3 flex items-start gap-3 rounded-xl border border-[var(--chat-accent-border)] bg-[var(--chat-accent-soft)] px-4 py-3"
+            >
+              <Brain
+                size={18}
+                className="mt-0.5 shrink-0 text-[var(--chat-accent)]"
+                aria-hidden="true"
+              />
+              <div className="min-w-0">
+                <p className="text-[13px] font-semibold text-[var(--chat-text)]">
+                  {heartName || "Heart"} · Heart
+                </p>
+                <p className="mt-0.5 text-[11px] text-[var(--chat-muted)]">
+                  Conversación con un Heart. Responde según sus instrucciones y
+                  herramientas habilitadas.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div ref={scrollRef} onScroll={handleScroll} className="chat-scroll">
             <div className="chat-messages">
               {messages.length === 0 ? (
@@ -227,12 +325,10 @@ export default function Home() {
                       className="h-full w-full object-contain"
                     />
                   </div>
-                  <h2>¿En qué puedo ayudarte hoy?</h2>
-                  <p>
-                    Pregunta, compara, analiza archivos o pide que genere un documento.
-                  </p>
+                  <h2>{emptyTitle}</h2>
+                  <p>{emptyDescription}</p>
                   <div className="chat-suggestions">
-                    {SUGGESTIONS.map((suggestion) => (
+                    {emptySuggestions.map((suggestion) => (
                       <button
                         key={suggestion}
                         type="button"
@@ -268,6 +364,20 @@ export default function Home() {
                       onCancelImageJob={cancelImageJob}
                       onImageVariant={(image) => prepareImageEdit(image, "variant")}
                       onImageEdit={(image) => prepareImageEdit(image, "edit")}
+                      agentName={
+                        isSupportChat
+                          ? SUPPORT_AGENT.name
+                          : isHeartChat
+                            ? heartName || "Heart"
+                            : undefined
+                      }
+                      agentBadge={
+                        isSupportChat
+                          ? "OFICIAL"
+                          : isHeartChat
+                            ? "HEART"
+                            : undefined
+                      }
                       darkMode={darkMode}
                     />
                   );
@@ -327,6 +437,7 @@ export default function Home() {
             imageMode={imageMode}
             hasParentImage={Boolean(parentImageId)}
             onExitImageMode={exitImageMode}
+            allowDocumentEdit={!isHeartChat}
           />
         </div>
       )}
@@ -335,6 +446,11 @@ export default function Home() {
         {/* ─── Modals ─── */}
         {renameChatId && <RenameChatModal />}
         {showAddToProjectChatId && <AddToProjectModal />}
+        {escalationOpen && (
+          <SupportEscalationModal
+            onClose={() => setEscalationOpen(false)}
+          />
+        )}
       </main>
     </div>
   );

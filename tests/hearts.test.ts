@@ -22,6 +22,10 @@ const baseRow: HeartRow = {
   agent_memory: "",
   is_public: 0,
   is_preset: 0,
+  scope: "personal",
+  agent_key: null,
+  is_featured: 0,
+  is_pinned: 0,
   created_at: "2026-01-01T00:00:00.000Z",
   updated_at: "2026-01-02T00:00:00.000Z",
 };
@@ -38,6 +42,9 @@ describe("sanitizeHeartInput", () => {
       tools: ["generate_docs", "tool_inventada", "generate_docs"],
       is_preset: true,
       is_public: true,
+      is_featured: true,
+      scope: "company",
+      agent_key: "soporte-tecnico-oficial",
       user_id: "otro-usuario",
     });
 
@@ -50,6 +57,9 @@ describe("sanitizeHeartInput", () => {
     assert.equal(result.value.temperature, 0.8);
     assert.deepEqual(result.value.tools, ["generate_docs"]);
     assert.equal("is_preset" in result.value, false);
+    assert.equal("is_featured" in result.value, false);
+    assert.equal("scope" in result.value, false);
+    assert.equal("agent_key" in result.value, false);
     assert.equal("user_id" in result.value, false);
   });
 
@@ -114,5 +124,29 @@ describe("propiedad y visibilidad", () => {
     assert.equal(shared.is_owner, false);
     assert.equal(shared.is_preset, true);
     assert.equal(shared.is_public, true);
+  });
+
+  it("un Heart de empresa no es editable ni propio aunque lo haya creado un admin", () => {
+    const company: HeartRow = {
+      ...baseRow,
+      scope: "company",
+      is_preset: 1,
+      is_featured: 1,
+      agent_key: "soporte-tecnico-oficial",
+    };
+
+    assert.equal(canEditHeart(company, "user-1"), false);
+
+    const agent = toAgent(company, "user-1");
+    assert.equal(agent.is_owner, false);
+    assert.equal(agent.scope, "company");
+    assert.equal(agent.is_featured, true);
+    assert.equal(agent.agent_key, "soporte-tecnico-oficial");
+  });
+
+  it("is_pinned refleja el fijado del usuario que consulta", () => {
+    const pinned = toAgent({ ...baseRow, is_pinned: 1 }, "user-1");
+    assert.equal(pinned.is_pinned, true);
+    assert.equal(pinned.is_featured, false);
   });
 });

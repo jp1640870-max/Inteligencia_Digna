@@ -2,7 +2,9 @@
 
 import { create } from "zustand";
 import { v4 as uuidv4 } from "uuid";
+import { SUPPORT_AGENT } from "@/lib/official-agents";
 import type {
+  Agent,
   Msg,
   Chat,
   DocumentProgressStage,
@@ -61,6 +63,12 @@ interface ChatState {
   // State
   messages: Msg[];
   chatId: string;
+  /** Agente oficial activo; null en chats normales y Hearts no oficiales. */
+  agentKey: string | null;
+  /** Heart activo; null en el chat normal. */
+  heartId: string | null;
+  /** Nombre visible del Heart activo. */
+  heartName: string | null;
   chats: Chat[];
   loading: boolean;
   searching: boolean;
@@ -89,6 +97,10 @@ interface ChatState {
   // Actions — chat CRUD
   loadChats: () => Promise<void>;
   newChat: (currentProjectId?: string | null) => void;
+  /** Inicia una conversación nueva con el agente oficial Soporte Técnico. */
+  startSupportChat: () => void;
+  /** Inicia una conversación nueva con un Heart visible. */
+  startHeartChat: (heart: Agent) => void;
   openChat: (chat: Chat) => void;
   deleteChat: (id: string) => Promise<void>;
   renameChat: (id: string, title: string) => Promise<boolean>;
@@ -137,6 +149,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // ─── Init ───
   messages: [],
   chatId: uuidv4(),
+  agentKey: null,
+  heartId: null,
+  heartName: null,
   chats: [],
   loading: false,
   searching: false,
@@ -164,6 +179,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       images: [],
       files: [],
       chatId: uuidv4(),
+      agentKey: null,
+      heartId: null,
+      heartName: null,
       imageMode: true,
       parentImageId: null,
       loading: false,
@@ -206,7 +224,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const chats: Chat[] = Array.isArray(data) ? data : [];
       const current = chats.find((chat) => chat.id === get().chatId);
       if (!current) {
-        set({ chats });
+        set({ chats, agentKey: null, heartId: null, heartName: null });
         return;
       }
 
@@ -248,7 +266,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
           current.messages.length === 0 && state.messages.length > 0
             ? state.messages
             : merged;
-        return { chats, messages };
+        return {
+          chats,
+          messages,
+          agentKey: current.agent_key ?? null,
+          heartId: current.heart_id ?? null,
+          heartName: current.heart_name ?? null,
+        };
       });
     } catch {
       set({ chats: [] });
@@ -262,8 +286,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       images: [],
       files: [],
       chatId: uuidv4(),
+      agentKey: null,
+      heartId: null,
+      heartName: null,
       imageMode: false,
       parentImageId: null,
+      isEditMode: false,
+      editFile: null,
+      editInstruction: "",
+      editLoading: false,
+      typeChoiceFile: null,
     });
 
     if (currentProjectId) {
@@ -277,12 +309,64 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  startSupportChat: () => {
+    set({
+      messages: [],
+      input: "",
+      images: [],
+      files: [],
+      chatId: uuidv4(),
+      agentKey: SUPPORT_AGENT.id,
+      heartId: null,
+      heartName: SUPPORT_AGENT.name,
+      imageMode: false,
+      parentImageId: null,
+      loading: false,
+      searching: false,
+      isEditMode: false,
+      editFile: null,
+      editInstruction: "",
+      editLoading: false,
+      typeChoiceFile: null,
+    });
+  },
+
+  startHeartChat: (heart) => {
+    set({
+      messages: [],
+      input: "",
+      images: [],
+      files: [],
+      chatId: uuidv4(),
+      agentKey: heart.agent_key ?? null,
+      heartId: heart.id,
+      heartName: heart.name,
+      imageMode: false,
+      parentImageId: null,
+      loading: false,
+      searching: false,
+      isEditMode: false,
+      editFile: null,
+      editInstruction: "",
+      editLoading: false,
+      typeChoiceFile: null,
+    });
+  },
+
   openChat: (chat) => {
     set({
       chatId: chat.id,
       messages: chat.messages,
+      agentKey: chat.agent_key ?? null,
+      heartId: chat.heart_id ?? null,
+      heartName: chat.heart_name ?? null,
       imageMode: false,
       parentImageId: null,
+      isEditMode: false,
+      editFile: null,
+      editInstruction: "",
+      editLoading: false,
+      typeChoiceFile: null,
     });
     // La lista puede venir de una carga anterior. Refrescarla permite ver el
     // avance de trabajos de imagen que siguieron corriendo en otro chat.
@@ -523,8 +607,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
 
-    // Auto-detect: editable file + edit keywords
-    if (messageText.trim() && state.files.length > 0) {
+    // Auto-detect: editable file + edit keywords. Los chats de Heart y los
+    // agentes oficiales no usan este atajo: su servidor decide las tools.
+    if (
+      !state.heartId &&
+      !state.agentKey &&
+      messageText.trim() &&
+      state.files.length > 0
+    ) {
       const editableFile = state.files.find((f) => /\.(xlsx|xls|docx|pdf)$/i.test(f.name));
       if (editableFile && EDIT_KEYWORDS.test(messageText)) {
         set({ input: "", images: [], files: [] });
@@ -564,6 +654,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const formData = new FormData();
     formData.append("chatId", state.chatId);
     formData.append("message", visibleText);
+    if (state.agentKey) formData.append("agentId", state.agentKey);
+    if (state.heartId) formData.append("heartId", state.heartId);
     if (currentProjectId) formData.append("projectId", currentProjectId);
     if (filesContent) formData.append("filesContent", filesContent);
 
@@ -582,7 +674,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       formData.append("editFromIndex", String(editFromIndex));
     }
 
-    const willSearch = checkAutoSearch(visibleText);
+    // Los Hearts y agentes oficiales resuelven la búsqueda en el servidor.
+    const willSearch =
+      !state.heartId && !state.agentKey && checkAutoSearch(visibleText);
     if (willSearch) set({ searching: true });
 
     set({ input: "", images: [], files: [] });
