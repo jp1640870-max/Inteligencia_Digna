@@ -359,3 +359,374 @@ El smoke de PostgreSQL sólo consulta el esquema. El smoke de Ollama es opt-in:
 ```bash
 SMOKE_LIVE=1 npm test
 ```
+
+
+
+Correción de errores rate-limiting.
+
+`recordLoginFailure()` ahora hace **todo en un único `INSERT ... ON CONFLICT DO UPDATE`**:
+- incrementa `failures`;
+- actualiza `last_failure_at`;
+- calcula `level`;
+- setea `blocked_until` cuando corresponde.
+Eliminé el `UPDATE` posterior sobre la misma fila, que era el que veía el snapshot anterior y revertía el incremento.
+ Por eso antes `failures` quedaba en `1`, `last_failure_at`
+  no avanzaba y nunca se activaba el bloqueo: todos los intentos daban `401`
+   hasta que el login correcto borraba la fila y devolvía `200`.
+
+implementaciones de seguridad
+
+Buena. Antes de planear, separémoslo en tres capas. Esto es **lo que hay hoy** y **lo que faltaría** para decidir políticas.
+## 1. Qué defensas contra ataques tenemos hoy
+Ya implementadas:
+- **Fuerza bruta**: rate limit persistente por IP y por cuenta, con backoff 1/5/15 min y tope 1 h.
+- **Password spraying**: el límite por IP (5 fallos/h) corta que una misma IP pruebe muchas cuentas.
+- **Enumeración por timing**: mensaje genérico `Credenciales inválidas` + comparación contra hash señuelo cuando el email no existe.
+- **Costo de verificación**: bcrypt async, coste fijo (10).
+- **Abuso de registro**: 5 intentos/h por IP y 3/h por email.
+- **Cookies**: `httpOnly`, `sameSite=lax`, `secure` en producción.
+Gaps importantes:
+- **Credential stuffing distribuido**: si el atacante rota IP y usa un email distinto por intento, no lo detectamos; cada clave queda por debajo del umbral.
+- **Enumeración por registro**: el `409 "El email ya está registrado"` sigue filtrando qué emails existen.
+- **Sin MFA / step-up**: no hay second factor ni verificación por email.
+- **Sin recuperación self-service**: no hay `forgot password`; solo el script admin `db:reset-password`. Hoy un usuario que olvida su password depende de un admin.
+- **Sin verificación de email** en el registro.
+- **Sin señales de dispositivo/sesión, geo, ASN ni reputación**.
+- **Sin detección de reutilización de passwords** entre cuentas.
+## 2. Qué monitoreo tenemos hoy
+- `auth_rate_limits`: estado **actual** (`failures`, `level`, `last_failure_at`, `blocked_until`). No es histórico: una fila por clave, se sobreescribe y se borra.
+- `audit_log`: se consulta desde el panel de admin, pero hoy solo escribimos:
+- `login_blocked` / `register_blocked` cuando hay 429;
+- `login` / `register` exitosos.
+- Los **401 no se auditan**: no hay motivo, ni email, ni timestamp por intento.
+- `pino` está configurado con redacción de `password`/`token`, pero **no emitimos eventos de auth**; no hay métricas, dashboards ni alertas.
+- Detalle operativo: cada request ya bloqueado escribe un `login_blocked`, así que un ataque puede llenar `audit_log`. Eso habría que deduplicarlo.
+Resumen: hoy tenemos **estado + auditoría de bloqueos**, no **monitoreo de seguridad**.
+## 3.Cómo distinguir “se olvidó” de “es malicioso”
+No conviene hacerlo solo por el número de fallos: una IP compartida o un usuario con.password manager mal sincronizado puede parecer un ataque. La idea es **combinar señales y responder con fricción antes que con bloqueo**.
+Señales útiles:
+- **Volumen/velocidad**: fallos por cuenta y por IP en ventana. Olvido = pocos, espaciados. Ataque = ráfaga.
+- **Distribución de claves**:
+- muchas cuentas desde una IP → *spraying / stuffing*;
+- una cuenta desde muchas IPs → ataque focalizado;
+- ambos altos → comportamiento automatizado.
+- **Contexto de dispositivo**: cookie/ID de dispositivo estable, user-agent, idioma, timezone. Olvido = dispositivo conocido. Ataque = dispositivo nuevo + IP nueva.
+- **Geografía/ASN**: cambio de país/ISP, VPN, datacenter, TOR. Útil pero con falsos positivos; no debería bloquear solo por esto.
+- **Historial de la cuenta**: cuenta antigua con logins previos vs. cuenta nueva/inactiva.
+- **Comportamiento post-bloqueo**: seguir reintentando durante el bloqueo es mucho más sospechoso que esperar y usar recuperación.
+- **Reutilización de password**: guardar un **HMAC del password intentado** (nunca el password en claro) permite detectar la misma contraseña contra muchas cuentas desde una IP.
+Política escalonada sugerida:
+Nivel	Señal típica	Respuesta
+0	1–3 fallos, dispositivo conocido	Solo contador; mensaje genérico
+1	4–5 fallos, o IP con muchas cuentas	CAPTCHA o delay leve; notificación por email
+2	10+ fallos, o dispositivo/IP nuevo + cuenta sensible	Step-up: OTP por email antes de aceptar password
+3	20+ fallos, reintentos durante bloqueo, stuffing/spray	429 + bloqueo progresivo + alerta a seguridad
+Y algo clave: **implementar recuperación self-service por email** (token firmado, un uso, expiración corta) para que el “olvido” tenga una salida legítima que además resetea contadores. Sin eso, cualquier política estricta castiga al usuario real.
+## Decisiones que necesito que tomemos
+1. **Nivel de ambición**: mínimo (auditar 401 + notificación), medio (señales IP/dispositivo + OTP por email) o completo (MFA + detección de stuffing + tabla de intentos).
+2. **Dónde registrar**: `audit_log` reutilizado vs. tabla nueva `auth_login_attempts`.
+3. **Friction vs. bloqueo**: si ante duda preferís CAPTCHA/OTP antes que 429.
+4. **Retención y PII**: cuánto tiempo guardamos IP/email/HMAC y quién puede verlo.
+Cuando me digas esas cuatro cosas, armo el plan concreto sin tocar código todavía.
+
+
+
+lan de mejora que seguiría
+No agregaría más funcionalidades grandes todavía. Primero consolidaría lo que ya existe.
+1. Fase 1 — Cerrar la implementación de Hearts
+   - Corregir la condición de carrera entre pestañas.
+   - Agregar paginación al listado de Hearts personales.
+   - Añadir filtros por usuario, fecha y nombre.
+   - Registrar auditoría de edición y eliminación.
+   - Revisar qué información personal debe aparecer en el listado.
+2. Fase 2 — Endurecer autenticación
+   - Rate limiting en login y registro.
+   - Validación estricta de OAuth.
+   - Revisar configuración de cookies y sesiones.
+   - Revisar protección contra abuso de endpoints.
+   - Agregar pruebas de autorización negativas.
+3. Fase 3 — Cerrar el agente Soporte Técnico
+   - Confirmar que la KB responde con ACL.
+   - Definir el alcance de conocimiento del agente.
+   - Validar que no pueda utilizar herramientas fuera de su lista.
+   - Mejorar la clasificación de prioridad.
+   - Probar conversaciones con información insuficiente.
+4. Fase 4 — Preparar el escalamiento para integración real
+
+   Mantener el mock como proveedor inicial, pero definir una interfaz de servicio:
+
+   SupportEscalationProvider
+
+   La implementación actual sería MockSupportEscalationProvider. Más adelante se podría añadir un proveedor real para ServiceDesk sin modificar la lógica del agente.
+5. Fase 5 — Validación del MVP
+   - Pruebas de integración con PostgreSQL.
+   - Pruebas de aislamiento entre usuarios.
+   - Pruebas de acceso a Hearts.
+   - Pruebas de RAG con ACL.
+   - Pruebas de escalamiento.
+   - Build y lint limpios.
+   - Demo reproducible desde una instalación limpia.
+
+5. Mi recomendación técnica
+La siguiente mejora de arquitectura que implementaría es un Runtime de Hearts, pero todavía no un sistema complejo de agentes autónomos.
+
+Actualmente, el agente oficial ya tiene una configuración protegida y una lista de herramientas permitidas. El siguiente paso natural es convertir esa separación en una estructura formal:
+Heart
+ ├── Identidad
+ ├── Instrucciones
+ ├── Herramientas permitidas
+ ├── Política de conocimiento
+ ├── Política de acceso
+ └── Runtime
+      ├── KB Search
+      ├── Conversation Files
+      └── Prepare Escalation
+
+
+Heart Definition
+Configuración común para Hearts personales y empresariales
+
+Identidad
+
+Nombre, descripción, avatar, personalidad, tono y rol.
+
+Instrucciones
+
+Objetivo, reglas de comportamiento, limitaciones y criterios de éxito.
+
+Conocimiento
+
+KB autorizada, documentos, fuentes y alcance de acceso.
+
+Herramientas
+
+Tools habilitadas, integra     ciones, parámetros y permisos.
+
+Automatización
+
+Disparadores, horarios, eventos y notificaciones.
+
+Publicación
+
+Borrador, privado, publicado, pausado o retirado.
+
+Característica  |	Heart personal                     |	Heart empresarial                    |
+----------------|------------------------------------|----------------------------------------|
+Configuración   | Misma plantilla	                 |  Misma plantilla                       |
+Propietario	    | Usuario	                          | Área o administrador                   |
+Visibilidad	    | Privada	                          | Disponible para usuarios autorizados   |
+Herramientas	 | Según permisos del usuario         | Según permisos empresariales           |
+Publicación	    | Uso personal	                    | Servicio compartido                    |
+Administración  | Usuario	                          | Administrador/área responsable         |
+
+
+lib/
+├── hearts/
+│   ├── schema.ts
+│   ├── registry.ts
+│   ├── versioning.ts
+│   ├── publication.ts
+│   └── permissions.ts
+│
+├── heart-runtime/
+│   ├── execute.ts
+│   ├── context.ts
+│   ├── instruction-builder.ts
+│   ├── tool-gateway.ts
+│   └── execution-policy.ts
+│
+├── tools/
+│   ├── registry.ts
+│   ├── native/
+│   │   ├── kb-search.ts
+│   │   ├── read-files.ts
+│   │   └── support-escalation.ts
+│   └── mcp/
+│       ├── client.ts
+│       ├── connection-manager.ts
+│       └── policy.ts
+│
+├── automation/
+│   ├── scheduler.ts
+│   ├── task-queue.ts
+│   ├── worker.ts
+│   └── notifications.ts
+│
+└── integrations/
+    ├── servicedesk/
+    └── internal-systems/
+
+
+
+Fase 0 — Estabilizar la base actual
+Base existente
+Objetivo: asegurar que la plataforma actual sea estable antes de construir autonomía.
+
+Entregables:
+- Chat funcional.
+- Autenticación y RBAC.
+- Hearts personales y empresariales.
+- Base de conocimiento con permisos.
+- Heart de soporte técnico como caso inicial.
+- Registro de auditoría.
+- Escalación simulada claramente identificada.
+Criterio de salida:
+- Build y pruebas básicas exitosas.
+- Las rutas críticas tienen autorización validada en backend.
+- El Heart oficial no puede ser alterado por usuarios no autorizados.
+- Los datos personales y empresariales respetan sus ACL.
+Fase 1 — Heart Registry
+Objetivo: convertir Hearts en definiciones configurables persistidas.
+
+Entregables:
+- Modelo de datos Heart.
+- Crear, editar, duplicar y eliminar Hearts.
+- Versionado de definiciones.
+- Estados: borrador, publicado, pausado y revocado.
+- Propiedad personal o empresarial.
+- Publicación por administradores.
+- Validación de configuración.
+El formulario actual es el punto de partida.
+
+Campos actuales:
+- Nombre.
+- Rol.
+- Tono.
+- Instrucciones.
+- Limitaciones.
+- Temperatura.
+- Herramientas.
+Campos que agregaría progresivamente:
+- Modelo asignado.
+- Fuentes de conocimiento.
+- Permisos y capacidades.
+- Integraciones.
+- Nivel de autonomía.
+- Política de ejecución.
+Criterio de salida:
+
+Un administrador puede crear un Heart de soporte técnico desde el panel sin modificar código ni crear una clase específica para ese Heart.
+Fase 2 — Heart Runtime
+Objetivo: ejecutar cualquier Heart registrado mediante un motor común.
+
+Entregables:
+- Carga de definiciones.
+- Construcción del contexto.
+- Aplicación de instrucciones y limitaciones.
+- Selección de modelo local.
+- Control de conversación.
+- Manejo de solicitudes de herramientas.
+- Validación del estado del Heart.
+- Registro de ejecución.
+- Manejo de errores y límites.
+Criterio de salida:
+
+Crear un segundo Heart con otra configuración y herramientas distintas, sin modificar el Runtime.
+
+Esta es la fase que convierte Hearts en una plataforma extensible.
+Fase 3 — Tool Gateway y seguridad de ejecución
+Objetivo: controlar todas las capacidades que el modelo puede ejecutar.
+
+Entregables:
+- Registro central de herramientas.
+- Esquemas de entrada y salida.
+- Permisos por herramienta.
+- Autorización por usuario y Heart.
+- Niveles de riesgo.
+- Validación antes de ejecutar.
+- Auditoría de llamadas.
+- Pausa y revocación.
+- Límites de tiempo y número de llamadas.
+- Protección contra ejecución arbitraria de código.
+Criterio de salida:
+
+El modelo no puede ejecutar una operación que no esté autorizada, aunque la solicite explícitamente.
+
+Esta fase debe preceder a cualquier autonomía que modifique sistemas externos.
+Fase 4 — Extensibilidad: Skills, MCP y conectores
+Objetivo: permitir que desarrolladores y administradores agreguen capacidades.
+
+Entregables:
+- Catálogo de herramientas.
+- Registro de Skills.
+- Registro de servidores MCP aprobados.
+- Configuración de integraciones.
+- Versionado de herramientas.
+- Permisos por integración.
+- Administración de conexiones.
+- Aislamiento de credenciales.
+- Activación/desactivación de capacidades.
+Criterio de salida:
+
+Agregar una nueva integración —por ejemplo, Drive— sin modificar el código del Heart Runtime.
+Fase 5 — Hearts empresariales como servicios
+Objetivo: convertir Hearts en servicios reutilizables por distintas áreas.
+
+Entregables:
+- Publicación empresarial.
+- Visibilidad por área o departamento.
+- Catálogo de Hearts disponibles.
+- Solicitud de nuevos Hearts por áreas.
+- Plantillas administradas.
+- Versiones publicadas.
+- Gestión de propietarios y administradores.
+- Auditoría de cambios.
+Criterio de salida:
+
+Un área solicita un Heart; el administrador lo configura, publica y lo hace disponible a usuarios autorizados.
+Fase 6 — Tasks, programación y notificaciones
+Objetivo: permitir que los Hearts trabajen fuera de una conversación interactiva.
+
+Entregables:
+- Tareas programadas.
+- Ejecuciones manuales persistentes.
+- Cola de tareas.
+- Worker separado del servidor web.
+- Reintentos controlados.
+- Notificaciones.
+- Historial de ejecuciones.
+- Cancelación y pausa.
+- Políticas de aprobación.
+Ejemplo:
+
+Un Heart de soporte revisa cada mañana los tickets pendientes de más de 48 horas y prepara un resumen para el equipo.
+
+Criterio de salida:
+
+Una tarea sobrevive a un reinicio del servidor, puede pausarse y deja un registro verificable de lo que hizo.
+Fase 7 — Workflows y autonomía avanzada
+Objetivo: permitir que los Hearts completen procesos de varios pasos.
+
+Entregables:
+- Flujos de trabajo configurables.
+- Ejecución por eventos.
+- Condiciones y ramificaciones.
+- Aprobaciones humanas.
+- Acciones con efectos externos.
+- Compensación cuando sea posible.
+- Observabilidad de procesos.
+- Límites de costo computacional y duración.
+Ejemplo:
+1. Detectar un ticket crítico.
+2. Consultar la base de conocimiento.
+3. Analizar el problema.
+4. Preparar una recomendación.
+5. Solicitar aprobación.
+6. Crear o actualizar el ticket.
+7. Notificar al responsable.
+Criterio de salida:
+
+Un Heart puede completar un proceso empresarial controlado, con permisos y trazabilidad, no solamente responder mensajes.
+Fase 8 — Ecosistema de capacidades
+Objetivo: construir un catálogo de extensiones para la plataforma.
+
+Entregables:
+- Marketplace interno de Skills y conectores.
+- Publicación de extensiones.
+- Revisión y aprobación.
+- Compatibilidad entre versiones.
+- Distribución por áreas.
+- Políticas de seguridad.
+- Métricas de uso.
+- Evaluación de calidad de Hearts.
+En esta fase, la plataforma podría acercarse a la experiencia de Gems, Skills y tareas de otros ecosistemas, per

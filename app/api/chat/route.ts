@@ -13,7 +13,9 @@ import {
   getLatestPartialDocumentForChat,
 } from "@/lib/db";
 import { ollamaChat, ollamaChatStream, getChatModel, type InferenceMessage } from "@/lib/ollama";
-import { buildHeartInstructions, buildMessages } from "@/lib/prompt-builder";
+import { buildMessages } from "@/lib/prompt-builder";
+import { resolveChatHeartRuntime } from "@/lib/heart-resolver";
+import type { HeartExecutionLimits } from "@/lib/heart-execution";
 import { getAuthUserFromRequest, getUserIdFromRequest } from "@/lib/auth";
 import { getProjectById, syncProjectChatTitle } from "@/lib/projects";
 import { generateDocument } from "@/lib/document-generator";
@@ -48,7 +50,7 @@ import {
   getHeartByAgentKeyForUser,
   readHeartForUser,
 } from "@/lib/hearts";
-import type { HeartTool } from "@/lib/heart-config";
+import { HEART_TOOLS, type HeartTool } from "@/lib/heart-config";
 import { log, childLogger } from "@/lib/logger";
 import { checkRateLimit } from "@/lib/rate-limit";
 import {
@@ -435,14 +437,23 @@ async function doStream(
   kbSources?: KbSource[],
   webSources?: SearchResult[],
   signal?: AbortSignal,
+  temperature?: number,
+  limits?: HeartExecutionLimits,
 ): Promise<void> {
   let fullReply = "";
   const startTime = Date.now();
   let cont = 0;
+  const streamOptions = {
+    signal,
+    ...(temperature !== undefined ? { temperature } : {}),
+    ...(limits
+      ? { timeoutMs: limits.timeoutMs, num_predict: limits.maxOutputTokens }
+      : {}),
+  };
 
   try {
     console.log("🤖 Ollama streaming: modelo=", model, "| mensajes:", messages.length);
-    const generator = ollamaChatStream(model, messages, { signal });
+    const generator = ollamaChatStream(model, messages, streamOptions);
     for await (const chunk of generator) {
       if (cont === 0) console.log(`🤖 Primer chunk en ${Date.now() - startTime}ms: "${chunk.slice(0, 40)}..."`);
       cont++;
@@ -464,7 +475,7 @@ async function doStream(
       let retried = false;
       try {
         fullReply = "";
-        const retryGen = ollamaChatStream(model, messages, { signal });
+        const retryGen = ollamaChatStream(model, messages, streamOptions);
         let cont2 = 0;
         for await (const chunk of retryGen) {
           if (cont2 === 0) retried = true;
@@ -732,16 +743,31 @@ export async function POST(req: Request) {
 
     const history = chat?.messages || [];
 
+    const runtimeResult = await resolveChatHeartRuntime({
+      heart,
+      supportAgent,
+      actor: { id: user.id, role: user.role },
+      chatId,
+      defaultModel: getChatModel(),
+      requestedTools: HEART_TOOLS,
+    });
+    if (!runtimeResult.ok) {
+      return NextResponse.json(
+        { error: runtimeResult.error },
+        { status: runtimeResult.status },
+      );
+    }
+    const heartRuntime = runtimeResult.runtime;
+    const execution = heartRuntime.execution;
+    model = heartRuntime.model;
+    const temperature = heartRuntime.temperature;
+
     // Los chats de Heart respetan las herramientas declaradas en el Heart. Los
     // chats normales conservan todas las capacidades y Soporte conserva su
     // conjunto oficial. La generación de imágenes no es una tool de Heart.
     const heartToolAllowed = (tool: HeartTool): boolean => {
-      // Soporte conserva sus tools oficiales: KB, archivos de la conversación
-      // y preparación de escalamiento. No genera documentos, imágenes ni busca
-      // en internet.
-      if (supportAgent) return tool === "read_files";
-      if (!heart) return true;
-      return heart.tools.includes(tool);
+      if (heartRuntime.allowedTools === null) return true;
+      return heartRuntime.allowedTools.includes(tool);
     };
     const allowFiles = heartToolAllowed("read_files");
     const allowDocs = heartToolAllowed("generate_docs");
@@ -1245,8 +1271,8 @@ ${project.instructions}`;
     // Phase 2: Build final messages with search results (if any)
     const agentInstructions = supportAgent
       ? getSupportInstructions(Boolean(kbContext || ragContext))
-      : heart
-        ? buildHeartInstructions(heart)
+      : execution
+        ? execution.instructions
         : undefined;
     const chatMessages = buildMessages(
       modelHistory,
@@ -1278,6 +1304,8 @@ ${project.instructions}`;
       kbSources,
       searchSources,
       req.signal,
+      temperature,
+      execution?.limits,
     );
 
     // Wrap readable in an outer stream that appends sources at the end

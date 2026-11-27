@@ -54,3 +54,32 @@ export const EMPTY_HEART_DRAFT: HeartDraft = {
 export function isHeartTool(value: unknown): value is HeartTool {
   return typeof value === "string" && (HEART_TOOLS as readonly string[]).includes(value);
 }
+
+/**
+ * Parser canónico de la columna `tools` (JSONB o texto JSON).
+ *
+ * Vive aquí, en un módulo puro, para que `lib/hearts.ts` y el contrato
+ * `HeartDefinition` usen la misma normalización sin arrastrar base de datos.
+ * Los IDs desconocidos se descartan: son datos históricos o malformados, no
+ * una autorización de ejecución.
+ */
+export function parseHeartTools(value: unknown): HeartTool[] {
+  let parsed = value;
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+
+  const seen = new Set<string>();
+  const tools: HeartTool[] = [];
+  for (const item of parsed) {
+    if (!isHeartTool(item) || seen.has(item)) continue;
+    seen.add(item);
+    tools.push(item);
+  }
+  return tools;
+}

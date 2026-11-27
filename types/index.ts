@@ -682,8 +682,25 @@ export type HeartRow = {
   is_featured: number;
   /** Alias calculado por las consultas de usuario. */
   is_pinned?: number;
+  // Campos de la definición (migración 013). Opcionales para no romper filas
+  // ni pruebas anteriores a la migración.
+  description?: string | null;
+  model?: string | null;
+  status?: string | null;
+  version?: number | string | null;
+  published_at?: string | Date | null;
   created_at: string;
   updated_at: string;
+};
+
+/** Fila de snapshot versionado de un Heart. */
+export type HeartVersionRow = {
+  heart_id: string;
+  version: number;
+  snapshot: string | Record<string, unknown>;
+  author_id: string;
+  created_at: string;
+  change_summary: string;
 };
 
 export type HeartWithOwnerRow = HeartRow & {

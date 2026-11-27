@@ -2,12 +2,14 @@ import { v4 as uuidv4 } from "uuid";
 import { query } from "./db-connection";
 import {
   HEART_LIMITS,
-  isHeartTool,
+  parseHeartTools,
   type HeartDraft,
-  type HeartTool,
 } from "./heart-config";
 import { SUPPORT_AGENT } from "./official-agents";
 import type { Agent, HeartRow, HeartScope } from "@/types";
+
+/** Parser canónico. Se reexporta para no romper a quien ya lo importaba aquí. */
+export { parseHeartTools };
 
 type DbRow = Record<string, unknown>;
 
@@ -44,20 +46,6 @@ function parseJson(value: unknown): unknown {
   } catch {
     return null;
   }
-}
-
-export function parseHeartTools(value: unknown): HeartTool[] {
-  const parsed = parseJson(value);
-  if (!Array.isArray(parsed)) return [];
-
-  const seen = new Set<string>();
-  const tools: HeartTool[] = [];
-  for (const item of parsed) {
-    if (!isHeartTool(item) || seen.has(item)) continue;
-    seen.add(item);
-    tools.push(item);
-  }
-  return tools;
 }
 
 function parseStringArray(value: unknown): string[] {
@@ -219,8 +207,10 @@ export function sanitizeHeartInput(input: unknown): SanitizeResult {
 
 /**
  * Hearts visibles para un usuario: sus Hearts personales y todos los Hearts de
- * empresa. Los fijados por el usuario o destacados por el administrador suben
- * al principio; después se muestran los personales.
+ * empresa, siempre que estén publicados. Pausados, revocados y archivados no se
+ * listan ni pueden iniciar ejecución, aunque el panel admin los siga mostrando.
+ * Los fijados por el usuario o destacados por el administrador suben al
+ * principio; después se muestran los personales.
  */
 export async function listHeartsForUser(userId: string): Promise<Agent[]> {
   const result = await query(
@@ -229,8 +219,9 @@ export async function listHeartsForUser(userId: string): Promise<Agent[]> {
        FROM hearts h
        LEFT JOIN user_heart_pins p
          ON p.heart_id = h.id AND p.user_id = $1
-      WHERE h.scope = 'company'
-         OR (h.scope = 'personal' AND h.user_id = $1)
+      WHERE (h.scope = 'company'
+         OR (h.scope = 'personal' AND h.user_id = $1))
+        AND h.status = 'published'
       ORDER BY (p.user_id IS NOT NULL OR h.is_featured) DESC,
                (h.scope = 'personal' AND h.user_id = $1) DESC,
                h.updated_at DESC`,
@@ -242,6 +233,7 @@ export async function listHeartsForUser(userId: string): Promise<Agent[]> {
   );
 }
 
+/** Lectura de un Heart usable por el usuario: solo si está publicado. */
 export async function readHeartForUser(
   id: string,
   userId: string,
@@ -253,6 +245,7 @@ export async function readHeartForUser(
        LEFT JOIN user_heart_pins p
          ON p.heart_id = h.id AND p.user_id = $2
       WHERE h.id = $1
+        AND h.status = 'published'
         AND (
           h.scope = 'company'
           OR (h.scope = 'personal' AND h.user_id = $2)
@@ -277,6 +270,7 @@ export async function getHeartByAgentKeyForUser(
        LEFT JOIN user_heart_pins p
          ON p.heart_id = h.id AND p.user_id = $2
       WHERE h.agent_key = $1
+        AND h.status = 'published'
         AND (
           h.scope = 'company'
           OR (h.scope = 'personal' AND h.user_id = $2)
@@ -403,13 +397,16 @@ export async function setHeartPinnedForUser(
 export async function ensureOfficialSupportHeart(ownerId: string): Promise<void> {
   await query(
     `INSERT INTO hearts
-       (id, user_id, name, role, tone, instructions, limitations, temperature, tools, is_preset, scope, agent_key)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '[]'::jsonb, TRUE, 'company', $9)
+       (id, user_id, name, description, role, tone, instructions, limitations,
+        temperature, tools, is_preset, scope, agent_key, status, version, published_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '[]'::jsonb, TRUE, 'company', $10,
+             'published', 1, NOW())
      ON CONFLICT DO NOTHING`,
     [
       uuidv4(),
       ownerId,
       SUPPORT_AGENT.name,
+      SUPPORT_AGENT.description,
       SUPPORT_AGENT.role,
       "Profesional y claro",
       SUPPORT_AGENT.instructions,
@@ -420,7 +417,14 @@ export async function ensureOfficialSupportHeart(ownerId: string): Promise<void>
   );
 
   await query(
-    "UPDATE hearts SET scope = 'company', is_preset = TRUE WHERE agent_key = $1",
-    [SUPPORT_AGENT.id],
+    `UPDATE hearts
+        SET scope = 'company',
+            is_preset = TRUE,
+            status = 'published',
+            version = GREATEST(version, 1),
+            description = COALESCE(NULLIF(description, ''), $2),
+            published_at = COALESCE(published_at, NOW())
+      WHERE agent_key = $1`,
+    [SUPPORT_AGENT.id, SUPPORT_AGENT.description],
   );
 }

@@ -3,7 +3,9 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { getChatById, getMessagesByChat, truncateMessagesToCount, addMessage } from "@/lib/db";
 import { ollamaChatStream, getChatModel } from "@/lib/ollama";
-import { buildHeartInstructions, buildMessages } from "@/lib/prompt-builder";
+import { buildMessages } from "@/lib/prompt-builder";
+import { resolveChatHeartRuntime } from "@/lib/heart-resolver";
+import { HEART_TOOLS } from "@/lib/heart-config";
 import { getAuthUserFromRequest } from "@/lib/auth";
 import { retrieveKb, formatKbContext, toKbSources } from "@/lib/kb";
 import { getSupportInstructions, resolveOfficialAgent } from "@/lib/official-agents";
@@ -55,10 +57,28 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No hay mensaje para regenerar" }, { status: 400 });
     }
 
+    // Se resuelve antes de truncar: si el Heart dejó de estar disponible, el
+    // historial no debe perder el último mensaje del asistente.
+    const runtimeResult = await resolveChatHeartRuntime({
+      heart,
+      supportAgent,
+      actor: { id: user.id, role: user.role },
+      chatId,
+      defaultModel: getChatModel(),
+      requestedTools: HEART_TOOLS,
+    });
+    if (!runtimeResult.ok) {
+      return NextResponse.json(
+        { error: runtimeResult.error },
+        { status: runtimeResult.status },
+      );
+    }
+    const heartRuntime = runtimeResult.runtime;
+    const model = heartRuntime.model;
+
     await truncateMessagesToCount(chatId, messages.length - 1);
 
     const remainingMessages = await getMessagesByChat(chatId);
-    const model = getChatModel();
 
     // --- KB retrieval para regeneración ---
     let kbContext = "";
@@ -76,15 +96,14 @@ export async function POST(req: Request) {
 
     const agentInstructions = supportAgent
       ? getSupportInstructions(Boolean(kbContext))
-      : heart
-        ? buildHeartInstructions(heart)
+      : heartRuntime.execution
+        ? heartRuntime.execution.instructions
         : undefined;
 
-    const allowImages = supportAgent
-      ? false
-      : heart
-        ? heart.tools.includes("analyze_images")
-        : true;
+    const allowImages =
+      heartRuntime.allowedTools === null
+        ? true
+        : heartRuntime.allowedTools.includes("analyze_images");
     const modelMessages = allowImages
       ? remainingMessages
       : remainingMessages.map((item) => ({ ...item, images: undefined }));
@@ -105,10 +124,22 @@ export async function POST(req: Request) {
     const writer = writable.getWriter();
 
     let fullReply = "";
+    const streamOptions = {
+      signal: req.signal,
+      ...(heartRuntime.temperature !== undefined
+        ? { temperature: heartRuntime.temperature }
+        : {}),
+      ...(heartRuntime.execution
+        ? {
+            timeoutMs: heartRuntime.execution.limits.timeoutMs,
+            num_predict: heartRuntime.execution.limits.maxOutputTokens,
+          }
+        : {}),
+    };
 
     const streamOllama = async () => {
       try {
-        const generator = ollamaChatStream(model, chatMessages, { signal: req.signal });
+        const generator = ollamaChatStream(model, chatMessages, streamOptions);
         for await (const chunk of generator) {
           fullReply += chunk;
           await writer.write(encoder.encode(chunk));
@@ -123,7 +154,7 @@ export async function POST(req: Request) {
         } else {
           try {
             fullReply = "";
-            const retryGen = ollamaChatStream(model, chatMessages, { signal: req.signal });
+            const retryGen = ollamaChatStream(model, chatMessages, streamOptions);
             for await (const chunk of retryGen) {
               fullReply += chunk;
               await writer.write(encoder.encode(chunk));

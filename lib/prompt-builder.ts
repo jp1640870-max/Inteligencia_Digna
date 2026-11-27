@@ -1,5 +1,6 @@
 import type { InferenceMessage } from "./ollama";
 import type { HeartTool } from "./heart-config";
+import type { HeartDefinition } from "./heart-definition";
 
 // Se calcula por request (no a nivel de módulo) para no congelar la fecha
 // en procesos de larga duración.
@@ -100,6 +101,26 @@ export function buildHeartInstructions(heart: HeartPromptConfig): string {
   if (heart.tools.includes("web_search")) notes.push(WEB_SEARCH_NOTE);
 
   return `${sections.join("\n\n")}${notes.join("")}`;
+}
+
+/**
+ * Instrucciones efectivas de un Heart definido por el Registry.
+ *
+ * Se apoya en el mismo constructor que usa el runtime histórico para que el
+ * texto sea idéntico; la diferencia es que la fuente es el snapshot publicado,
+ * no la fila editable de `hearts`.
+ */
+export function buildHeartInstructionsFromDefinition(
+  heart: HeartDefinition,
+): string {
+  return buildHeartInstructions({
+    name: heart.identity.name,
+    role: heart.identity.role,
+    tone: heart.behavior.tone,
+    instructions: heart.behavior.instructions,
+    limitations: heart.behavior.limitations,
+    tools: heart.capabilities.tools,
+  });
 }
 
 type HistoryItem = {
